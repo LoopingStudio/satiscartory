@@ -45,7 +45,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
 | A | Menu de construction |
 | G | Garage |
-| Échap | Pause |
+| Échap | Fermer l'outil actif (construction, démontage) ; sans outil, pause |
 
 ### Course
 

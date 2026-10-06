@@ -22,7 +22,7 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
 
 ## P1
 
-- **Emprises** :
+- **Emprises** (remplacé en octobre 2026, voir « Retours usine ») :
   - Presse, assembleuse et foreuse occupent 1×2 cases. Elles reçoivent par l'arrière et les côtés de la case arrière, et sortent par l'avant de la case avant. Les modèles `machine*` s'écoulent le long de Z et sont étirés à (1,6 ; 1,6 ; 2,55).
   - Le hangar occupe 3×3 cases et accepte sur tous ses bords extérieurs.
 - **Fusion des convoyeurs** : pas de bâtiment dédié. Un convoyeur accepte par l'arrière et par les côtés, en tourniquet sans état transitoire : `lastFrom` est persisté, et le tour passe si un autre alimenteur est prêt.
@@ -157,3 +157,14 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
 - **Barre du bas** (choix validé : empilée sous la barre de construction) : les 8 premières cases du sac restent visibles en bas de l’écran, comme une barre d’accès rapide. Une case qui reçoit des objets pulse. Le mini-sac du panneau Hangar disparaît. La barre de construction est masquée quand un panneau est ouvert, et la barre du sac aussi quand le panneau affiche déjà le sac (Tab, hangar).
 - **Rangement** (choix validé : glisser-déposer) : le sac s’affiche en 3 rangées de 8, la barre en dernier comme dans Minecraft. Glisser une case vers une case vide la déplace, vers le même objet fusionne jusqu’à la taille de pile (le reste ne bouge pas), vers un autre objet échange les deux. Dans le panneau du hangar, la déposer sur la colonne Hangar la range au hangar. Un simple clic garde son effet (déposer au hangar). Les nouveaux objets remplissent les premières cases libres, donc la barre en premier.
 - **Vue repliée** : un redimensionnement à 0×0 (volet masqué) est ignoré. Sinon le ratio d'aspect nul cassait la projection.
+
+## Retours usine (octobre 2026)
+
+- **Échap** : avec un outil actif (construction, démontage, tracé), Échap ferme seulement l'outil. Le navigateur libère quand même le pointeur, donc le jeu affiche « Clic : reprendre » au lieu du menu pause. Un second Échap ouvre la pause. Un refus de reverrouillage juste après Échap (délai imposé par le navigateur) ne bascule plus en curseur libre si le verrouillage a déjà fonctionné.
+- **Orientation des machines** : les modèles Kenney `machine*` sont des tunnels ouverts sur leurs **flancs longs**. Foreuse, presse et assembleuse occupent donc 2×1 cases (2 de large, 1 de profondeur) et les objets les **traversent** : entrée par le flanc arrière (les deux cases), sortie par le flanc avant (l'une ou l'autre case, la première reliée l'emporte). Les entrées par les petits côtés sont supprimées, ce sont des murs pleins. Comme pour un convoyeur, la sortie est « vers l'avant », donc une machine posée après un tracé de convoyeur garde le même sens de flux.
+  - Sauvegardes : `FactorySave.version` passe à 2. Au chargement d'une sauvegarde v1, les machines tournent d'un quart de tour, ce qui conserve exactement leurs cases. Les convoyeurs qui arrivaient par les petits côtés ne sont plus reliés et sont à reposer.
+- **Modèle de la foreuse** : elle utilisait `machine-fortified`, presque identique à la presse. C'est maintenant une tour de forage composée de pièces du Factory Kit : `piston-thin-round` (tige de forage) dans deux cadres `structure-yellow-medium`, une tête `piston-round` animée quand elle travaille, et un entonnoir `hopper-high-round` collecteur. Sa hauteur (≈ 3,7 m) passe dans le collider de visée.
+- **Carte agrandie** : la grille passe de 64×64 à **128×128** cases (256 m), hangar au centre (62, 62). Huit gisements au lieu de cinq, plus grands et espacés : un fer et un caoutchouc à ~17 cases du hangar pour les premières chaînes (≈ 15 convoyeurs chacune, payables avec le stock de départ, test `objectives.test.ts`), les autres entre 26 et 50 cases dans toutes les directions.
+  - Sauvegardes : `FactorySave.version` passe à 3. Une sauvegarde de l'ancienne carte est décalée de 32 cases (`LEGACY_MAP_OFFSET`), joueur compris, pour que son hangar tombe sur le nouveau. Les foreuses gardent leur ressource même si l'ancien gisement n'existe plus.
+  - Sol : la tuile `floor` du kit est un carré de couleur unie. Un seul carré étiré sur toute la grille remplace les 16 384 instances (≈ 45 → 90 FPS mesurés).
+  - Le test de charge (`?layout=stress`) reste sur une grille 64×64 (2 100 objets).

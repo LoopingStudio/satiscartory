@@ -111,7 +111,7 @@ src/
 
 | Bâtiment | Modèle | Recettes |
 |---|---|---|
-| Foreuse (2×2) | `machine-fortified` + piston | gisement Fer → Minerai ; gisement Caoutchouc → Latex |
+| Foreuse (2×1) | tour de forage (piston, cadres jaunes, entonnoir) | gisement Fer → Minerai ; gisement Caoutchouc → Latex |
 | Presse (2×2, 1→1) | `machine` + piston | Minerai → Plaque ; Minerai → 2 Boulons ; 2 Latex → Pneu |
 | Assembleuse (2×2, 2→1) | `machine-window` + `robot-arm-a` | Châssis, Moteur, Roue, Panneau, Aileron |
 | Hangar central (4×4) | `structure-*` + `hopper-high` + écran | stockage, terminal Garage |

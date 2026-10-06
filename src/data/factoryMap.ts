@@ -23,18 +23,33 @@ export interface ResourceNode {
   h: number;
 }
 
-/** Fixed starting map (64×64 cells of 2 m). The hub sits near the center. */
+/**
+ * Saves made on the former 64×64 map are shifted by this many cells on load so that
+ * their hub (30, 30) lands on the new centered hub (62, 62).
+ */
+export const LEGACY_MAP_OFFSET = 32;
+
+/**
+ * Fixed starting map (128×128 cells of 2 m). The hub sits at the center. Resource nodes
+ * are spread out: one iron and one rubber node ~17 cells from the hub for the first
+ * chains, the others 26 to 50 cells away in every direction.
+ */
 export const FACTORY_MAP = {
-  hub: { x: 30, z: 30, rot: 0 as const },
+  hub: { x: 62, z: 62, rot: 0 as const },
   /** Player spawn, in cells (fractional allowed). */
-  spawn: { x: 31.5, z: 27 },
-  /** Garage terminal, relative to the hub anchor (cells). */
-  garage: { x: 34.5, z: 31.5 },
+  spawn: { x: 63.5, z: 58.5 },
+  /** Garage terminal (cells). */
+  garage: { x: 66.5, z: 63.5 },
   nodes: [
-    { resource: 'iron', x: 24, z: 24, w: 3, h: 3 },
-    { resource: 'iron', x: 37, z: 22, w: 3, h: 2 },
-    { resource: 'rubber', x: 23, z: 36, w: 3, h: 3 },
-    { resource: 'iron', x: 40, z: 38, w: 2, h: 3 },
-    { resource: 'rubber', x: 44, z: 28, w: 2, h: 2 },
+    // Starting nodes (west and north of the hub).
+    { resource: 'iron', x: 44, z: 61, w: 4, h: 4 },
+    { resource: 'rubber', x: 61, z: 80, w: 3, h: 3 },
+    // Farther away.
+    { resource: 'iron', x: 88, z: 70, w: 4, h: 3 },
+    { resource: 'iron', x: 84, z: 30, w: 3, h: 3 },
+    { resource: 'iron', x: 58, z: 20, w: 3, h: 3 },
+    { resource: 'iron', x: 24, z: 26, w: 4, h: 4 },
+    { resource: 'rubber', x: 30, z: 90, w: 3, h: 4 },
+    { resource: 'rubber', x: 96, z: 100, w: 3, h: 3 },
   ] satisfies ResourceNode[],
 };
