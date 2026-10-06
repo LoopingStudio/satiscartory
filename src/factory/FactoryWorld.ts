@@ -6,7 +6,7 @@ import type { FactorySim } from './sim/FactorySim';
 import type { Building } from './sim/types';
 
 /** Collider heights per building type (meters). Conveyors are low enough to step onto. */
-const HEIGHTS = { conveyor: 0.8, drill: 2.15, press: 2.1, assembler: 2.1 } as const;
+const HEIGHTS = { conveyor: 0.8, drill: 3.6, press: 2.1, assembler: 2.1 } as const;
 
 /** Rapier world of the factory: ground + one static collider set per building, kept in sync with the sim. */
 export class FactoryWorld {

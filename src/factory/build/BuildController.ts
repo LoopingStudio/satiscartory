@@ -294,7 +294,7 @@ export class BuildController {
     if (!b) return;
     const [w, h] = BUILDINGS[b.type].footprint;
     const [rw, rh] = rotatedSize(w, h, b.rot);
-    const height = b.type === 'conveyor' ? 1.0 : b.type === 'hub' ? 4.2 : 2.6;
+    const height = b.type === 'conveyor' ? 1.0 : b.type === 'hub' ? 4.2 : b.type === 'drill' ? 4.1 : 2.6;
     footprintCenter(b.type, b.x, b.z, b.rot, this.highlight.position);
     this.highlight.position.y = height / 2;
     this.highlight.scale.set(rw * FACTORY_CELL + 0.1, height, rh * FACTORY_CELL + 0.1);
