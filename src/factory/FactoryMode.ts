@@ -359,7 +359,7 @@ export class FactoryMode implements Mode {
       const id = this.build.interactTarget();
       const b = id !== null ? this.sim.buildings.get(id) : undefined;
       if (b) html = `<kbd>E</kbd> ${b.type === 'hub' ? 'ouvrir le hangar' : `configurer : ${BUILDINGS[b.type].name}`}`;
-      else html = '<kbd>1-4</kbd> construire · <kbd>Q</kbd> menu · <kbd>F</kbd> démonter';
+      else html = '<kbd>1-4</kbd> construire · <kbd>A</kbd> menu · <kbd>F</kbd> démonter';
     }
     this.hud.setHint(html);
   }

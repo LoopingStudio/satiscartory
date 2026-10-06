@@ -28,7 +28,7 @@ Le jeu tourne ensuite sur http://localhost:5173.
 
 ## Commandes
 
-Les touches suivent la position physique : ZQSD sur AZERTY, WASD sur QWERTY.
+Les touches suivent la position physique. Les libellés ci-dessous et dans le jeu sont ceux d’un clavier AZERTY (sur QWERTY, ZQSD devient WASD et A devient Q).
 
 ### Usine
 
@@ -43,7 +43,7 @@ Les touches suivent la position physique : ZQSD sur AZERTY, WASD sur QWERTY.
 | F | Démonter |
 | E | Utiliser une machine, une foreuse ou le hangar : recette, « Charger » (sac puis hangar), « Prendre » (production vers le sac), échanges sac ↔ hangar |
 | Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
-| Q | Menu de construction |
+| A | Menu de construction |
 | G | Garage |
 | Échap | Pause |
 

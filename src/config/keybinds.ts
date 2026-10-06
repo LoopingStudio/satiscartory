@@ -7,7 +7,7 @@ export const KEYBINDS = {
   jump: ['Space'],
   sprint: ['ShiftLeft', 'ShiftRight'],
   interact: ['KeyE'],
-  buildMenu: ['KeyQ'],
+  buildMenu: ['KeyQ'], // A on AZERTY (Q is "left" in ZQSD)
   rotate: ['KeyR'],
   dismantle: ['KeyF'],
   cancel: ['Escape'],
