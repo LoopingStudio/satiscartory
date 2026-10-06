@@ -5,6 +5,8 @@ import type { ModeName } from './core/ModeManager';
 import { AssetGalleryMode } from './dev/AssetGalleryMode';
 import { MenuMode, type MenuEntry } from './ui/menus/MenuMode';
 import { el } from './ui/dom';
+import { GameState } from './state/GameState';
+import { FactoryMode } from './factory/FactoryMode';
 import { fr } from './ui/i18n/fr';
 
 function loadingScreen() {
@@ -41,6 +43,11 @@ async function main() {
   game.modes.register('menu', () => new MenuMode(game, menuEntries));
   game.modes.register('gallery', () => new AssetGalleryMode(game));
 
+  const state = new GameState();
+  game.modes.register('factory', () => new FactoryMode(game, state));
+  // The factory keeps producing whatever mode is active.
+  game.addFactoryTicker(() => state.sim.tick());
+
   const params = new URLSearchParams(location.search);
   const requested = params.get('mode') as ModeName | null;
   await game.switchMode(requested && game.modes.has(requested) ? requested : 'menu', Object.fromEntries(params));
@@ -48,7 +55,7 @@ async function main() {
   loading.hide();
 
   if (import.meta.env.DEV) {
-    (window as unknown as { __game: Game }).__game = game;
+    Object.assign(window, { __game: game, __state: state });
   }
 }
 

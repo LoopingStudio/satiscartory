@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    exclude: ['**/node_modules/**', '**/*.scratch.test.ts'],
     testTimeout: 30000,
   },
 });

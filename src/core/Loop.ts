@@ -19,6 +19,8 @@ export class Loop {
   /** Multiplier applied to the factory clock (dev fast-forward). */
   factorySpeed = 1;
   fps = 0;
+  /** Interpolation factor between the last two factory ticks (0..1). */
+  factoryAlpha = 0;
   private fpsFrames = 0;
   private fpsTime = 0;
 
@@ -72,6 +74,7 @@ export class Loop {
     }
     if (fsteps >= 64) this.factoryAcc = 0;
 
-    this.cb.render(dt, this.physAcc / PHYS_DT, Math.min(1, this.factoryAcc / FACTORY_DT));
+    this.factoryAlpha = Math.min(1, this.factoryAcc / FACTORY_DT);
+    this.cb.render(dt, this.physAcc / PHYS_DT, this.factoryAlpha);
   }
 }

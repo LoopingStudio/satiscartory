@@ -17,7 +17,8 @@ export interface ModelInfo {
  * override materials for ghosts/highlights).
  */
 export class AssetLoader {
-  private loader = new GLTFLoader();
+  private loaders = new Map<KitName, GLTFLoader>();
+  private textures = new Map<KitName, Promise<THREE.Texture>>();
   private gltfs = new Map<ModelKey, GLTF>();
   private pending = new Map<ModelKey, Promise<GLTF>>();
   private kitMaterials = new Map<KitName, THREE.Material>();
@@ -41,7 +42,7 @@ export class AssetLoader {
     if (cached) return Promise.resolve(cached);
     let p = this.pending.get(key);
     if (!p) {
-      p = this.loader.loadAsync(this.url(key)).then((gltf) => {
+      p = this.loaderFor(kitOf(key)).loadAsync(this.url(key)).then((gltf) => {
         this.prepare(key, gltf);
         this.gltfs.set(key, gltf);
         this.pending.delete(key);
@@ -50,6 +51,34 @@ export class AssetLoader {
       this.pending.set(key, p);
     }
     return p;
+  }
+
+  /** All models of a kit reference the same Textures/colormap.png: decode it once per kit. */
+  private kitTexture(kit: KitName): Promise<THREE.Texture> {
+    let t = this.textures.get(kit);
+    if (!t) {
+      t = new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}assets/kenney/${kit}/Textures/colormap.png`).then((tex) => {
+        tex.flipY = false;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.anisotropy = 4;
+        tex.name = `${kit}/colormap`;
+        return tex;
+      });
+      this.textures.set(kit, t);
+    }
+    return t;
+  }
+
+  private loaderFor(kit: KitName): GLTFLoader {
+    let l = this.loaders.get(kit);
+    if (!l) {
+      l = new GLTFLoader();
+      l.register(() => ({ name: 'satiscartory_shared_colormap', loadTexture: () => this.kitTexture(kit) }));
+      this.loaders.set(kit, l);
+    }
+    return l;
   }
 
   async loadMany(keys: readonly ModelKey[], onProgress?: (done: number, total: number) => void): Promise<void> {
@@ -77,9 +106,7 @@ export class AssetLoader {
       if (shared) {
         mesh.material = shared;
       } else {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat.map) mat.map.anisotropy = 4;
-        this.kitMaterials.set(kit, mat);
+        this.kitMaterials.set(kit, mesh.material as THREE.MeshStandardMaterial);
       }
       mesh.castShadow = true;
       mesh.receiveShadow = true;
