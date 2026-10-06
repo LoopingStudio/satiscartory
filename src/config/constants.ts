@@ -26,6 +26,6 @@ export const MAX_PHYS_STEPS_PER_FRAME = 8;
 export const GRAVITY_FACTORY = -9.81;
 export const GRAVITY_RACE = -20;
 
-/** Factory grid size in cells. */
-export const FACTORY_GRID_W = 64;
-export const FACTORY_GRID_H = 64;
+/** Factory grid size in cells (256 m × 256 m). */
+export const FACTORY_GRID_W = 128;
+export const FACTORY_GRID_H = 128;

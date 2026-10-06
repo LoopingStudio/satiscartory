@@ -16,32 +16,32 @@ export function conveyorLine(sim: FactorySim, x: number, z: number, rot: Rot, n:
 }
 
 /**
- * Demo chain on the default map (hub at 30..32 × 30..32):
+ * Demo chain on the default map (hub at 62..64 × 62..64):
  * iron drill → press (plates) → hub, iron drill → press (bolts) → hub, rubber drill → press (tires) → hub.
  */
 export function spawnDemoFactory(sim: FactorySim): void {
   const free = { free: true };
-  // Plates: drill on iron node (24..26, 24..26), facing +X.
-  sim.place('drill', 24, 24, 1, free); // cells (24,24),(25,24); out (25,24) → (26,24)
-  conveyorLine(sim, 26, 24, 1, 2); // (26..27, 24)
-  const p1 = sim.place('press', 28, 24, 1, free); // (28..29, 24); out → (30,24)
+  // Machines facing ±X (rot 1/3) are 1 cell wide along X and 2 along Z; items cross them.
+  // Plates: drill on the west iron node (44..47, 61..64), east toward the hub.
+  sim.place('drill', 46, 61, 1, free); // cells (46, 61..62); out → (47,62)
+  conveyorLine(sim, 47, 62, 1, 6); // (47..52, 62)
+  const p1 = sim.place('press', 53, 62, 1, free); // (53, 62..63); in from (52,62); out → (54,62)
   if (p1.ok) sim.setRecipe(p1.building.id, 'plate');
-  conveyorLine(sim, 30, 24, 0, 6); // (30, 24..29) → hub (30,30)
+  conveyorLine(sim, 54, 62, 1, 8); // (54..61, 62) → hub (62,62)
 
-  // Bolts: second iron drill on the same node, row 26.
-  sim.place('drill', 24, 26, 1, free); // (24..25, 26) → (26,26)
-  conveyorLine(sim, 26, 26, 1, 2);
-  const p2 = sim.place('press', 28, 26, 1, free); // out → (30,26)
+  // Bolts: second drill on the same node, two rows up.
+  sim.place('drill', 46, 63, 1, free); // (46, 63..64) → (47,64)
+  conveyorLine(sim, 47, 64, 1, 6); // (47..52, 64)
+  const p2 = sim.place('press', 53, 64, 1, free); // (53, 64..65); out → (54,64)
   if (p2.ok) sim.setRecipe(p2.building.id, 'bolt');
-  conveyorLine(sim, 30, 26, 1, 1); // (30,26) facing +X → (31,26)
-  conveyorLine(sim, 31, 26, 0, 4); // (31, 26..29) → hub
+  conveyorLine(sim, 54, 64, 1, 8); // (54..61, 64) → hub (62,64)
 
-  // Tires: rubber node (23..25, 36..38) → press → up into the hub's +Z edge.
-  sim.place('drill', 24, 37, 1, free); // (24..25, 37) → (26,37)
-  conveyorLine(sim, 26, 37, 1, 3); // (26..28, 37)
-  const p3 = sim.place('press', 29, 37, 1, free); // (29..30, 37) → (31,37)
+  // Tires: north rubber node (61..63, 80..82) → press → down into the hub's +Z edge.
+  sim.place('drill', 61, 80, 2, free); // cells (61..62, 80), facing -Z; out → (62,79)
+  conveyorLine(sim, 62, 79, 2, 5); // (62, 79..75)
+  const p3 = sim.place('press', 61, 74, 2, free); // (61..62, 74); in from (62,75); out → (62,73)
   if (p3.ok) sim.setRecipe(p3.building.id, 'tire');
-  conveyorLine(sim, 31, 37, 2, 5); // (31, 37..33) facing -Z → hub (31,32)
+  conveyorLine(sim, 62, 73, 2, 9); // (62, 73..65) → hub (62,64)
 }
 
 /** Concentric closed conveyor rings filled with items (one per tile), for performance checks. */

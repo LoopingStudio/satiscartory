@@ -31,13 +31,21 @@ export function footprintCenter(type: BuildingType, x: number, z: number, rot: R
 /** Builds the static model group of a building type (also used for build ghosts). */
 export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group {
   const g = new THREE.Group();
+  // Kenney machines are tunnels open on their long sides (native ±X). Machines are 2 cells
+  // wide along X with items crossing along Z, so their parts are added in a quarter-turned frame.
+  const machine = type === 'press' || type === 'assembler';
+  const body = machine ? new THREE.Group() : g;
+  if (machine) {
+    body.rotation.y = Math.PI / 2;
+    g.add(body);
+  }
   const add = (key: ModelKey, pos: [number, number, number], scale: [number, number, number] | number, name?: string) => {
     const o = assets.instantiate(key);
     o.position.set(...pos);
     if (typeof scale === 'number') o.scale.setScalar(scale);
     else o.scale.set(...scale);
     if (name) o.name = name;
-    g.add(o);
+    body.add(o);
     return o;
   };
   switch (type) {
@@ -53,8 +61,12 @@ export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group
       add('factory-kit/robot-arm-a', [0, 2.04, -1.0], 0.5, 'arm');
       break;
     case 'drill':
-      add('factory-kit/machine-fortified', [0, 0, 0], [1.6, 1.6, 2.45]);
-      add('factory-kit/piston-round', [0, 2.12, -0.9], 0.9, 'piston');
+      // Drilling rig (2×1, frame of the footprint): drill tower in a yellow frame + collecting hopper.
+      add('factory-kit/structure-yellow-medium', [-1.75, 0, 0], [1.6, 2.4, 1.6]);
+      add('factory-kit/structure-yellow-medium', [-0.25, 0, 0], [1.6, 2.4, 1.6]);
+      add('factory-kit/piston-thin-round', [-1, 0, 0], [1.6, 2.4, 1.6]);
+      add('factory-kit/piston-round', [-1, 2.4, 0], 1.3, 'piston');
+      add('factory-kit/hopper-high-round', [1, 0, 0], 1.5);
       break;
     case 'hub': {
       add('factory-kit/floor-large', [0, 0.01, 0], 3);
@@ -94,7 +106,8 @@ export class BuildingVisual {
     if (this.arm) this.armParts = ['element-b', 'element-c', 'element-e'].map((n) => this.arm!.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
     if (building.type !== 'conveyor' && building.type !== 'hub') {
       this.lamp = new THREE.Mesh(lampGeometry, statusMaterial('noRecipe'));
-      this.lamp.position.set(0.6, 2.45, 1.1);
+      if (building.type === 'drill') this.lamp.position.set(-1, 3.95, 0);
+      else this.lamp.position.set(1.1, 2.45, -0.6);
       this.root.add(this.lamp);
     }
   }

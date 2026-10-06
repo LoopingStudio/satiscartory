@@ -6,6 +6,7 @@ import { RECIPES } from '../../data/recipes';
 import { ITEMS } from '../../data/items';
 import { BUILDINGS } from '../../data/buildings';
 import type { ConveyorB, MachineB } from './types';
+import { FACTORY_MAP, LEGACY_MAP_OFFSET } from '../../data/factoryMap';
 
 const rich = { plate: 10_000, bolt: 10_000 };
 const TICKS_PER_TILE = BELT.SEG / BELT.SPEED;
@@ -71,7 +72,7 @@ describe('placement', () => {
   it('drills need a resource node and mine its resource', () => {
     const s = sim({ nodes: [{ resource: 'iron', x: 5, z: 5, w: 1, h: 1 }] });
     expect(s.check('drill', 10, 10, 0).error).toBe('needsNode');
-    const r = s.place('drill', 5, 4, 0); // second footprint cell (5,5) is on the node
+    const r = s.place('drill', 4, 5, 0); // second footprint cell (5,5) is on the node
     expect(r.ok && r.building.type === 'drill' && r.building.resource).toBe('iron');
   });
 
@@ -199,12 +200,12 @@ describe('conveyors', () => {
 describe('machines', () => {
   it('drill → press → hub produces plates at the drill rate', () => {
     const s = sim({ nodes: [{ resource: 'iron', x: 5, z: 0, w: 1, h: 2 }], hub: { x: 4, z: 8, rot: 0 } });
-    expect(s.place('drill', 5, 0, 0).ok).toBe(true); // out at (5,1) facing +Z → (5,2)
-    line(s, 5, 2, 0, 2); // (5,2),(5,3)
-    const press = s.place('press', 5, 4, 0); // cells (5,4),(5,5); in at (5,4) back; out (5,5) +Z → (5,6)
+    expect(s.place('drill', 5, 0, 0).ok).toBe(true); // cells (5,0),(6,0); out (5,0) +Z → (5,1)
+    line(s, 5, 1, 0, 3); // (5,1..3)
+    const press = s.place('press', 5, 4, 0); // cells (5,4),(6,4); in at (5,4) back; out (5,4) +Z → (5,5)
     if (!press.ok) throw new Error(press.check.error);
     s.setRecipe(press.building.id, 'plate');
-    line(s, 5, 6, 0, 2); // (5,6),(5,7) → hub at z=8
+    line(s, 5, 5, 0, 3); // (5,5..7) → hub at z=8
     s.run(20 * 60); // one minute
     const plates = s.delivered.plate ?? 0;
     // 1 ore / 2 s → ~30 plates/min minus pipeline latency
@@ -277,13 +278,13 @@ describe('determinism & persistence', () => {
   function bigFactory() {
     const s = FactorySim.newGame();
     s.give({ plate: 500, bolt: 500 });
-    // two iron drills on the node at (24..26, 24..26) feeding a press then the hub (30..32, 30..32)
-    s.place('drill', 24, 24, 1); // footprint (24,24)-(25,24), out (25,24) facing +X → (26,24)
-    line(s, 26, 24, 1, 3); // (26..28, 24)
-    const p = s.place('press', 29, 24, 1); // cells (29,24),(30,24): in at (29,24) side -X; out at (30,24) +X → (31,24)
+    // an iron drill on the west node (44..47, 61..64) feeding a press then the hub (62..64, 62..64)
+    s.place('drill', 46, 61, 1); // cells (46,61),(46,62), out +X → (47,62)
+    line(s, 47, 62, 1, 4); // (47..50, 62)
+    const p = s.place('press', 51, 62, 1); // cells (51,62),(51,63): in from -X; out +X → (52,62)
     if (!p.ok) throw new Error(p.check.error);
     s.setRecipe(p.building.id, 'plate');
-    line(s, 31, 24, 0, 6); // (31,24..29) → hub at z=30
+    line(s, 52, 62, 1, 10); // (52..61, 62) → hub at x=62
     return s;
   }
 
@@ -336,7 +337,7 @@ describe('test layouts', () => {
 
   it('stress loops keep every item moving forever without loss', async () => {
     const { spawnStressLoops } = await import('./testLayouts');
-    const s = new FactorySim({ hub: null });
+    const s = new FactorySim({ hub: null, width: 64, height: 64 });
     const n = spawnStressLoops(s);
     expect(n).toBeGreaterThanOrEqual(2000);
     s.run(200);
@@ -393,10 +394,10 @@ describe('review regressions', () => {
   });
 
   it('a producer feeding a junction side is not starved by belts', () => {
-    const s = sim({ hub: { x: 4, z: 12, rot: 0 }, nodes: [{ resource: 'iron', x: 1, z: 5, w: 1, h: 1 }] });
+    const s = sim({ hub: { x: 4, z: 12, rot: 0 }, nodes: [{ resource: 'iron', x: 2, z: 5, w: 1, h: 1 }] });
     line(s, 5, 5, 0, 7);
     const back = line(s, 5, 2, 0, 3);
-    s.place('drill', 1, 5, 1); // (1..2, 5) → out (2,5) +X → (3,5)
+    s.place('drill', 2, 5, 1); // (2, 5..6) → out (2,5) +X → (3,5)
     line(s, 3, 5, 1, 2); // (3..4, 5) into (5,5) from the left
     for (let t = 0; t < 2000; t++) {
       const c = conveyor(s, back[0]!);
@@ -420,6 +421,76 @@ describe('review regressions', () => {
     // after exactly one lap it is back on the start tile at the same position
     expect(start.items.length).toBe(1);
     expect(start.items[0]!.pos).toBe(0);
+  });
+});
+
+describe('machine orientation', () => {
+  it('items cross a machine: in through the back long side, out through the front long side', () => {
+    for (const rot of [0, 1, 2, 3] as Rot[]) {
+      const s = sim();
+      const r = s.place('press', 10, 10, rot);
+      if (!r.ok) throw new Error(r.check.error);
+      const ports = BUILDINGS.press.ports.map((p) => ({ ...s.portWorld(r.building, p.cell, p.side), dir: p.dir }));
+      const cells = s.cellsFor('press', 10, 10, rot);
+      // the long axis is perpendicular to the flow: both cells share the in side and the out side
+      for (const dir of ['in', 'out'] as const) {
+        const list = ports.filter((p) => p.dir === dir);
+        expect(list).toHaveLength(2);
+        expect(new Set(list.map((p) => `${p.cx},${p.cz}`)).size).toBe(2);
+        expect(new Set(list.map((p) => p.side)).size).toBe(1);
+      }
+      const inSide = ports.find((p) => p.dir === 'in')!.side;
+      const outSide = ports.find((p) => p.dir === 'out')!.side;
+      expect(outSide).toBe(rot); // out = front, like a conveyor with the same rotation
+      expect((inSide + 2) & 3).toBe(outSide);
+      const longAlongX = new Set(cells.map((c) => c[0])).size === 2;
+      expect(longAlongX).toBe(rot % 2 === 0); // flow ±Z → long along X, flow ±X → long along Z
+    }
+  });
+
+  it('either front cell can feed the output conveyor', () => {
+    for (const dx of [0, 1]) {
+      const s = sim({ hub: { x: 4, z: 8, rot: 0 } });
+      const p = s.place('press', 5, 4, 0, { free: true }); // cells (5,4),(6,4)
+      if (!p.ok) throw new Error();
+      line(s, 5 + dx, 5, 0, 3); // out conveyor in front of cell dx → hub
+      expect(s.linkOf(p.building.id)?.target).toBe(s.at(5 + dx, 5)!.id);
+    }
+  });
+
+  it('saves from the 64×64 map are shifted onto the 128×128 map around the hub', () => {
+    const old = FactorySim.newGame().serialize();
+    old.version = 2;
+    old.buildings = [
+      { type: 'hub', id: 1, x: 30, z: 30, rot: 0 },
+      { type: 'conveyor', id: 2, x: 29, z: 31, rot: 1, items: [], lastFrom: -1 },
+    ];
+    old.nextId = 3;
+    const t = FactorySim.fromSave(old);
+    expect(t.width).toBe(128);
+    const hub = t.buildings.get(1)!;
+    expect([hub.x, hub.z]).toEqual([FACTORY_MAP.hub.x, FACTORY_MAP.hub.z]);
+    expect(t.at(61, 63)?.id).toBe(2);
+    expect(t.linkOf(2)?.target).toBe(1); // still feeding the hub
+  });
+
+  it('v1 saves turn machines a quarter so they keep the same cells', () => {
+    const s = sim();
+    const p = s.place('press', 5, 5, 0);
+    const c = s.place('conveyor', 9, 9, 0);
+    if (!p.ok || !c.ok) throw new Error();
+    const save = s.serialize();
+    save.version = 1;
+    const old = save.buildings.find((b) => b.id === p.building.id)!;
+    old.rot = 0; // v1 rot 0 = 1×2 along Z: cells (5,5),(5,6), shifted by the map growth
+    s.buildings.clear();
+    const t = FactorySim.fromSave(save, { width: 128, height: 128 });
+    const m = t.buildings.get(p.building.id)!;
+    expect(m.rot).toBe(1);
+    const o = LEGACY_MAP_OFFSET;
+    expect(t.cellsFor(m.type, m.x, m.z, m.rot)).toEqual([[5 + o, 5 + o], [5 + o, 6 + o]]);
+    expect(t.buildings.get(c.building.id)!.rot).toBe(0); // conveyors untouched
+    expect(t.serialize().version).toBe(3);
   });
 });
 

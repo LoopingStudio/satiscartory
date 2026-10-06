@@ -45,7 +45,7 @@ Les touches suivent la position physique : ZQSD sur AZERTY, WASD sur QWERTY.
 | Tab ou I | Ouvrir le sac (24 emplacements) |
 | Q | Menu de construction |
 | G | Garage |
-| Échap | Pause |
+| Échap | Fermer l'outil actif (construction, démontage) ; sans outil, pause |
 
 ### Course
 
