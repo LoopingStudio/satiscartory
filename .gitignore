@@ -4,3 +4,4 @@ dist
 *.log
 .DS_Store
 *.scratch.test.ts
+*.zz.test.ts

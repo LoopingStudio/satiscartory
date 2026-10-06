@@ -12,6 +12,7 @@ import { RaceMode } from './race/RaceMode';
 import { TrackSelectMode } from './race/TrackSelectMode';
 import { TrackEditorMode } from './track/editor/TrackEditorMode';
 import { GarageMode } from './garage/GarageMode';
+import { applySettings, openSettings } from './ui/menus/SettingsPanel';
 import { fr } from './ui/i18n/fr';
 
 function loadingScreen() {
@@ -44,13 +45,16 @@ async function main() {
     { label: fr.menu.garage, mode: 'garage' },
     { label: fr.menu.race, mode: 'tracks' },
     { label: fr.menu.editor, mode: 'editor' },
+    { label: fr.menu.settings, action: () => openSettings(game, state) },
     { label: fr.menu.gallery, mode: 'gallery' },
     {
       label: fr.menu.newGame,
       action: () => {
         if (!SaveManager.hasSave() || window.confirm(fr.menu.confirmNewGame)) {
           SaveManager.clear();
+          const settings = state.settings;
           state.replaceWith(new GameState());
+          state.settings = settings;
           void game.switchMode('factory');
         }
       },
@@ -66,6 +70,7 @@ async function main() {
   game.modes.register('garage', () => new GarageMode(game, state));
   // The factory keeps producing whatever mode is active.
   game.addFactoryTicker(() => state.sim.tick());
+  applySettings(game, state);
 
   // Autosave: every 30 s, on every mode switch and when the page is hidden/closed.
   let saveTimer = 0;

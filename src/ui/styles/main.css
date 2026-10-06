@@ -267,3 +267,7 @@ kbd {
 .objective { font-size: 13px; margin: 3px 0; }
 .objective.done { color: var(--good); opacity: 0.75; }
 .objective-hint { margin: 0 0 6px 16px; }
+.settings-layer { pointer-events: auto; background: rgba(10, 12, 24, 0.45); }
+.settings-panel { width: min(440px, 92vw); }
+.setting { margin: 8px 0; gap: 10px; }
+.setting input[type='range'] { width: 150px; }

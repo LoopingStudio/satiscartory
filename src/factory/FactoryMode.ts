@@ -16,6 +16,7 @@ import { BUILDINGS, BUILD_MENU } from '../data/buildings';
 import { PLAYER } from '../data/player';
 import { OBJECTIVES, type ObjectiveContext } from '../data/objectives';
 import { toast } from '../ui/dom';
+import { openSettings } from '../ui/menus/SettingsPanel';
 import { FactorySim } from './sim/FactorySim';
 import { spawnDemoFactory, spawnStressLoops } from './sim/testLayouts';
 import type { Action } from '../config/keybinds';
@@ -101,6 +102,7 @@ export class FactoryMode implements Mode {
       resume: () => this.resume(),
       menu: () => void this.game.switchMode('menu'),
       garage: () => void this.game.switchMode('garage'),
+      settings: () => openSettings(this.game, this.state, () => this.applySettings()),
       closePanel: () => this.closePanel(),
     });
     this.build.onChange = () => this.hud.buildHotbar(this.build.tool);

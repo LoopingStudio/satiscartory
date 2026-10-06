@@ -38,7 +38,24 @@ export class Renderer {
     for (const cb of this.onResizeCbs) cb(w, h);
   };
 
+  /** Toggles shadow rendering (materials recompile on the next frame). */
+  setShadows(enabled: boolean): void {
+    if (this.three.shadowMap.enabled === enabled) return;
+    this.three.shadowMap.enabled = enabled;
+    this.shadowsChanged = true;
+  }
+
+  private shadowsChanged = false;
+
   render(scene: THREE.Scene, camera: THREE.Camera): void {
+    if (this.shadowsChanged) {
+      this.shadowsChanged = false;
+      scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(m)) m.forEach((x) => (x.needsUpdate = true));
+        else if (m) m.needsUpdate = true;
+      });
+    }
     this.three.render(scene, camera);
   }
 }

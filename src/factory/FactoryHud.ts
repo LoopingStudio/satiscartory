@@ -29,6 +29,7 @@ export interface HudCallbacks {
   resume(): void;
   menu(): void;
   garage(): void;
+  settings(): void;
   closePanel(): void;
 }
 
@@ -123,6 +124,7 @@ export class FactoryHud {
         el('div', { class: 'row', style: 'margin-top:12px' },
           el('button', { class: 'primary', onclick: () => this.cb.resume() }, paused ? 'Reprendre' : 'Jouer'),
           el('button', { onclick: () => this.cb.garage() }, 'Garage'),
+          el('button', { onclick: () => this.cb.settings() }, 'Réglages'),
           el('button', { onclick: () => this.cb.menu() }, 'Menu principal'),
         ),
       ),
