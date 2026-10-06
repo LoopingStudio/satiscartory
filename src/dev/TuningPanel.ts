@@ -2,7 +2,7 @@ import GUI from 'lil-gui';
 import type { VehicleTuning } from '../car/tuning';
 
 const RANGES: Partial<Record<keyof VehicleTuning, [number, number, number]>> = {
-  massKg: [100, 3000, 10],
+  // massKg / comY are baked into the rigid body at creation (not live-tunable).
   engineN: [500, 30000, 100],
   rearBias: [0, 1, 0.05],
   dragK: [0, 10, 0.01],

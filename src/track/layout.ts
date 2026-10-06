@@ -98,3 +98,24 @@ export function centerline(track: TrackData): [number, number, number?][] {
   }
   return pts;
 }
+
+/**
+ * Route direction through each finish gate on the validated path: +1 when the
+ * route crosses the gate along its `forward`, -1 when against it.
+ */
+export function finishDirections(track: TrackData, gates = trackGates(track)): Map<number, 1 | -1> {
+  const out = new Map<number, 1 | -1>();
+  const a = analyzeTrack(track);
+  for (let k = 1; k < a.path.length; k++) {
+    const pi = a.path[k]!;
+    const gate = gates.find((g) => g.piece === pi && g.kind === 'finish');
+    if (!gate) continue;
+    const prev = pieceConnectors(track.pieces[a.path[k - 1]!]!, a.path[k - 1]!);
+    const entry = pieceConnectors(track.pieces[pi]!, pi).find((c) => prev.some((n) => n.cx === c.cx + DX[c.side] && n.cz === c.cz + DZ[c.side]));
+    if (!entry) continue;
+    // Travelling inward from the entry edge = opposite of the entry side direction.
+    const dot = -DX[entry.side] * gate.forward.x - DZ[entry.side] * gate.forward.z;
+    out.set(pi, dot >= 0 ? 1 : -1);
+  }
+  return out;
+}

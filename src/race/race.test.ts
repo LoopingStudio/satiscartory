@@ -39,11 +39,13 @@ describe('RaceSession', () => {
     for (let i = 0; i < 89; i++) expect(s.step()).toEqual([]);
     expect(s.step()).toEqual([{ type: 'go' }]);
     expect(s.phase).toBe('running');
-    for (let i = 0; i < 120; i++) s.step();
+    // the GO tick is the first timed tick
+    expect(s.timeMs).toBeCloseTo(dt, 5);
+    for (let i = 0; i < 119; i++) s.step();
     expect(s.timeMs).toBeCloseTo(2000, 5);
     const ev = s.cross('checkpoint', 7, 0.5);
     expect(ev[0]).toMatchObject({ type: 'checkpoint', piece: 7, index: 0 });
-    expect((ev[0] as { ms: number }).ms).toBeCloseTo(119.5 * dt, 5);
+    expect((ev[0] as { ms: number }).ms).toBe(Math.round(119.5 * dt));
     expect(s.lastCheckpoint).toBe(7);
   });
 
@@ -63,6 +65,26 @@ describe('RaceSession', () => {
     s.step();
     expect(s.timeMs).toBe(t);
     expect(s.splits).toHaveLength(2);
+  });
+
+  it('a finish crossed backwards never counts, even after driving forward through it again', () => {
+    const s = new RaceSession(0, dt, 1);
+    s.step();
+    s.step();
+    expect(s.cross('finish', 1, 0.5, false)).toEqual([]);
+    expect(s.cross('finish', 1, 0.5, true)).toEqual([]); // net 0: just undid the reverse
+    expect(s.phase).toBe('running');
+    expect(s.cross('finish', 1, 0.5, true)[0]?.type).toBe('finish'); // a real lap later
+  });
+
+  it('rounds times once so medals, records and the HUD agree', () => {
+    const s = new RaceSession(0, dt, 1);
+    s.step();
+    for (let i = 0; i < 738; i++) s.step();
+    const ev = s.cross('finish', 1, 0.4, true);
+    const ms = (ev[0] as { ms: number }).ms;
+    expect(Number.isInteger(ms)).toBe(true);
+    expect(s.timeMs).toBe(ms);
   });
 
   it('ignores gates during the countdown', () => {

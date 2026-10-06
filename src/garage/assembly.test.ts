@@ -63,3 +63,24 @@ describe('car stats', () => {
     expect(bs.weight).toBeGreaterThan(bk.weight + 4);
   });
 });
+
+describe('review regressions (garage/state)', () => {
+  it('bestChoices picks racing wheels / spoiler when in stock', async () => {
+    const { bestChoices } = await import('./assembly');
+    expect(bestChoices(BLUEPRINTS.kart, { wheel_racing: 4 }).wheels).toBe('wheel_racing');
+    expect(bestChoices(BLUEPRINTS.kart, { wheel_racing: 3, wheel: 4 }).wheels).toBe('wheel');
+    expect(bestChoices(BLUEPRINTS.sport, { spoiler: 1 }).spoiler).toBe('spoiler');
+    expect(bestChoices(BLUEPRINTS.sport, {}).spoiler).toBeNull();
+    expect(checkAssembly({ chassis: 1, engine: 1, wheel_racing: 4 }, 'kart', bestChoices(BLUEPRINTS.kart, { chassis: 1, engine: 1, wheel_racing: 4 })).ok).toBe(true);
+  });
+
+  it('choosing the loaner (null) survives a save/load; dangling ids fall back', async () => {
+    const { GameState } = await import('../state/GameState');
+    const s = new GameState();
+    s.cars.push({ id: 'car-1', name: 'K', blueprint: 'kart', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } });
+    s.selectedCarId = null;
+    expect(GameState.fromSave(JSON.parse(JSON.stringify(s.serialize()))).selectedCarId).toBeNull();
+    s.selectedCarId = 'car-9';
+    expect(GameState.fromSave(JSON.parse(JSON.stringify(s.serialize()))).selectedCarId).toBe('car-1');
+  });
+});

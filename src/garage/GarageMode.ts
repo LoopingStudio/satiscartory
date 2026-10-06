@@ -10,7 +10,7 @@ import { PART_MODIFIERS } from '../data/parts';
 import { CarModel } from '../car/CarModel';
 import { computeCarStats, statBars, type CarSpec, type StatBars } from '../car/stats';
 import { clear, createLayer, el, toast } from '../ui/dom';
-import { assemble, checkAssembly, defaultChoices, disassemble, specOf, swapPart, type CarInstance, type PartChoices } from './assembly';
+import { assemble, bestChoices, checkAssembly, disassemble, specOf, swapPart, type CarInstance, type PartChoices } from './assembly';
 
 export interface GarageParams {
   /** Open the draft of a new car of this blueprint. */
@@ -112,11 +112,7 @@ export class GarageMode implements Mode {
   }
 
   private newDraft(bp: BlueprintId): void {
-    this.view = { kind: 'draft', blueprint: bp, choices: defaultChoices(BLUEPRINTS[bp]) };
-    // Prefer the best wheels in stock.
-    const slot = BLUEPRINTS[bp].slots.find((s) => s.id === 'wheels');
-    if (slot && (this.storage.wheel_racing ?? 0) >= slot.count) this.view.choices.wheels = 'wheel_racing';
-    if (BLUEPRINTS[bp].slots.some((s) => s.id === 'spoiler') && (this.storage.spoiler ?? 0) > 0) this.view.choices.spoiler = 'spoiler';
+    this.view = { kind: 'draft', blueprint: bp, choices: bestChoices(BLUEPRINTS[bp], this.storage) };
   }
 
   private updateDisplay(): void {
@@ -162,7 +158,7 @@ export class GarageMode implements Mode {
       const bp = BLUEPRINTS[id];
       if (!bp.buildable) continue;
       const drafting = this.view.kind === 'draft' && this.view.blueprint === id;
-      const ok = checkAssembly(this.storage, id, defaultChoices(bp)).ok;
+      const ok = checkAssembly(this.storage, id, bestChoices(bp, this.storage)).ok;
       l.appendChild(
         el('button', { class: `car-row${drafting ? ' selected' : ''}`, 'data-blueprint': id, onclick: () => { this.newDraft(id); this.render(); } },
           el('span', { class: 'car-star' }, '+'),

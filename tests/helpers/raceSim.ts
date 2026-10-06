@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { readGlb, worldTriangles, nodeBoxes, type Tri } from '../../scripts/lib/glb.mjs';
 import { TRACK_PIECES } from '../../src/data/trackPieces';
-import { pieceMatrix, trackGates, trackSpawn, centerline } from '../../src/track/layout';
+import { pieceMatrix, trackGates, trackSpawn, centerline, finishDirections } from '../../src/track/layout';
 import type { TrackData } from '../../src/track/TrackData';
 import { carGeometryFromBoxes } from '../../src/car/geometry';
 import { computeCarStats, type CarSpec } from '../../src/car/stats';
@@ -71,6 +71,7 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: { maxSeconds?
   const car = new Vehicle(world, geo, tuningFromStats(computeCarStats(spec)), spawn);
   car.offroad = ground;
   const cps = gates.filter((g) => g.kind === 'checkpoint').length;
+  const finishDir = finishDirections(track, gates);
   const session = new RaceSession(cps, PHYS_DT * 1000, 90);
   const bot = new Bot(centerline(track), Math.sqrt((opts.latAccel ?? 32) / 32), opts.braking ?? 14);
   const prev = new THREE.Vector3();
@@ -95,7 +96,8 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: { maxSeconds?
         if (g.kind === 'start') continue;
         const hit = crossGate(prev, car.curPos, g);
         if (!hit) continue;
-        for (const e of session.cross(g.kind, g.piece, hit.t)) {
+        const forward = hit.dir === (finishDir.get(g.piece) ?? hit.dir);
+        for (const e of session.cross(g.kind, g.piece, hit.t, forward)) {
           if (e.type === 'checkpoint') {
             const f = g.forward.clone().multiplyScalar(hit.dir);
             respawnPoint = { position: g.center.clone().addScaledVector(f, 3).add(new THREE.Vector3(0, 0.6, 0)), yaw: Math.atan2(f.x, f.z) };

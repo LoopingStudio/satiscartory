@@ -115,3 +115,41 @@ describe('vehicle (headless Rapier)', () => {
     expect(s.stats.topSpeedMs).toBeGreaterThan(k.stats.topSpeedMs * 1.4);
   });
 });
+
+describe('vehicle robustness (review regressions)', () => {
+  it.each([
+    ['kart', KART, 'kart-oopi'],
+    ['loaner', { blueprint: 'loaner', parts: {} } as CarSpec, 'kart-oobi'],
+    ['sport', SPORT, 'sedan-sports'],
+  ] as const)('%s lying on its side either rights itself or triggers the auto-respawn timer', (_n, spec, model) => {
+    const world = new RAPIER.World({ x: 0, y: GRAVITY_RACE, z: 0 });
+    world.timestep = PHYS_DT;
+    world.createCollider(RAPIER.ColliderDesc.cuboid(5000, 0.5, 5000).setTranslation(0, -0.5, 0).setFriction(1));
+    const car = new Vehicle(world, geometry(model), tuningFromStats(computeCarStats(spec)), { position: new THREE.Vector3(0, 1.5, 0), yaw: 0 });
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), (100 * Math.PI) / 180);
+    car.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+    let max = 0;
+    for (let i = 0; i < 60 * 4; i++) {
+      car.step(PHYS_DT, NO_CONTROLS);
+      world.step();
+      car.afterWorldStep();
+      max = Math.max(max, car.flippedTime);
+    }
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(car.curQuat);
+    const recovered = up.y > 0.9 && car.wheelsInContact >= 3;
+    expect(recovered || max > 1.6).toBe(true);
+    world.free();
+  });
+
+  it('handbrake adds to the foot brake instead of replacing it', () => {
+    const a = setup(SPORT, 'sedan-sports');
+    const b = setup(SPORT, 'sedan-sports');
+    for (const s of [a, b]) {
+      s.run(0.5);
+      s.run(4, { ...NO_CONTROLS, throttle: 1 });
+    }
+    a.run(1.2, { ...NO_CONTROLS, brake: 1 });
+    b.run(1.2, { ...NO_CONTROLS, brake: 1, handbrake: true });
+    expect(b.car.speed).toBeLessThanOrEqual(a.car.speed + 0.5);
+  });
+});

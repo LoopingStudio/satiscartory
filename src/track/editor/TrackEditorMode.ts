@@ -9,7 +9,8 @@ import type { GameState } from '../../state/GameState';
 import { TrackStore } from '../../state/TrackStore';
 import { clear, createLayer, el, formatTime, toast } from '../../ui/dom';
 import { pieceCells, pieceConnectors, edgeKey } from '../connectors';
-import { History, MAX_LEVEL, overlapping, pieceAt, placePiece, removeAt } from '../editing';
+import { History, MAX_LEVEL, inBounds, overlapping, pieceAt, placePiece, removeAt } from '../editing';
+import { SaveManager } from '../../state/SaveManager';
 import { pieceMatrix } from '../layout';
 import { buildTrack, type BuiltTrack } from '../TrackBuilder';
 import { emptyTrack, type TrackData, type TrackPiece } from '../TrackData';
@@ -22,6 +23,8 @@ export interface EditorParams {
   copyOf?: string;
   /** Working copy coming back from a test drive. */
   track?: TrackData;
+  /** Unsaved-changes flag carried through a test drive. */
+  dirty?: boolean;
 }
 
 type Tool = { kind: 'piece'; id: string } | { kind: 'erase' };
@@ -33,6 +36,19 @@ const ghostBad = new THREE.MeshStandardMaterial({ color: 0xff5d5d, transparent: 
 const openMat = new THREE.MeshBasicMaterial({ color: 0xffa31a });
 const errorMat = new THREE.MeshBasicMaterial({ color: 0xff3b3b, transparent: true, opacity: 0.35, depthWrite: false });
 const arrowGeo = new THREE.ConeGeometry(0.9, 2.2, 10).rotateX(Math.PI / 2);
+
+/**
+ * Saves a user track. When its layout differs from the stored version, the old
+ * personal best no longer applies (like a new map UID in Trackmania): drop it.
+ */
+function persistTrack(track: TrackData, state: GameState): void {
+  const stored = TrackStore.get(track.id);
+  if (stored && JSON.stringify(stored.pieces) !== JSON.stringify(track.pieces) && state.records[track.id]) {
+    delete state.records[track.id];
+    SaveManager.save(state);
+  }
+  TrackStore.save(track);
+}
 
 /** Trackmania-style tile editor. */
 export class TrackEditorMode implements Mode {
@@ -69,14 +85,17 @@ export class TrackEditorMode implements Mode {
   private levelEl!: HTMLElement;
   private readonly raycaster = new THREE.Raycaster();
 
-  constructor(private readonly game: Game, _state: GameState) {
+  constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(50, 1, 5000);
     this.camera = camera;
     this.disposeCamera = dispose;
   }
 
   enter(params?: EditorParams): void {
-    if (params?.track) this.track = params.track;
+    if (params?.track) {
+      this.track = params.track;
+      this.dirty = params.dirty ?? true;
+    }
     else if (params?.trackId) this.track = TrackStore.get(params.trackId) ?? this.newTrack();
     else if (params?.copyOf) {
       const src = TrackStore.get(params.copyOf);
@@ -178,7 +197,7 @@ export class TrackEditorMode implements Mode {
 
   private save(): void {
     this.track.name = this.nameInput.value.trim() || 'Mon circuit';
-    TrackStore.save(this.track);
+    persistTrack(this.track, this.state);
     this.dirty = false;
     toast('Circuit enregistré', 'success');
     this.renderStatus();
@@ -191,15 +210,17 @@ export class TrackEditorMode implements Mode {
     }
     this.track.name = this.nameInput.value.trim() || 'Mon circuit';
     const working = this.track;
+    const back: EditorParams = { track: working, dirty: this.dirty };
     const params: RaceParams = {
       track: working,
       test: true,
       returnTo: 'editor',
-      returnParams: { track: working } satisfies EditorParams,
+      returnParams: back,
       onTestFinish: (ms) => {
-        // The author validation run sets the medals (keeps the best author time).
+        // The author validation run sets the medals (keeps the best author time) and saves the track.
         if (!working.medals || ms < working.medals.author) working.medals = medalsFromAuthor(ms);
-        TrackStore.save(working);
+        persistTrack(working, this.state);
+        back.dirty = false;
       },
     };
     void this.game.switchMode('race', params);
@@ -368,7 +389,7 @@ export class TrackEditorMode implements Mode {
     this.ghost.position.y += 0.15;
     const replace = overlapping(this.track, p).length > 0 || (TRACK_PIECES[p.t]?.gate === 'start' && this.track.pieces.some((q) => q.t === 'start'));
     const mat = replace ? ghostReplace : ghostOk;
-    const invalid = Math.abs(p.x) > 48 || Math.abs(p.z) > 48;
+    const invalid = !inBounds(p);
     this.ghost.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (mesh.isMesh) {

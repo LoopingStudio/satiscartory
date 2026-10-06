@@ -1,4 +1,5 @@
 import type { Medals } from '../track/TrackData';
+import { RACE } from '../data/race';
 
 export type Medal = 'author' | 'gold' | 'silver' | 'bronze';
 
@@ -11,8 +12,8 @@ export const MEDAL_LABEL: Record<Medal, string> = {
   bronze: 'Bronze',
 };
 
-/** Medal thresholds derived from the author time (Trackmania-like ratios). */
-export const MEDAL_RATIOS = { gold: 1.07, silver: 1.18, bronze: 1.5 } as const;
+/** Medal thresholds derived from the author time (see data/race.ts). */
+export const MEDAL_RATIOS = RACE.MEDAL_RATIOS;
 
 export function medalsFromAuthor(authorMs: number): Medals {
   const r = (k: number) => Math.ceil((authorMs * k) / 10) * 10;

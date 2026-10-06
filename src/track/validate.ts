@@ -4,7 +4,7 @@ import type { TrackData } from './TrackData';
 
 export interface TrackIssue {
   level: 'error' | 'warning';
-  code: 'noStart' | 'manyStarts' | 'noFinish' | 'overlap' | 'startBlocked' | 'finishUnreachable' | 'checkpointOffPath' | 'openEnd' | 'loopWithoutFinish';
+  code: 'noStart' | 'manyStarts' | 'noFinish' | 'noCheckpoint' | 'overlap' | 'startBlocked' | 'finishUnreachable' | 'checkpointOffPath' | 'openEnd' | 'loopWithoutFinish';
   message: string;
   /** Indices of the pieces involved (for highlighting). */
   pieces: number[];
@@ -40,6 +40,7 @@ export function analyzeTrack(track: TrackData): TrackAnalysis {
   if (starts.length === 0) issues.push({ level: 'error', code: 'noStart', message: 'Il faut un départ', pieces: [] });
   if (starts.length > 1) issues.push({ level: 'error', code: 'manyStarts', message: 'Un seul départ autorisé', pieces: starts });
   if (finishes.length === 0) issues.push({ level: 'error', code: 'noFinish', message: 'Il faut au moins une arrivée', pieces: [] });
+  if (checkpoints.length === 0) issues.push({ level: 'error', code: 'noCheckpoint', message: 'Il faut au moins un checkpoint', pieces: [] });
 
   // 2D occupancy: one piece per cell.
   const owner = new Map<string, number>();
@@ -99,7 +100,9 @@ export function analyzeTrack(track: TrackData): TrackAnalysis {
         visited.add(pi);
         path.push(pi);
         current = pi;
-        if (TRACK_PIECES[pieces[pi]!.t]?.gate === 'finish') {
+        // A finish only ends the route once every checkpoint has been driven through
+        // (the race ignores it before that), otherwise keep following the road.
+        if (TRACK_PIECES[pieces[pi]!.t]?.gate === 'finish' && checkpoints.every((c) => visited.has(c))) {
           reachedFinish = true;
           break;
         }

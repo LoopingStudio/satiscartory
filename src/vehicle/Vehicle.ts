@@ -171,17 +171,16 @@ export class Vehicle {
     const rear = (engine * t.rearBias) / Math.max(1, this.rearIdx.length);
     for (const i of this.frontIdx) vc.setWheelEngineForce(i, front);
     for (const i of this.rearIdx) vc.setWheelEngineForce(i, rear);
-    // Rapier brakes take an impulse per step.
+    // Rapier brakes take an impulse per step. The handbrake adds to the foot brake on the rear wheels.
     const brakeImpulse = (brake * dt) / 4;
     const coast = c.throttle === 0 && c.brake === 0 ? (t.massKg * VEHICLE.COAST_DECEL * dt) / 4 : 0;
-    for (let i = 0; i < vc.numWheels(); i++) vc.setWheelBrake(i, brakeImpulse + coast);
+    const handbrake = c.handbrake ? (t.brakeN * VEHICLE.HANDBRAKE_BRAKE * dt) / 4 : 0;
+    for (const i of this.frontIdx) vc.setWheelBrake(i, brakeImpulse + coast);
+    for (const i of this.rearIdx) vc.setWheelBrake(i, brakeImpulse + coast + handbrake);
 
     // Handbrake drift: rear tires lose side grip.
     this.drifting = c.handbrake && absSpeed > 8;
-    for (const i of this.rearIdx) {
-      vc.setWheelSideFrictionStiffness(i, this.drifting ? t.driftSideFriction : t.sideFrictionStiffness);
-      if (c.handbrake) vc.setWheelBrake(i, (t.brakeN * VEHICLE.HANDBRAKE_BRAKE * dt) / 4);
-    }
+    for (const i of this.rearIdx) vc.setWheelSideFrictionStiffness(i, this.drifting ? t.driftSideFriction : t.sideFrictionStiffness);
 
     // Aerodynamics: drag along velocity, rolling resistance, downforce along the car's down axis.
     const vmag = this.v.length();
@@ -218,8 +217,10 @@ export class Vehicle {
     this.wheelsInContact = contact;
     this.wheelsOffroad = offroad;
 
-    // Upside-down or stuck sideways: count time for auto-respawn.
-    if (this.up.y < 0.2 && absSpeed < 3) this.flippedTime += dt;
+    // On its side / upside-down, or resting on fewer than 3 wheels without moving: auto-respawn timer.
+    const tilted = this.up.y < 0.5;
+    const resting = contact < 3 && Math.abs(this.v.y) < 0.5;
+    if (absSpeed < 3 && (tilted || resting)) this.flippedTime += dt;
     else this.flippedTime = 0;
   }
 

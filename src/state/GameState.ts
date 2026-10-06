@@ -71,7 +71,9 @@ export class GameState {
     const s = new GameState(FactorySim.fromSave(data.factory));
     s.player = data.player ?? null;
     s.cars = Array.isArray(data.cars) ? data.cars : [];
-    s.selectedCarId = data.selectedCarId ?? s.cars[0]?.id ?? null;
+    // null = the loaner kart (a valid choice); fall back only when missing or dangling.
+    const sel = data.selectedCarId;
+    s.selectedCarId = sel === undefined ? (s.cars[0]?.id ?? null) : sel !== null && !s.cars.some((c) => c.id === sel) ? (s.cars[0]?.id ?? null) : sel;
     s.records = data.records ?? {};
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) };
     s.objectives = data.objectives ?? {};

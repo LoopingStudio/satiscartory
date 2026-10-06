@@ -23,6 +23,18 @@ export function defaultChoices(bp: Blueprint): PartChoices {
   return c;
 }
 
+/** Default choices upgraded to what the stock allows (racing wheels, spoiler). */
+export function bestChoices(bp: Blueprint, storage: Inventory): PartChoices {
+  const c = defaultChoices(bp);
+  for (const s of bp.slots) {
+    // Prefer the last (best) accepted item that is in stock in sufficient quantity.
+    const best = [...s.accepts].reverse().find((item) => (storage[item] ?? 0) >= s.count);
+    if (best) c[s.id] = best;
+    else if (s.optional) c[s.id] = null;
+  }
+  return c;
+}
+
 /** Items consumed by assembling `bp` with `choices`. */
 export function costOf(bp: Blueprint, choices: PartChoices): Inventory {
   const cost: Inventory = {};

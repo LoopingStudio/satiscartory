@@ -8,7 +8,7 @@ import type { GameState } from '../state/GameState';
 import { SaveManager } from '../state/SaveManager';
 import { buildTrack, type BuiltTrack, type Gate } from '../track/TrackBuilder';
 import type { TrackData } from '../track/TrackData';
-import { centerline } from '../track/layout';
+import { centerline, finishDirections } from '../track/layout';
 import { CarModel } from '../car/CarModel';
 import { computeCarStats, type CarSpec } from '../car/stats';
 import { tuningFromStats } from '../car/tuning';
@@ -16,13 +16,14 @@ import { Vehicle, NO_CONTROLS } from '../vehicle/Vehicle';
 import { ChaseCamera } from '../vehicle/ChaseCamera';
 import { readVehicleControls } from '../vehicle/VehicleInput';
 import { VEHICLE } from '../data/vehicle';
+import { RACE } from '../data/race';
 import { TuningPanel } from '../dev/TuningPanel';
 import { TEST_TRACK } from '../dev/testTrack';
 import { clear, createLayer, el, formatDelta, formatTime, toast } from '../ui/dom';
 import { RaceSession, type RaceEvent } from './RaceSession';
 import { crossGate } from './crossing';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
-import { submitRun } from './records';
+import { countAttempt, submitRun } from './records';
 import { LOANER_SPEC } from '../garage/assembly';
 
 export interface RaceParams {
@@ -48,7 +49,6 @@ export const DEV_SPECS: Record<string, CarSpec> = {
   loaner: LOANER_SPEC,
 };
 
-const COUNTDOWN_TICKS = 90; // 1.5 s
 
 /** Time trial: countdown, checkpoints in any order, respawn, restart, medals and personal best. */
 export class RaceMode implements Mode {
@@ -73,6 +73,8 @@ export class RaceMode implements Mode {
   private readonly vel = new THREE.Vector3();
   private readonly prevStep = new THREE.Vector3();
   private checkpointCount = 0;
+  /** Route direction through each finish gate (crossing it the other way does not finish). */
+  private finishDir = new Map<number, 1 | -1>();
   private respawnPoint = { position: new THREE.Vector3(), yaw: 0 };
   private pending: RaceEvent[] = [];
   // HUD
@@ -94,6 +96,7 @@ export class RaceMode implements Mode {
     this.track = buildTrack(this.trackData, this.game.assets, this.physics.world);
     this.scene.add(this.track.root);
     this.checkpointCount = this.track.gates.filter((g) => g.kind === 'checkpoint').length;
+    this.finishDir = finishDirections(this.trackData, this.track.gates);
 
     const sel = this.state.selectedCar;
     this.spec = params?.spec ?? (sel ? { blueprint: sel.blueprint as CarSpec['blueprint'], parts: sel.parts } : LOANER_SPEC);
@@ -111,8 +114,17 @@ export class RaceMode implements Mode {
 
   // ------------------------------------------------------------------ flow
 
+  /** An unfinished run that gets interrupted still counts as an attempt. */
+  private countUnfinished(): void {
+    if (this.session?.phase === 'running' && !this.params.test) {
+      countAttempt(this.state.records, this.trackData.id);
+      SaveManager.save(this.state);
+    }
+  }
+
   restart(): void {
-    this.session = new RaceSession(this.checkpointCount, PHYS_DT * 1000, COUNTDOWN_TICKS);
+    this.countUnfinished();
+    this.session = new RaceSession(this.checkpointCount, PHYS_DT * 1000, RACE.COUNTDOWN_TICKS);
     this.respawnPoint = { position: this.track.spawn.position.clone(), yaw: this.track.spawn.yaw };
     this.vehicle.reset(this.respawnPoint.position, this.respawnPoint.yaw);
     this.prevStep.copy(this.vehicle.curPos);
@@ -136,12 +148,13 @@ export class RaceMode implements Mode {
   private respawnAt(gate: Gate, dir: 1 | -1): void {
     const fwd = gate.forward.clone().multiplyScalar(dir);
     this.respawnPoint = {
-      position: gate.center.clone().addScaledVector(fwd, 3).add(new THREE.Vector3(0, 0.6, 0)),
+      position: gate.center.clone().addScaledVector(fwd, RACE.RESPAWN_AHEAD).add(new THREE.Vector3(0, 0.6, 0)),
       yaw: Math.atan2(fwd.x, fwd.z),
     };
   }
 
   private exitTo(): void {
+    this.countUnfinished();
     void this.game.switchMode(this.params.returnTo ?? 'tracks', this.params.returnParams ?? { selected: this.trackData.id });
   }
 
@@ -168,13 +181,14 @@ export class RaceMode implements Mode {
         if (g.kind === 'start') continue;
         const hit = crossGate(this.prevStep, this.vehicle.curPos, g);
         if (!hit) continue;
-        for (const e of this.session.cross(g.kind, g.piece, hit.t)) {
+        const forward = hit.dir === (this.finishDir.get(g.piece) ?? hit.dir);
+        for (const e of this.session.cross(g.kind, g.piece, hit.t, forward)) {
           if (e.type === 'checkpoint') this.respawnAt(g, hit.dir);
           this.pending.push(e);
         }
       }
     }
-    if (this.vehicle.curPos.y < this.track.minY - 25 || this.vehicle.flippedTime > VEHICLE.FLIP_RESPAWN_S) this.respawn();
+    if (this.vehicle.curPos.y < this.track.minY - RACE.FALL_LIMIT || this.vehicle.flippedTime > VEHICLE.FLIP_RESPAWN_S) this.respawn();
   }
 
   // ------------------------------------------------------------------ frame
@@ -233,6 +247,7 @@ export class RaceMode implements Mode {
       const r = submitRun(this.state.records, this.trackData.id, ms, this.session.splits, this.carId);
       improved = r.improved;
       previous = r.previous;
+      if (this.carId) this.state.objectives.race = true;
       SaveManager.save(this.state);
     } else {
       this.params.onTestFinish?.(ms);

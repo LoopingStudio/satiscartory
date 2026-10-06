@@ -30,6 +30,7 @@
   ],
   "exclude": [
     "**/*.scratch.test.ts",
+    "**/*.zz.test.ts",
     "node_modules",
     "dist"
   ]

@@ -53,14 +53,14 @@ describe('analyzeTrack', () => {
   });
 
   it('follows a 2x2 curve', () => {
-    const a = analyzeTrack(track([P('start', 0, 0), P('curve', 1, 0, 0), P('straight', 2, 2, 1), P('finish', 2, 3, 1)]));
-    expect(a.ok).toBe(true);
+    const a = analyzeTrack(track([P('start', 0, 0), P('curve', 1, 0, 0), P('checkpoint', 2, 2, 1), P('finish', 2, 3, 1)]));
+    expect(a.issues).toEqual([]);
   });
 
   it('climbs with slopes and requires matching levels', () => {
-    const ok = analyzeTrack(track([P('start', 0, 0), P('slope', 1, 0), P('straight', 2, 0, 0, 1), P('finish', 3, 0, 0, 1)]));
-    expect(ok.ok).toBe(true);
-    const bad = analyzeTrack(track([P('start', 0, 0), P('slope', 1, 0), P('straight', 2, 0, 0, 0), P('finish', 3, 0, 0, 0)]));
+    const ok = analyzeTrack(track([P('start', 0, 0), P('slope', 1, 0), P('checkpoint', 2, 0, 0, 1), P('finish', 3, 0, 0, 1)]));
+    expect(ok.issues).toEqual([]);
+    const bad = analyzeTrack(track([P('start', 0, 0), P('slope', 1, 0), P('checkpoint', 2, 0, 0, 0), P('finish', 3, 0, 0, 0)]));
     expect(bad.ok).toBe(false);
     expect(bad.issues.map((i) => i.code)).toContain('openEnd');
   });
@@ -69,12 +69,24 @@ describe('analyzeTrack', () => {
     expect(analyzeTrack(track([P('finish', 0, 0)])).issues.map((i) => i.code)).toContain('noStart');
     expect(analyzeTrack(track([P('start', 0, 0)])).issues.map((i) => i.code)).toContain('noFinish');
     expect(analyzeTrack(track([P('start', 0, 0), P('finish', 0, 0)])).issues.map((i) => i.code)).toContain('overlap');
-    const gap = analyzeTrack(track([P('start', 0, 0), P('straight', 1, 0), P('finish', 3, 0)]));
+    const gap = analyzeTrack(track([P('start', 0, 0), P('checkpoint', 1, 0), P('finish', 3, 0)]));
     expect(gap.issues.map((i) => i.code)).toContain('openEnd');
     const offPath = analyzeTrack(track([P('start', 0, 0), P('finish', 1, 0), P('checkpoint', 5, 5)]));
-    expect(offPath.issues.map((i) => i.code)).toContain('checkpointOffPath');
-    const backwards = analyzeTrack(track([P('start', 1, 0, 2), P('finish', 2, 0)]));
+    expect(offPath.issues.map((i) => i.code)).toEqual(expect.arrayContaining(['finishUnreachable']));
+    const backwards = analyzeTrack(track([P('start', 1, 0, 2), P('checkpoint', 3, 0), P('finish', 2, 0)]));
     expect(backwards.issues.map((i) => i.code)).toContain('startBlocked');
+    expect(analyzeTrack(track([P('start', 0, 0), P('finish', 1, 0)])).issues.map((i) => i.code)).toContain('noCheckpoint');
+  });
+
+  it('drives through a finish reached before every checkpoint (the race ignores it then)', () => {
+    // start → finish → cp → … the first finish pass does not end the route
+    const t = track([P('start', 0, 0), P('finish', 1, 0), P('checkpoint', 2, 0), P('straight', 3, 0)]);
+    const a = analyzeTrack(t);
+    expect(a.issues.map((i) => i.code)).toContain('openEnd');
+    const loop = LOOP();
+    loop.pieces[1] = P('finish', 2, 0, 0); // finish right after the start, checkpoint later in the loop
+    loop.pieces[6] = P('straight', 1, 2, 0);
+    expect(analyzeTrack(loop).issues.map((i) => i.code)).toContain('loopWithoutFinish');
   });
 
   it('detects a loop that never reaches the finish', () => {

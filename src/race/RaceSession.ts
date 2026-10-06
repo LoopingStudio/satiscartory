@@ -23,6 +23,8 @@ export class RaceSession {
   /** Piece index of the last checkpoint crossed (respawn point), or null. */
   lastCheckpoint: number | null = null;
   respawns = 0;
+  /** Forward minus backward crossings of the finish: reversing through it never counts as finishing. */
+  private finishNet = 0;
 
   constructor(
     readonly checkpointCount: number,
@@ -48,7 +50,9 @@ export class RaceSession {
     if (this.phase === 'countdown') {
       this.countdownLeft--;
       if (this.countdownLeft <= 0) {
+        // The car already drives during the GO tick: it is the first timed tick.
         this.phase = 'running';
+        this.ticks = 1;
         return [{ type: 'go' }];
       }
       return [];
@@ -59,11 +63,13 @@ export class RaceSession {
 
   /**
    * A gate was crossed during the last tick at fraction t of the step
-   * (t = 1 → at the end of the tick).
+   * (t = 1 → at the end of the tick). `forward` = crossed in the route direction
+   * (only matters for the finish). Times are rounded to the millisecond here so
+   * every consumer (medals, records, author time, HUD) sees the same value.
    */
-  cross(kind: 'checkpoint' | 'finish' | 'start', piece: number, t: number): RaceEvent[] {
+  cross(kind: 'checkpoint' | 'finish' | 'start', piece: number, t: number, forward = true): RaceEvent[] {
     if (this.phase !== 'running') return [];
-    const ms = Math.max(0, (this.ticks - 1 + t) * this.dtMs);
+    const ms = Math.round(Math.max(0, (this.ticks - 1 + t) * this.dtMs));
     if (kind === 'checkpoint') {
       if (this.passed.has(piece)) return [];
       this.passed.add(piece);
@@ -72,6 +78,8 @@ export class RaceSession {
       return [{ type: 'checkpoint', piece, index: this.splits.length - 1, ms }];
     }
     if (kind === 'finish') {
+      this.finishNet += forward ? 1 : -1;
+      if (!forward || this.finishNet < 1) return [];
       if (this.passed.size < this.checkpointCount) return [{ type: 'missingCheckpoints', remaining: this.checkpointCount - this.passed.size }];
       this.finishMs = ms;
       this.phase = 'finished';

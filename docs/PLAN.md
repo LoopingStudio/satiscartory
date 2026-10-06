@@ -319,4 +319,27 @@ On démarre avec assez de stock pour une petite installation (2 foreuses, 1 pres
 - [x] **P4** : on boucle un tour par les CP (Ovale et Colline, bot sans rendu et pilote auto avec de vraies touches) ; respawn au dernier CP et restart fonctionnent ; médaille et record persistent après rechargement.
 - [x] **P5** : on crée un circuit fermé avec une pente (14 pièces, posées par l'interface : palette, R, Pg↑/Pg↓, clics) ; il est validé, l'essai fixe le temps auteur et les médailles, on le pilote depuis la liste, et il survit au rechargement.
 - [x] **P6** : sur une nouvelle partie (bouton « Nouvelle partie »), on produit à pied les pièces du kart (chaîne caoutchouc → pneus → roues, châssis et moteur à l'assembleuse), on l'assemble au garage et on court : Ovale en 22,4 s, circuit de l'éditeur en 11,4 s (médaille auteur, mieux que la location). Tout persiste après rechargement. Les stats du kart et de la Sportive diffèrent nettement (tests : vitesse de pointe 150 contre 245 km/h, masse ×3, meilleure accélération du kart au départ).
-- [ ] **P7** : objectifs d'accueil, réglages, passe de performance.
+- [x] **P7** :
+  - Objectifs d'accueil (8 étapes, panneau compact).
+  - Réglages : sensibilité, inversion Y, ombres.
+  - Performance : course à 60 FPS et 21 draw calls, usine à 68 draw calls, 2 100 objets à 60 FPS, chargement < 3,3 s.
+  - Revue adverse des systèmes.
+
+## Validation finale (objectif atteint)
+
+Partie jouée de bout en bout sur une **nouvelle partie** (bouton « Nouvelle partie »), pilotée par de vrais événements clavier et souris :
+
+1. **À pied**, dans l'usine :
+   - Chaîne de plaques : foreuse fer → presse « Plaque » → hangar.
+   - Chaîne de boulons, fusionnée sur la même ligne.
+   - Chaîne de pneus : foreuse caoutchouc → presse « Pneu » → assembleuse « Roue » → hangar.
+   - Châssis, moteurs, panneaux et aileron produits par l'assembleuse.
+2. **Garage** : Kart Oopi n°1, puis Sportive n°2.
+3. **Courses chronométrées terminées** :
+   - Ovale (circuit fourni) : kart en 21,745 s, Sportive en 21,894 s.
+   - « Boucle test » (circuit créé dans l'éditeur, avec pente) : kart en 14,918 s.
+4. **Conduite nettement différente** (ligne droite) :
+   - Kart : 0 à 100 km/h en 3,3 s, pointe à 150 km/h, 320 kg, braquage 34°.
+   - Sportive : 0 à 100 km/h en 4,1 s, pointe à 241 km/h, 1 134 kg, braquage 27°.
+5. **Après rechargement** : usine (30 bâtiments, simulation reprise), voitures, records et objectifs (8/8) intacts.
+6. `npm test` et `npm run build` passent.

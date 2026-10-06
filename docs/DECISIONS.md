@@ -120,3 +120,25 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
   - La voiture assemblée devient la voiture de course (★).
 - **Touche G** : ouvre le garage depuis l'usine. Le panneau du hangar (E) y mène aussi.
 - **Poteaux des portiques** : déplacés juste hors de la tuile. Sur le trottoir, ils accrochaient les voitures en sortie de virage.
+
+## P7 : revue adverse (16 défauts confirmés, tous corrigés et couverts par des tests)
+
+- **Arrivée orientée** : franchir l'arrivée à contre-sens (sens du parcours validé, `finishDirections`) ne compte jamais. Un compteur net (passages en avant moins passages en arrière) empêche de reculer puis repasser. La validation exige **au moins un checkpoint**. Elle traverse une arrivée atteinte avant tous les CP, comme le fait la course.
+- **Temps** :
+  - Arrondis à la milliseconde **à la source** (RaceSession), donc médailles, records, temps auteur et HUD concordent.
+  - Le tick du GO est le premier tick chronométré.
+  - Les essais interrompus (restart, quitter) comptent comme tentatives.
+- **Éditeur** :
+  - L'état « non enregistré » traverse l'essai.
+  - Enregistrer un tracé modifié **efface le record** associé (comme un nouvel UID de map).
+  - L'aperçu applique les mêmes limites que la pose.
+- **Garage et état** :
+  - Choisir le kart de location (`null`) survit au rechargement ; un id de voiture disparu retombe sur la première voiture.
+  - « Pièces disponibles » tient compte des roues racing en stock (`bestChoices`).
+  - L'objectif « course » est validé dès qu'on finit avec sa propre voiture, record ou pas.
+- **Véhicule** :
+  - Le respawn automatique se déclenche aussi pour une voiture couchée sur le flanc (`up.y < 0,5`, ou moins de 3 roues au sol, à l'arrêt).
+  - Le frein à main **s'ajoute** au frein.
+  - La boucle n'a plus de `dt` négatif et ses alphas restent dans [0, 1].
+  - Masse et centre de masse retirés du panneau de réglages : ils sont figés à la création du corps.
+- **Rejetés après vérification** : types de pièces `Object.prototype` (inatteignable) et poteaux de portique absents de la simulation du bot (ils sont hors de la route).

@@ -54,7 +54,9 @@ export class Loop {
 
   private frame(now: number): void {
     this.lastFrameAt = now;
-    // Time spent in a background tab is dropped rather than caught up.
+    // Time spent in a background tab is dropped rather than caught up; never go backwards
+    // (rAF and the watchdog timer may deliver slightly out-of-order timestamps).
+    if (now < this.last) return;
     const dt = Math.min((now - this.last) / 1000, MAX_FRAME_DT);
     this.last = now;
 
@@ -85,6 +87,6 @@ export class Loop {
     if (fsteps >= 64) this.factoryAcc = 0;
 
     this.factoryAlpha = Math.min(1, this.factoryAcc / FACTORY_DT);
-    this.cb.render(dt, this.physAcc / PHYS_DT, this.factoryAlpha);
+    this.cb.render(dt, Math.min(1, Math.max(0, this.physAcc / PHYS_DT)), this.factoryAlpha);
   }
 }
