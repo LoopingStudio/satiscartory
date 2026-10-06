@@ -28,6 +28,8 @@ export interface FactoryModeParams {
 }
 
 const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4'];
+/** The Escape keydown and the pointer-lock change arrive in either order: treat them as one press. */
+const ESC_GRACE_MS = 400;
 
 /** On-foot factory: third-person character, building, machine configuration. */
 export class FactoryMode implements Mode {
@@ -54,6 +56,12 @@ export class FactoryMode implements Mode {
   private readonly raycaster = new THREE.Raycaster();
   private faceYaw = 0;
   private rmbDragged = 0;
+  /** Time (ms) a build/dismantle tool was last closed by Escape. */
+  private toolEscAt = -Infinity;
+  /** Pointer released by Escape while a tool was active: no pause menu, click to resume. */
+  private resumeHint = false;
+  /** Pointer lock succeeded at least once (a later refusal is a re-lock cooldown, not a missing feature). */
+  private lockWorked = false;
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(62, 0.1, 1500);
@@ -143,8 +151,22 @@ export class FactoryMode implements Mode {
 
     this.unsub.push(
       this.game.pointer.subscribe((locked) => {
-        if (!locked && !this.hud.panelOpen && !this.freeCursor) this.hud.showOverlay(true, this.started);
-        if (locked) this.hud.showOverlay(false, false);
+        if (locked) {
+          this.lockWorked = true;
+          this.resumeHint = false;
+          this.hud.showOverlay(false, false);
+          return;
+        }
+        if (this.hud.panelOpen || this.freeCursor) return;
+        // The browser always drops the pointer lock on Escape. With a tool active,
+        // Escape only closes the tool; the pause menu needs a second Escape.
+        if (this.build.cancel() || performance.now() - this.toolEscAt < ESC_GRACE_MS) {
+          this.toolEscAt = performance.now();
+          this.resumeHint = true;
+          this.hud.buildHotbar(this.build.tool);
+          return;
+        }
+        this.hud.showOverlay(true, this.started);
       }),
       this.sim.events.on('placed', () => this.hud.buildHotbar(this.build.tool)),
     );
@@ -164,9 +186,15 @@ export class FactoryMode implements Mode {
 
   private async resume(): Promise<void> {
     this.started = true;
+    this.resumeHint = false;
     this.hud.showOverlay(false, false);
     if (this.freeCursor) return;
     const ok = await this.game.pointer.request();
+    if (!ok && this.lockWorked) {
+      // Re-lock refused (browsers impose a short cooldown after Escape): click again.
+      this.resumeHint = true;
+      return;
+    }
     if (!ok) {
       // Pointer lock unavailable (embedded browser, denied…): play with a free cursor.
       this.freeCursor = true;
@@ -264,7 +292,13 @@ export class FactoryMode implements Mode {
     this.build.update();
 
     if (controlling) this.handleActions();
-    else if (this.hud.panelOpen && (input.wasPressed('cancel') || (input.wasPressed('buildMenu') && this.hud.openPanelKind === 'build') || (input.wasPressed('inventory') && this.hud.openPanelKind === 'inventory'))) this.closePanel();
+    else if (this.resumeHint && !this.hud.panelOpen) {
+      // Second Escape (tool already closed): open the pause menu.
+      if (input.wasPressed('cancel') && performance.now() - this.toolEscAt > ESC_GRACE_MS) {
+        this.resumeHint = false;
+        this.hud.showOverlay(true, true);
+      }
+    } else if (this.hud.panelOpen && (input.wasPressed('cancel') || (input.wasPressed('buildMenu') && this.hud.openPanelKind === 'build') || (input.wasPressed('inventory') && this.hud.openPanelKind === 'inventory'))) this.closePanel();
 
     this.hud.setCrosshair(this.game.pointer.locked && !this.hud.panelOpen);
     this.updateHint();
@@ -328,7 +362,9 @@ export class FactoryMode implements Mode {
       else if (b) this.openPanel('machine', b.id);
     }
     if (input.wasPressed('cancel')) {
-      if (!this.build.cancel() && this.freeCursor) this.hud.showOverlay(true, true), (this.started = false);
+      // Escape closes the active tool first; only without a tool does it pause.
+      if (this.build.cancel()) this.toolEscAt = performance.now();
+      else if (this.freeCursor) this.hud.showOverlay(true, true), (this.started = false);
       this.hud.buildHotbar(this.build.tool);
     }
     if (input.buttonWasPressed(0)) this.build.primaryDown();
@@ -343,7 +379,7 @@ export class FactoryMode implements Mode {
   private updateHint(): void {
     const t = this.build.tool;
     let html = '';
-    if (!this.controlling) html = '';
+    if (!this.controlling) html = this.resumeHint && !this.hud.panelOpen ? 'Clic : reprendre · <kbd>Échap</kbd> pause' : '';
     else if (t.kind === 'build') {
       const check = this.build.lastCheck;
       const err = check && !check.ok ? `<span class="bad">${describeError(check)}</span> · ` : '';
