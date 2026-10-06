@@ -120,6 +120,7 @@ export class FactoryMode implements Mode {
         const st = inv.takeSlot(i);
         if (st) this.sim.hub.add(st.item, st.count);
       },
+      moveSlot: (from, to) => inv.move(from, to),
       depositAll: () => {
         let n = 0;
         for (let i = 0; i < inv.slots.length; i++) {

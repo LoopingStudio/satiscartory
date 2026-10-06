@@ -9,6 +9,7 @@ import type { DrillB, MachineB } from './sim/types';
 import type { Tool } from './build/BuildController';
 import type { Inventory, Stack, Wallet } from '../state/Inventory';
 import type { ItemIcons } from '../core/assets/IconRenderer';
+import { INVENTORY } from '../data/inventory';
 
 const STATUS_LABEL = { working: 'En production', idle: 'En attente d’entrées', blocked: 'Sortie pleine', noRecipe: 'Aucune recette' } as const;
 
@@ -33,6 +34,8 @@ export interface HudCallbacks {
   takeFromHub(item: ItemId): void;
   /** Backpack slot → hub. */
   depositSlot(slot: number): void;
+  /** Drag and drop inside the backpack (move, merge or swap). */
+  moveSlot(from: number, to: number): void;
   depositAll(): void;
   /** Is the player close enough to the hub to use it? */
   nearHub(): boolean;
@@ -45,12 +48,24 @@ export interface HudCallbacks {
 
 type PanelKind = 'build' | 'machine' | 'drill' | 'hub' | 'inventory';
 
+interface Drag {
+  from: number;
+  x: number;
+  y: number;
+  /** Created once the pointer has moved enough (a plain click stays a click). */
+  ghost: HTMLElement | null;
+  over: HTMLElement | null;
+}
+
 /** DOM overlay of the factory mode. */
 export class FactoryHud {
   readonly layer = createLayer('factory-hud');
   private storage = el('div', { class: 'panel top-right storage-panel' });
-  private hotbar = el('div', { class: 'hotbar bottom-center' });
+  private hotbar = el('div', { class: 'hotbar' });
+  private bagBar = el('div', { class: 'bag-bar' });
   private hint = el('div', { class: 'hint' });
+  /** Bottom of the screen: hint, build bar, then the backpack's first row. */
+  private bottom = el('div', { class: 'bottom-stack' }, this.hint, this.hotbar, this.bagBar);
   private crosshair = el('div', { class: 'crosshair' });
   private overlay = el('div', { class: 'overlay center' });
   private panel: HTMLElement | null = null;
@@ -59,6 +74,10 @@ export class FactoryHud {
   private panelKey = '';
   private progressEl: HTMLElement | null = null;
   private storageKey = '';
+  private bagKey = '';
+  private bagPrev: (Stack | null)[] = [];
+  private drag: Drag | null = null;
+  private dragJustEnded = false;
   objectives = el('div', { class: 'panel top-left objectives' });
 
   constructor(
@@ -68,7 +87,7 @@ export class FactoryHud {
     private readonly icons: ItemIcons | null,
     private readonly cb: HudCallbacks,
   ) {
-    this.layer.append(this.storage, this.hotbar, this.hint, this.crosshair, this.overlay, this.objectives);
+    this.layer.append(this.storage, this.bottom, this.crosshair, this.overlay, this.objectives);
     this.objectives.style.display = 'none';
     this.buildHotbar({ kind: 'none' });
   }
@@ -114,8 +133,7 @@ export class FactoryHud {
             onclick: () => this.cb.selectTool(active ? { kind: 'none' } : { kind: 'build', type }),
             title: def.description,
           },
-          el('kbd', {}, String(i + 1)),
-          el('span', { class: 'slot-name' }, def.name),
+          el('span', { class: 'slot-top' }, el('kbd', {}, String(i + 1)), el('span', { class: 'slot-name' }, def.name)),
           el('span', { class: 'slot-cost' }, costText(def.cost)),
         ),
       );
@@ -123,7 +141,7 @@ export class FactoryHud {
     const dis = tool.kind === 'dismantle';
     this.hotbar.appendChild(
       el('button', { class: `slot${dis ? ' active danger-slot' : ''}`, onclick: () => this.cb.selectTool(dis ? { kind: 'none' } : { kind: 'dismantle' }) },
-        el('kbd', {}, 'F'), el('span', { class: 'slot-name' }, 'Démonter'), el('span', { class: 'slot-cost' }, 'remboursé')),
+        el('span', { class: 'slot-top' }, el('kbd', {}, 'F'), el('span', { class: 'slot-name' }, 'Démonter')), el('span', { class: 'slot-cost' }, 'remboursé')),
     );
   }
 
@@ -135,10 +153,11 @@ export class FactoryHud {
     this.crosshair.style.display = visible ? 'block' : 'none';
   }
 
+  /** Hub panel (top right) and backpack bar (bottom); only re-rendered when their content changed. */
   updateStorage(): void {
+    this.updateBagBar();
     const entries = ITEM_IDS.filter((id) => this.sim.count(id) > 0).map((id) => [id, this.sim.count(id)] as const);
-    const bag = this.inventory.serialize().filter((s): s is Stack => !!s);
-    const key = `${entries.map((e) => e.join(':')).join('|')}#${bag.map((s) => `${s.item}:${s.count}`).join('|')}`;
+    const key = entries.map((e) => e.join(':')).join('|');
     if (key === this.storageKey) return;
     this.storageKey = key;
     clear(this.storage);
@@ -147,12 +166,29 @@ export class FactoryHud {
     for (const [id, n] of entries) {
       this.storage.appendChild(el('div', { class: 'row storage-row' }, this.icon(id, 'item-icon tiny'), el('span', {}, ITEMS[id].name), el('span', { class: 'spacer' }), el('b', { class: 'mono' }, n)));
     }
-    const strip = el('div', { class: 'bag-strip' });
-    for (const s of bag.slice(0, 8)) strip.appendChild(this.slotEl(s));
-    this.storage.append(
-      el('h3', { style: 'margin-top:10px' }, `Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`),
-      bag.length ? strip : el('div', { class: 'muted small' }, 'Vide'),
-      el('div', { class: 'muted small', style: 'margin-top:4px' }, el('kbd', {}, 'Tab'), ' ouvrir le sac'),
+  }
+
+  /** First row of the backpack, always visible; a slot that gained items pulses. */
+  private updateBagBar(): void {
+    const row = this.inventory.slots.slice(0, INVENTORY.ROW);
+    const key = `${row.map((s) => (s ? `${s.item}:${s.count}` : '-')).join('|')}#${this.inventory.usedSlots}`;
+    if (key === this.bagKey) return;
+    const first = this.bagKey === '';
+    this.bagKey = key;
+    clear(this.bagBar);
+    row.forEach((s, i) => {
+      const prev = this.bagPrev[i];
+      const slot = this.slotEl(s);
+      if (!first && s && (prev?.item !== s.item || prev.count < s.count)) {
+        slot.classList.add('bump');
+        // Played once: hiding then showing the bar (display: none) would replay it.
+        slot.addEventListener('animationend', () => slot.classList.remove('bump'), { once: true });
+      }
+      this.bagBar.appendChild(slot);
+    });
+    this.bagPrev = row.map((s) => (s ? { ...s } : null));
+    this.bagBar.appendChild(
+      el('div', { class: 'bag-bar-label' }, el('b', {}, `Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`), el('span', {}, el('kbd', {}, 'Tab'))),
     );
   }
 
@@ -186,6 +222,8 @@ export class FactoryHud {
   // ------------------------------------------------------------------ panels
 
   closePanel(): void {
+    this.cancelDrag();
+    this.layer.classList.remove('panel-open', 'bag-panel-open');
     this.panel?.remove();
     this.panel = null;
     this.progressEl = null;
@@ -198,6 +236,8 @@ export class FactoryHud {
     this.closePanel();
     this.panelKind = kind;
     this.panelTarget = target;
+    this.layer.classList.add('panel-open');
+    if (kind === 'hub' || kind === 'inventory') this.layer.classList.add('bag-panel-open');
     this.panel = el('div', { class: `panel center modal ${cls}` });
     this.layer.appendChild(this.panel);
     this.refreshPanel(true);
@@ -230,7 +270,7 @@ export class FactoryHud {
 
   /** Re-renders the open panel when its content changed (keeps buttons clickable between updates). */
   private refreshPanel(force = false): void {
-    if (!this.panel || !this.panelKind) return;
+    if (!this.panel || !this.panelKind || (!force && this.drag?.ghost)) return;
     const key = this.contentKey();
     if (!force && key === this.panelKey) return;
     this.panelKey = key;
@@ -329,10 +369,100 @@ export class FactoryHud {
     );
   }
 
+  /** Backpack grid, Minecraft-style: storage rows, then the bar row (the one shown at the bottom of the screen). */
   private bagGrid(onSlot?: (i: number) => void): HTMLElement {
-    const grid = el('div', { class: 'inv-grid' });
-    this.inventory.slots.forEach((s, i) => grid.appendChild(this.slotEl(s, s && onSlot ? () => onSlot(i) : undefined)));
-    return grid;
+    const n = this.inventory.slots.length;
+    const row = Math.min(INVENTORY.ROW, n);
+    const main = el('div', { class: 'inv-grid' });
+    for (let i = row; i < n; i++) main.appendChild(this.bagSlot(i, onSlot));
+    const bar = el('div', { class: 'inv-grid' });
+    for (let i = 0; i < row; i++) bar.appendChild(this.bagSlot(i, onSlot));
+    return el('div', { class: 'bag' }, main, el('div', { class: 'bag-sep muted small' }, 'Barre du bas'), bar);
+  }
+
+  private bagSlot(i: number, onSlot?: (i: number) => void): HTMLElement {
+    const s = this.inventory.slots[i] ?? null;
+    const node = this.slotEl(s, s && onSlot ? () => !this.dragJustEnded && onSlot(i) : undefined);
+    node.dataset.slot = String(i);
+    if (s) {
+      node.classList.add('draggable');
+      node.addEventListener('pointerdown', (e) => this.dragStart(e, i));
+    }
+    return node;
+  }
+
+  // ------------------------------------------------------------------ drag and drop (backpack)
+
+  private dragStart(e: PointerEvent, from: number): void {
+    if (e.button !== 0 || this.drag) return;
+    this.drag = { from, x: e.clientX, y: e.clientY, ghost: null, over: null };
+    window.addEventListener('pointermove', this.onDragMove);
+    window.addEventListener('pointerup', this.onDragEnd);
+    window.addEventListener('pointercancel', this.onDragCancel);
+    window.addEventListener('blur', this.onDragCancel);
+    window.addEventListener('contextmenu', this.onDragCancel);
+  }
+
+  private onDragMove = (e: PointerEvent): void => {
+    const d = this.drag;
+    if (!d) return;
+    // The release was missed (native menu, focus loss…): never let a stale drag turn the next click into a drop.
+    if ((e.buttons & 1) === 0) return this.cancelDrag();
+    if (!d.ghost) {
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) return;
+      const s = this.inventory.slots[d.from];
+      if (!s) return this.cancelDrag();
+      d.ghost = el('div', { class: 'drag-ghost' }, this.icon(s.item), el('span', { class: 'inv-count mono' }, s.count));
+      this.layer.appendChild(d.ghost);
+      this.panel?.querySelector(`[data-slot="${d.from}"]`)?.classList.add('drag-source');
+    }
+    d.ghost.style.left = `${e.clientX}px`;
+    d.ghost.style.top = `${e.clientY}px`;
+    const over = this.dropTarget(e.clientX, e.clientY);
+    if (over !== d.over) {
+      d.over?.classList.remove('drop-target');
+      over?.classList.add('drop-target');
+      d.over = over;
+    }
+  };
+
+  private onDragEnd = (e: PointerEvent): void => {
+    const d = this.drag;
+    if (!d) return;
+    const target = d.ghost ? this.dropTarget(e.clientX, e.clientY) : null;
+    const dragged = d.ghost !== null;
+    this.cancelDrag();
+    if (!dragged) return;
+    // The click that follows this pointerup (same task) must not act on a slot.
+    this.dragJustEnded = true;
+    setTimeout(() => (this.dragJustEnded = false), 0);
+    if (target?.dataset.slot !== undefined) this.cb.moveSlot(d.from, Number(target.dataset.slot));
+    else if (target?.dataset.drop === 'hub') this.cb.depositSlot(d.from);
+    this.updateBagBar();
+    this.refreshPanel(true);
+  };
+
+  private onDragCancel = (): void => this.cancelDrag();
+
+  /** A backpack slot, or the hub column of the hub panel. */
+  private dropTarget(x: number, y: number): HTMLElement | null {
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || !this.panel?.contains(hit)) return null;
+    return hit.closest<HTMLElement>('[data-slot], [data-drop]');
+  }
+
+  private cancelDrag(): void {
+    const d = this.drag;
+    if (!d) return;
+    d.ghost?.remove();
+    d.over?.classList.remove('drop-target');
+    this.panel?.querySelector('.drag-source')?.classList.remove('drag-source');
+    this.drag = null;
+    window.removeEventListener('pointermove', this.onDragMove);
+    window.removeEventListener('pointerup', this.onDragEnd);
+    window.removeEventListener('pointercancel', this.onDragCancel);
+    window.removeEventListener('blur', this.onDragCancel);
+    window.removeEventListener('contextmenu', this.onDragCancel);
   }
 
   private renderHub(): void {
@@ -347,10 +477,10 @@ export class FactoryHud {
       );
     }
     this.panel!.append(
-      ...this.header('Hangar central', 'Clique un objet du hangar pour en prendre une pile, ou une case du sac pour la déposer.'),
+      ...this.header('Hangar central', 'Clique un objet du hangar pour en prendre une pile. Clique une case du sac (ou glisse-la sur le hangar) pour la déposer.'),
       el('div', { class: 'hub-columns' },
         el('div', {}, el('h3', {}, `Ton sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`), this.bagGrid((i) => this.cb.depositSlot(i))),
-        el('div', {}, el('h3', {}, 'Hangar'), list),
+        el('div', { class: 'hub-drop', 'data-drop': 'hub' }, el('h3', {}, 'Hangar'), list),
       ),
       el('div', { class: 'row', style: 'margin-top:10px' },
         el('button', { disabled: this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer'),
@@ -363,7 +493,7 @@ export class FactoryHud {
   private renderInventory(): void {
     const near = this.cb.nearHub();
     this.panel!.append(
-      ...this.header(`Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`, 'Constructions et chargements piochent d’abord dans le sac, puis dans le hangar. E sur une machine ou une foreuse : « Prendre » met sa production ici.'),
+      ...this.header(`Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`, 'Glisse une case pour la ranger : la dernière rangée est la barre du bas de l’écran. Constructions et chargements piochent d’abord dans le sac, puis dans le hangar.'),
       this.bagGrid(near ? (i) => this.cb.depositSlot(i) : undefined),
       el('div', { class: 'row', style: 'margin-top:10px' },
         el('button', { disabled: !near || this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer au hangar'),
@@ -400,6 +530,7 @@ export class FactoryHud {
   }
 
   dispose(): void {
+    this.cancelDrag();
     this.layer.remove();
   }
 }

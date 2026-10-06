@@ -68,6 +68,32 @@ export class Inventory implements ItemSource, ItemSink {
     return n - left;
   }
 
+  /**
+   * Drag and drop between slots: moves into an empty slot, merges into a stack
+   * of the same item (the remainder stays put), swaps otherwise. Returns false if nothing changed.
+   */
+  move(from: number, to: number): boolean {
+    if (from === to || !this.valid(from) || !this.valid(to)) return false;
+    const src = this.slots[from];
+    if (!src) return false;
+    const dst = this.slots[to];
+    if (dst?.item === src.item) {
+      const k = Math.min(ITEMS[src.item].stack - dst.count, src.count);
+      if (k <= 0) return false;
+      dst.count += k;
+      src.count -= k;
+      if (src.count === 0) this.slots[from] = null;
+      return true;
+    }
+    this.slots[to] = src;
+    this.slots[from] = dst ?? null;
+    return true;
+  }
+
+  private valid(i: number): boolean {
+    return Number.isInteger(i) && i >= 0 && i < this.slots.length;
+  }
+
   /** Empties one slot, returning its stack. */
   takeSlot(i: number): Stack | null {
     const s = this.slots[i] ?? null;

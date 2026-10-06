@@ -33,6 +33,37 @@ describe('Inventory (backpack)', () => {
     expect(inv.usedSlots).toBe(0);
   });
 
+  it('moves, merges and swaps slots (drag and drop)', () => {
+    const inv = new Inventory(4);
+    inv.add('plate', 70); // slot 0
+    inv.add('bolt', 5); // slot 1
+    expect(inv.move(0, 3)).toBe(true); // into an empty slot
+    expect(inv.slots).toEqual([null, { item: 'bolt', count: 5 }, null, { item: 'plate', count: 70 }]);
+    expect(inv.move(1, 3)).toBe(true); // different item: swap
+    expect(inv.slots).toEqual([null, { item: 'plate', count: 70 }, null, { item: 'bolt', count: 5 }]);
+    inv.slots[0] = { item: 'plate', count: 50 };
+    expect(inv.move(0, 1)).toBe(true); // same item: merge up to the stack size, remainder stays
+    expect(inv.slots[1]).toEqual({ item: 'plate', count: 100 });
+    expect(inv.slots[0]).toEqual({ item: 'plate', count: 20 });
+    expect(inv.move(0, 1)).toBe(false); // target stack full
+    expect(inv.move(1, 0)).toBe(true); // 100 onto 20: 80 move, 20 stay
+    expect(inv.slots[0]).toEqual({ item: 'plate', count: 100 });
+    expect(inv.slots[1]).toEqual({ item: 'plate', count: 20 });
+    expect(inv.count('plate')).toBe(120);
+  });
+
+  it('ignores invalid moves', () => {
+    const inv = new Inventory(3);
+    inv.add('tire', 4);
+    const before = inv.serialize();
+    expect(inv.move(0, 0)).toBe(false);
+    expect(inv.move(2, 0)).toBe(false); // empty source
+    expect(inv.move(0, 3)).toBe(false);
+    expect(inv.move(-1, 0)).toBe(false);
+    expect(inv.move(0, 1.5)).toBe(false);
+    expect(inv.serialize()).toEqual(before);
+  });
+
   it('round-trips through save data and sanitizes it', () => {
     const inv = new Inventory();
     inv.add('tire', 12);

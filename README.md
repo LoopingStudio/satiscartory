@@ -42,7 +42,7 @@ Les touches suivent la position physique : ZQSD sur AZERTY, WASD sur QWERTY.
 | Clic gauche | Poser (maintenu : tracer des convoyeurs) |
 | F | Démonter |
 | E | Utiliser une machine, une foreuse ou le hangar : recette, « Charger » (sac puis hangar), « Prendre » (production vers le sac), échanges sac ↔ hangar |
-| Tab ou I | Ouvrir le sac (24 emplacements) |
+| Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
 | Q | Menu de construction |
 | G | Garage |
 | Échap | Pause |
