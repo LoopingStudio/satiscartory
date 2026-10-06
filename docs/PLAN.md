@@ -317,6 +317,6 @@ On démarre avec assez de stock pour une petite installation (2 foreuses, 1 pres
 - [x] **P2** : on construit la chaîne à pied (foreuse, convoyeurs tracés, presse configurée avec E, convoyeurs jusqu'au hangar, via de vrais événements d'entrée) ; après rechargement, l'usine est intacte et produit encore.
 - [x] **P3** : la voiture roule, drifte (frein à main : +20° de rotation en 0,8 s en gardant la vitesse) et saute sans se retourner. Elle atteint environ 200 km/h (Sportive mesurée à 244 km/h, kart à 150). Les roues tournent et braquent. Les 8 tests Rapier sans rendu passent.
 - [x] **P4** : on boucle un tour par les CP (Ovale et Colline, bot sans rendu et pilote auto avec de vraies touches) ; respawn au dernier CP et restart fonctionnent ; médaille et record persistent après rechargement.
-- [ ] **P5** : on crée un circuit fermé avec une pente ; il est validé, on le pilote, et il survit au rechargement.
+- [x] **P5** : on crée un circuit fermé avec une pente (14 pièces, posées par l'interface : palette, R, Pg↑/Pg↓, clics) ; il est validé, l'essai fixe le temps auteur et les médailles, on le pilote depuis la liste, et il survit au rechargement.
 - [ ] **P6** : sur une nouvelle partie, on produit les pièces du kart, on l'assemble et on court ; ses stats diffèrent nettement de la Sport.
 - [ ] **P7** : objectifs d'accueil, réglages, passe de performance.

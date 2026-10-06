@@ -10,6 +10,7 @@ import { SaveManager } from './state/SaveManager';
 import { FactoryMode } from './factory/FactoryMode';
 import { RaceMode } from './race/RaceMode';
 import { TrackSelectMode } from './race/TrackSelectMode';
+import { TrackEditorMode } from './track/editor/TrackEditorMode';
 import { fr } from './ui/i18n/fr';
 
 function loadingScreen() {
@@ -60,6 +61,7 @@ async function main() {
   game.modes.register('factory', () => new FactoryMode(game, state));
   game.modes.register('race', () => new RaceMode(game, state));
   game.modes.register('tracks', () => new TrackSelectMode(game, state));
+  game.modes.register('editor', () => new TrackEditorMode(game, state));
   // The factory keeps producing whatever mode is active.
   game.addFactoryTicker(() => state.sim.tick());
 

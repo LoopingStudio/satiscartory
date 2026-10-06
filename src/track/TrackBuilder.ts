@@ -16,8 +16,9 @@ export { ROAD_SURFACE, pieceMatrix };
 
 export interface BuiltTrack {
   root: THREE.Group;
-  road: RAPIER.Collider;
-  ground: RAPIER.Collider;
+  /** Null when built without a physics world (editor preview). */
+  road: RAPIER.Collider | null;
+  ground: RAPIER.Collider | null;
   gates: Gate[];
   spawn: { position: THREE.Vector3; yaw: number };
   bounds: THREE.Box3;
@@ -61,7 +62,7 @@ function bannerTexture(kind: GateKind): THREE.CanvasTexture {
 }
 
 /** Builds visuals (one merged mesh), one road trimesh collider, gates and the spawn of a track. */
-export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.World): BuiltTrack {
+export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.World | null, opts: { ground?: boolean } = {}): BuiltTrack {
   const root = new THREE.Group();
   root.name = 'track';
   const disposables: { dispose(): void }[] = [];
@@ -89,7 +90,7 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
   }
   if (!Number.isFinite(minY)) minY = 0;
 
-  let road: RAPIER.Collider;
+  let road: RAPIER.Collider | null = null;
   if (geos.length) {
     const merged = mergeGeometries(geos, false)!;
     for (const g of geos) g.dispose();
@@ -99,10 +100,10 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
     mesh.name = 'road';
     root.add(mesh);
     disposables.push(merged);
-    const { vertices, indices } = trimeshData(merged);
-    road = world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices, RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES).setFriction(1));
-  } else {
-    road = world.createCollider(RAPIER.ColliderDesc.cuboid(1, 0.01, 1).setTranslation(0, -100, 0));
+    if (world) {
+      const { vertices, indices } = trimeshData(merged);
+      road = world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices, RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES).setFriction(1));
+    }
   }
 
   // Pillars under elevated pieces (visual only).
@@ -145,7 +146,7 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
       post.position.copy(center).addScaledVector(lateral, s * (halfWidth - 0.2)).add(new THREE.Vector3(0, 3.5, 0));
       post.castShadow = true;
       g.add(post);
-      world.createCollider(RAPIER.ColliderDesc.cuboid(0.45, 3.5, 0.45).setTranslation(post.position.x, post.position.y, post.position.z));
+      world?.createCollider(RAPIER.ColliderDesc.cuboid(0.45, 3.5, 0.45).setTranslation(post.position.x, post.position.y, post.position.z));
     }
     const tex = bannerTexture(kind);
     disposables.push(tex);
@@ -173,12 +174,14 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
   const groundGeo = new THREE.PlaneGeometry(size * 2, size * 2);
   const groundMat = new THREE.MeshStandardMaterial({ color: 0x6b7a5a, roughness: 1 });
   disposables.push(groundGeo, groundMat);
-  const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-  groundMesh.rotation.x = -Math.PI / 2;
-  groundMesh.position.set(center.x, -0.02, center.z);
-  groundMesh.receiveShadow = true;
-  root.add(groundMesh);
-  const ground = world.createCollider(RAPIER.ColliderDesc.cuboid(size, 1, size).setTranslation(center.x, -1.02, center.z).setFriction(0.8));
+  if (opts.ground !== false) {
+    const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.position.set(center.x, -0.02, center.z);
+    groundMesh.receiveShadow = true;
+    root.add(groundMesh);
+  }
+  const ground = world ? world.createCollider(RAPIER.ColliderDesc.cuboid(size, 1, size).setTranslation(center.x, -1.02, center.z).setFriction(0.8)) : null;
 
   return {
     root,
