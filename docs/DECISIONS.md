@@ -63,3 +63,22 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
   - `?mode=race&track=test|drag|pad&car=kart|kartr|sport|sportr` lance une course directement.
   - `?tune=1` (ou F3) ouvre le panneau de réglages lil-gui.
   - `T.autopilot(points)` conduit avec de vrais événements clavier.
+
+## P4
+
+- **Chronométrage** :
+  - Le temps se compte en ticks de physique (60 Hz), avec une précision sous le tick : le segment parcouru pendant le tick est intersecté avec le plan du portique, et la fraction donne le temps.
+  - Pas de raté possible à 300 km/h (test).
+- **Règles** (façon Trackmania) :
+  - Les CP comptent dans n'importe quel ordre ; l'arrivée ne compte que si tous les CP sont passés.
+  - Retour arrière : respawn au dernier CP, le chrono continue.
+  - Suppr : redémarrage complet.
+  - Entrée : réessayer après l'arrivée.
+- **Kart de location** : toujours disponible, plus lent (120 km/h) et moins adhérent, pour pouvoir courir tout de suite. Construire son kart est une vraie amélioration.
+- **Médailles** :
+  - Ratios : or ×1,07, argent ×1,18, bronze ×1,5 du temps auteur.
+  - Temps auteur des circuits officiels : meilleur temps du bot sans rendu ×0,96, après un balayage de ses paramètres (`CALIBRATE=1 npx vitest run tests/race-sim.test.ts`, résultat dans `docs/medal-calibration.tsv`).
+  - Résultat : la location vise le bronze, sa propre voiture l'argent, les améliorations l'or.
+- **Simulation sans rendu** : `tests/helpers/raceSim.ts` reconstruit le trimesh depuis les GLB et fait rouler le `Bot` (TS pur) avec le vrai `Vehicle`, la `RaceSession` et `crossGate`. Le test exige que chaque circuit officiel soit bouclable par le bot avec la location.
+- **Axe central** (`track/layout.centerline`) : milieux d'arêtes partagées et milieu d'arc dans les virages, avec une vitesse indicative `sqrt(32·r)`. Il sert au bot et à `T.autopilot`, qui traduit les commandes du bot en vraies touches.
+- **Caméra de poursuite** : un rayon voiture → caméra la rapproche devant les obstacles (poteaux de portique).

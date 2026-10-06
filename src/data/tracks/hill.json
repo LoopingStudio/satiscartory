@@ -1,0 +1,177 @@
+{
+ "format": "satiscartory-track",
+ "version": 1,
+ "id": "hill",
+ "name": "Colline",
+ "author": "Satiscartory",
+ "builtin": true,
+ "medals": {
+  "author": 13355,
+  "gold": 14290,
+  "silver": 15760,
+  "bronze": 20040
+ },
+ "pieces": [
+  {
+   "t": "start",
+   "x": 0,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight",
+   "x": 1,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight",
+   "x": 2,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight",
+   "x": 3,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "slope-barrier",
+   "x": 4,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight-barrier",
+   "x": 5,
+   "z": 0,
+   "y": 1,
+   "r": 0
+  },
+  {
+   "t": "slope-high-barrier",
+   "x": 6,
+   "z": 0,
+   "y": 1,
+   "r": 0
+  },
+  {
+   "t": "checkpoint",
+   "x": 7,
+   "z": 0,
+   "y": 3,
+   "r": 0
+  },
+  {
+   "t": "straight-barrier",
+   "x": 8,
+   "z": 0,
+   "y": 3,
+   "r": 0
+  },
+  {
+   "t": "slope-long-barrier",
+   "x": 9,
+   "z": 0,
+   "y": 1,
+   "r": 2
+  },
+  {
+   "t": "straight-barrier",
+   "x": 11,
+   "z": 0,
+   "y": 1,
+   "r": 0
+  },
+  {
+   "t": "slope-barrier",
+   "x": 12,
+   "z": 0,
+   "y": 0,
+   "r": 2
+  },
+  {
+   "t": "straight",
+   "x": 13,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "checkpoint",
+   "x": 14,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight",
+   "x": 15,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "curve-barrier",
+   "x": 16,
+   "z": 0,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight",
+   "x": 17,
+   "z": 2,
+   "y": 0,
+   "r": 1
+  },
+  {
+   "t": "straight",
+   "x": 17,
+   "z": 3,
+   "y": 0,
+   "r": 1
+  },
+  {
+   "t": "bend-barrier",
+   "x": 17,
+   "z": 4,
+   "y": 0,
+   "r": 3
+  },
+  {
+   "t": "straight",
+   "x": 16,
+   "z": 4,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight",
+   "x": 15,
+   "z": 4,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "straight",
+   "x": 14,
+   "z": 4,
+   "y": 0,
+   "r": 0
+  },
+  {
+   "t": "finish",
+   "x": 13,
+   "z": 4,
+   "y": 0,
+   "r": 0
+  }
+ ]
+}

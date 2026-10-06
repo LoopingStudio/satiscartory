@@ -9,6 +9,7 @@ import { GameState } from './state/GameState';
 import { SaveManager } from './state/SaveManager';
 import { FactoryMode } from './factory/FactoryMode';
 import { RaceMode } from './race/RaceMode';
+import { TrackSelectMode } from './race/TrackSelectMode';
 import { fr } from './ui/i18n/fr';
 
 function loadingScreen() {
@@ -39,7 +40,7 @@ async function main() {
   const menuEntries = (): MenuEntry[] => [
     { label: SaveManager.hasSave() ? fr.menu.continue : fr.menu.play, mode: 'factory', primary: true },
     { label: fr.menu.garage, mode: 'garage' },
-    { label: fr.menu.race, mode: 'race' },
+    { label: fr.menu.race, mode: 'tracks' },
     { label: fr.menu.editor, mode: 'editor' },
     { label: fr.menu.gallery, mode: 'gallery' },
     {
@@ -58,6 +59,7 @@ async function main() {
 
   game.modes.register('factory', () => new FactoryMode(game, state));
   game.modes.register('race', () => new RaceMode(game, state));
+  game.modes.register('tracks', () => new TrackSelectMode(game, state));
   // The factory keeps producing whatever mode is active.
   game.addFactoryTicker(() => state.sim.tick());
 
@@ -83,7 +85,8 @@ async function main() {
     const { DEV_TRACKS } = await import('./dev/testTrack');
     const { DEV_SPECS } = await import('./race/RaceMode');
     const t = params.get('track');
-    if (t && DEV_TRACKS[t]) modeParams.track = DEV_TRACKS[t];
+    const { TrackStore } = await import('./state/TrackStore');
+    if (t) modeParams.track = DEV_TRACKS[t] ?? TrackStore.get(t) ?? undefined;
     const c = params.get('car');
     if (c && DEV_SPECS[c]) modeParams.spec = DEV_SPECS[c];
   }

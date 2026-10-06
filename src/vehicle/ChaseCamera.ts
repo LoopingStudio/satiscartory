@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
 
 /** Smoothed chase camera with speed-based FOV, Trackmania style. */
 export class ChaseCamera {
@@ -10,7 +11,14 @@ export class ChaseCamera {
   private readonly dir = new THREE.Vector3(0, 0, 1);
   private initialized = false;
 
-  constructor(readonly camera: THREE.PerspectiveCamera) {}
+  private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+
+  /** `world`/`exclude` enable pulling the camera in front of obstacles (gate posts, walls). */
+  constructor(
+    readonly camera: THREE.PerspectiveCamera,
+    private readonly world?: RAPIER.World,
+    private readonly exclude?: RAPIER.Collider,
+  ) {}
 
   snap(): void {
     this.initialized = false;
@@ -48,6 +56,19 @@ export class ChaseCamera {
       this.look.copy(lookAt);
     }
     this.camera.position.copy(this.pos);
+    if (this.world) {
+      // Keep the car visible: pull the camera in when something sits between them.
+      const from = carPos.clone().add(new THREE.Vector3(0, 1.2, 0));
+      const to = this.pos.clone().sub(from);
+      const len = to.length();
+      if (len > 0.5) {
+        to.divideScalar(len);
+        this.ray.origin = { x: from.x, y: from.y, z: from.z };
+        this.ray.dir = { x: to.x, y: to.y, z: to.z };
+        const hit = this.world.castRay(this.ray, len, true, undefined, undefined, this.exclude);
+        if (hit && hit.timeOfImpact > 0.8) this.camera.position.copy(from).addScaledVector(to, hit.timeOfImpact - 0.4);
+      }
+    }
     this.camera.lookAt(this.look);
     const fov = 68 + speedRatio * 16;
     if (Math.abs(this.camera.fov - fov) > 0.05) {

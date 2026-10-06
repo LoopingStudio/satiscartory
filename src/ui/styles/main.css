@@ -197,3 +197,42 @@ kbd {
 .speedo { font-family: var(--mono); font-size: 64px; font-weight: 800; line-height: 1; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.45); }
 .speedo-unit { font-size: 14px; color: var(--muted); font-weight: 800; }
 .race-help { max-width: 380px; }
+
+/* Race HUD (timing) */
+.race-top { display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; }
+.race-timer { font-size: 44px; font-weight: 800; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.45); }
+.race-cp { font-weight: 800; color: var(--muted); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5); }
+.race-split { font-size: 22px; font-weight: 800; background: rgba(20, 22, 40, 0.75); padding: 4px 12px; border-radius: 8px; opacity: 0; transition: opacity 0.25s; }
+.race-countdown {
+  position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); font-size: 110px; font-weight: 900;
+  color: var(--accent); text-shadow: 0 6px 0 #7a4300; pointer-events: none; opacity: 0;
+}
+.race-countdown.pop { animation: pop 0.55s ease-out forwards; }
+@keyframes pop { 0% { opacity: 1; transform: translate(-50%, -50%) scale(1.4); } 70% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.9); } }
+.race-info { min-width: 190px; max-width: 220px; font-size: 14px; }
+.race-keys { background: rgba(20, 22, 40, 0.6); padding: 4px 8px; border-radius: 6px; }
+.medal-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.medal-row { display: flex; align-items: center; gap: 6px; font-size: 13px; opacity: 0.6; }
+.medal-row.got { opacity: 1; font-weight: 800; }
+.medal { display: inline-block; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25); flex: none; }
+.medal.big { width: 28px; height: 28px; margin-right: 8px; vertical-align: middle; }
+.medal-author { background: var(--author); }
+.medal-gold { background: var(--gold); }
+.medal-silver { background: var(--silver); }
+.medal-bronze { background: var(--bronze); }
+.medal-none { background: #3a3e63; }
+.finish-panel { text-align: center; min-width: 360px; }
+.finish-time { font-size: 48px; font-weight: 900; margin: 6px 0; }
+.finish-medal { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+
+/* Track select */
+.tracks-screen .track-list { position: absolute; left: 14px; top: 14px; bottom: 14px; width: min(330px, 40vw); overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.tracks-screen .track-detail { position: absolute; right: 14px; top: 14px; width: min(360px, 52vw); max-height: calc(100% - 28px); overflow: auto; }
+.track-row { display: flex; align-items: center; gap: 8px; text-align: left; }
+.track-row.selected { outline: 2px solid var(--accent); }
+.track-name { font-weight: 700; }
+.stat-bars { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.stat-bar { display: grid; grid-template-columns: 100px 1fr; align-items: center; gap: 8px; }
+.stat-bar .bar { height: 8px; border-radius: 4px; background: #262842; overflow: hidden; }
+.stat-bar .bar > div { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+.stat-bar .bar > div.delta-up { background: var(--good); }

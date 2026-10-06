@@ -4,24 +4,15 @@ import type { AssetLoader } from '../core/assets/AssetLoader';
 import { RAPIER, trimeshData } from '../core/physics/PhysicsWorld';
 import { LEVEL_H, TRACK_CELL } from '../config/constants';
 import { TRACK_PIECES, type GateKind } from '../data/trackPieces';
-import { DX, DZ, type Rot } from '../factory/sim/dirs';
-import { gateForwardSide, pieceSize } from './connectors';
-import type { TrackData, TrackPiece } from './TrackData';
+import { pieceSize } from './connectors';
+import { pieceMatrix, ROAD_SURFACE, trackGates, trackSpawn, type Gate } from './layout';
+import type { TrackData } from './TrackData';
 
-/** Road surface height above the tile base (city-kit-roads tiles are 0.02 tall). */
-export const ROAD_SURFACE = 0.02 * TRACK_CELL;
 /** Drivable road width (measured: ~0.85 tile including gutters). */
 export const ROAD_WIDTH = 0.85 * TRACK_CELL;
 
-export interface Gate {
-  kind: GateKind;
-  piece: number;
-  center: THREE.Vector3;
-  /** Unit horizontal direction a car drives through the gate. */
-  forward: THREE.Vector3;
-  halfWidth: number;
-  height: number;
-}
+export type { Gate };
+export { ROAD_SURFACE, pieceMatrix };
 
 export interface BuiltTrack {
   root: THREE.Group;
@@ -33,16 +24,6 @@ export interface BuiltTrack {
   /** Lowest road surface height (for the fall-off respawn). */
   minY: number;
   dispose(): void;
-}
-
-export function pieceMatrix(p: TrackPiece, out = new THREE.Matrix4()): THREE.Matrix4 {
-  const [rw, rh] = pieceSize(p);
-  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (p.r as Rot) * (Math.PI / 2));
-  return out.compose(
-    new THREE.Vector3((p.x + rw / 2) * TRACK_CELL, p.y * LEVEL_H, (p.z + rh / 2) * TRACK_CELL),
-    q,
-    new THREE.Vector3(TRACK_CELL, TRACK_CELL, TRACK_CELL),
-  );
 }
 
 const GATE_STYLE: Record<GateKind, { label: string; color: string; text: string }> = {
@@ -149,21 +130,14 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
     root.add(inst);
   }
 
-  // Gates.
-  const gates: Gate[] = [];
+  // Gates (layout from track/layout.ts) + posts and banners.
+  const gates = trackGates(track);
   const postGeo = new THREE.BoxGeometry(0.9, 7, 0.9);
   disposables.push(postGeo);
   const postMat = new THREE.MeshStandardMaterial({ color: 0x3a3e63, roughness: 0.6 });
   disposables.push(postMat);
-  track.pieces.forEach((p, i) => {
-    const kind = TRACK_PIECES[p.t]?.gate;
-    if (!kind) return;
-    const [rw, rh] = pieceSize(p);
-    const side = gateForwardSide(p);
-    const forward = new THREE.Vector3(DX[side], 0, DZ[side]);
-    const center = new THREE.Vector3((p.x + rw / 2) * TRACK_CELL, p.y * LEVEL_H + ROAD_SURFACE, (p.z + rh / 2) * TRACK_CELL);
-    const halfWidth = TRACK_CELL / 2;
-    gates.push({ kind, piece: i, center, forward, halfWidth, height: 7 });
+  for (const gate of gates) {
+    const { center, forward, halfWidth, kind } = gate;
     const lateral = new THREE.Vector3(-forward.z, 0, forward.x);
     const g = new THREE.Group();
     for (const s of [-1, 1]) {
@@ -177,25 +151,21 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
     disposables.push(tex);
     const bannerMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, emissive: 0xffffff, emissiveIntensity: 0.25, emissiveMap: tex });
     disposables.push(bannerMat);
-    const banner = new THREE.Mesh(new THREE.BoxGeometry(TRACK_CELL - 0.4, 1.6, 0.4), bannerMat);
+    const banner = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_CELL - 0.4, 1.6), bannerMat);
     disposables.push(banner.geometry);
     banner.position.copy(center).add(new THREE.Vector3(0, 6.2, 0));
-    banner.rotation.y = Math.atan2(lateral.x, lateral.z) - Math.PI / 2;
-    banner.castShadow = true;
+    // Face the oncoming car (banner normal = -forward), readable from both sides.
+    banner.rotation.y = Math.atan2(-forward.x, -forward.z);
+    bannerMat.side = THREE.DoubleSide;
     g.add(banner);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(TRACK_CELL - 0.2, 0.25, 0.3), postMat);
+    disposables.push(beam.geometry);
+    beam.position.copy(center).add(new THREE.Vector3(0, 7.05, 0));
+    beam.rotation.y = Math.atan2(lateral.x, lateral.z) - Math.PI / 2;
+    g.add(beam);
     root.add(g);
-  });
-
-  // Spawn on the start piece, facing its forward side.
-  const startIdx = track.pieces.findIndex((p) => TRACK_PIECES[p.t]?.gate === 'start');
-  let spawn = { position: new THREE.Vector3(0, 2, 0), yaw: 0 };
-  if (startIdx >= 0) {
-    const gate = gates.find((g) => g.piece === startIdx)!;
-    spawn = {
-      position: gate.center.clone().addScaledVector(gate.forward, -TRACK_CELL * 0.25).add(new THREE.Vector3(0, 0.6, 0)),
-      yaw: Math.atan2(gate.forward.x, gate.forward.z),
-    };
   }
+  const spawn = trackSpawn(track, gates);
 
   // Ground ("grass"): drivable but slow, see RaceMode.
   const size = Math.max(400, bounds.isEmpty() ? 0 : bounds.getSize(new THREE.Vector3()).length() * 2);

@@ -28,11 +28,13 @@ export interface BaseStats {
   brakeN: number;
 }
 
-export type BlueprintId = 'kart' | 'sport';
+export type BlueprintId = 'kart' | 'sport' | 'loaner';
 
 export interface Blueprint {
   id: BlueprintId;
   name: string;
+  /** Can be assembled in the garage (the loaner is always available instead). */
+  buildable: boolean;
   description: string;
   model: ModelKey;
   slots: SlotDef[];
@@ -43,6 +45,7 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
   kart: {
     id: 'kart',
     name: 'Kart Oopi',
+    buildable: true,
     description: 'Léger et nerveux : accélère fort et tourne serré, mais plafonne vite.',
     model: 'car-kit/kart-oopi',
     slots: [
@@ -55,6 +58,7 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
   sport: {
     id: 'sport',
     name: 'Sportive',
+    buildable: true,
     description: 'Lourde et rapide : vitesse de pointe élevée, stable, mais demande de bien freiner.',
     model: 'car-kit/sedan-sports',
     slots: [
@@ -65,6 +69,15 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
       { id: 'spoiler', name: 'Aileron', accepts: ['spoiler'], count: 1, optional: true },
     ],
     base: { massKg: 1050, engineN: 8800, topSpeedKmh: 245, grip: 0.95, downforce: 1.6, steerDeg: 27, brakeN: 14000 },
+  },
+  loaner: {
+    id: 'loaner',
+    name: 'Kart de location',
+    buildable: false,
+    description: 'Prêté par le circuit pour débuter. Lent et mou : construis le tien !',
+    model: 'car-kit/kart-oobi',
+    slots: [],
+    base: { massKg: 360, engineN: 2700, topSpeedKmh: 120, grip: 0.92, downforce: 0.4, steerDeg: 30, brakeN: 3800 },
   },
 };
 
