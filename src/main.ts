@@ -8,6 +8,7 @@ import { el } from './ui/dom';
 import { GameState } from './state/GameState';
 import { SaveManager } from './state/SaveManager';
 import { FactoryMode } from './factory/FactoryMode';
+import { RaceMode } from './race/RaceMode';
 import { fr } from './ui/i18n/fr';
 
 function loadingScreen() {
@@ -56,6 +57,7 @@ async function main() {
   game.modes.register('gallery', () => new AssetGalleryMode(game));
 
   game.modes.register('factory', () => new FactoryMode(game, state));
+  game.modes.register('race', () => new RaceMode(game, state));
   // The factory keeps producing whatever mode is active.
   game.addFactoryTicker(() => state.sim.tick());
 
@@ -76,7 +78,16 @@ async function main() {
 
   const params = new URLSearchParams(location.search);
   const requested = params.get('mode') as ModeName | null;
-  await game.switchMode(requested && game.modes.has(requested) ? requested : 'menu', Object.fromEntries(params));
+  const modeParams: Record<string, unknown> = Object.fromEntries(params);
+  if (import.meta.env.DEV && requested === 'race') {
+    const { DEV_TRACKS } = await import('./dev/testTrack');
+    const { DEV_SPECS } = await import('./race/RaceMode');
+    const t = params.get('track');
+    if (t && DEV_TRACKS[t]) modeParams.track = DEV_TRACKS[t];
+    const c = params.get('car');
+    if (c && DEV_SPECS[c]) modeParams.spec = DEV_SPECS[c];
+  }
+  await game.switchMode(requested && game.modes.has(requested) ? requested : 'menu', modeParams);
   game.start();
   loading.hide();
 

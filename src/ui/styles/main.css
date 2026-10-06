@@ -191,3 +191,9 @@ kbd {
 .controls-help { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
 .objectives { max-width: 330px; }
 .objectives .done { color: var(--good); text-decoration: line-through; opacity: 0.8; }
+
+/* Race HUD */
+.speedo-wrap { text-align: right; pointer-events: none; }
+.speedo { font-family: var(--mono); font-size: 64px; font-weight: 800; line-height: 1; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.45); }
+.speedo-unit { font-size: 14px; color: var(--muted); font-weight: 800; }
+.race-help { max-width: 380px; }

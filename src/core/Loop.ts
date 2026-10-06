@@ -15,6 +15,8 @@ export class Loop {
   private factoryAcc = 0;
   private last = 0;
   private raf = 0;
+  private watchdog = 0;
+  private lastFrameAt = 0;
   private running = false;
   /** Multiplier applied to the factory clock (dev fast-forward). */
   factorySpeed = 1;
@@ -36,14 +38,22 @@ export class Loop {
       this.frame(now);
     };
     this.raf = requestAnimationFrame(tick);
+    // Fallback when rAF is suspended but timers still run (hidden embedded views).
+    // Background tabs throttle timers too, so this never fast-forwards a paused game.
+    this.watchdog = window.setInterval(() => {
+      const now = performance.now();
+      if (now - this.lastFrameAt > 100) this.frame(now);
+    }, 16);
   }
 
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    clearInterval(this.watchdog);
   }
 
   private frame(now: number): void {
+    this.lastFrameAt = now;
     // Time spent in a background tab is dropped rather than caught up.
     const dt = Math.min((now - this.last) / 1000, MAX_FRAME_DT);
     this.last = now;

@@ -68,8 +68,9 @@ export function worldTriangles(glb) {
   const tris = [];
   const nodes = [];
   const scene = glb.json.scenes[glb.json.scene ?? 0];
-  const visit = (ni, parent) => {
+  const visit = (ni, parent, top) => {
     const node = glb.json.nodes[ni];
+    const topName = top ?? node.name;
     const local = node.matrix ?? mat4FromTRS(node.translation, node.rotation, node.scale);
     const world = mul(parent, local);
     nodes.push({ name: node.name, worldPos: [world[12], world[13], world[14]] });
@@ -81,15 +82,27 @@ export function worldTriangles(glb) {
         const P = (i) => apply(world, pos.data[i * 3], pos.data[i * 3 + 1], pos.data[i * 3 + 2]);
         const U = (i) => (uv ? [uv.data[i * 2], uv.data[i * 2 + 1]] : [0, 0]);
         for (let i = 0; i < idx.length; i += 3) {
-          tris.push({ a: P(idx[i]), b: P(idx[i + 1]), c: P(idx[i + 2]), uva: U(idx[i]), uvb: U(idx[i + 1]), uvc: U(idx[i + 2]) });
+          tris.push({ a: P(idx[i]), b: P(idx[i + 1]), c: P(idx[i + 2]), uva: U(idx[i]), uvb: U(idx[i + 1]), uvc: U(idx[i + 2]), node: topName });
         }
       }
     }
-    for (const c of node.children ?? []) visit(c, world);
+    // children of a single root node are the meaningful parts (body, wheel-*)
+    for (const c of node.children ?? []) visit(c, world, top ?? (scene.nodes.length === 1 && (node.children ?? []).length > 1 ? undefined : topName));
   };
   const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-  for (const ni of scene.nodes) visit(ni, I);
+  for (const ni of scene.nodes) visit(ni, I, undefined);
   return { tris, nodes };
+}
+
+/** Bounding boxes of triangles grouped by top-level node name. */
+export function nodeBoxes(tris) {
+  const map = new Map();
+  for (const t of tris) {
+    let b = map.get(t.node);
+    if (!b) map.set(t.node, (b = { name: t.node, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }));
+    for (const p of [t.a, t.b, t.c]) for (let i = 0; i < 3; i++) { b.min[i] = Math.min(b.min[i], p[i]); b.max[i] = Math.max(b.max[i], p[i]); }
+  }
+  return [...map.values()];
 }
 
 /** Vertical ray from above at (x,z): returns highest hit {y, uv} or null. */
