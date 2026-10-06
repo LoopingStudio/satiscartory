@@ -64,8 +64,11 @@ export interface Link {
 }
 
 export interface FactorySave {
-  /** 1: machines 1×2, items along their length. 2: machines 2×1, items across (migrated on load). */
-  version: 1 | 2;
+  /**
+   * 1: machines 1×2, items along their length. 2: machines 2×1, items across.
+   * 3: 128×128 map (older saves are shifted by LEGACY_MAP_OFFSET). Migrated on load.
+   */
+  version: 1 | 2 | 3;
   tick: number;
   nextId: number;
   storage: Inventory;

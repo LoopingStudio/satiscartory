@@ -3,6 +3,8 @@ import type { FactorySave } from '../factory/sim/types';
 import type { CarInstance } from '../garage/assembly';
 import type { TrackRecord } from '../race/records';
 import { Inventory, Wallet, type Stack } from './Inventory';
+import { LEGACY_MAP_OFFSET } from '../data/factoryMap';
+import { FACTORY_CELL } from '../config/constants';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -81,6 +83,10 @@ export class GameState {
   static fromSave(data: SaveData): GameState {
     const s = new GameState(FactorySim.fromSave(data.factory));
     s.player = data.player ?? null;
+    // Saves from the 64×64 map: the factory is shifted on load, the player follows.
+    if (s.player && (data.factory.version ?? 1) < 3) {
+      s.player = { ...s.player, x: s.player.x + LEGACY_MAP_OFFSET * FACTORY_CELL, z: s.player.z + LEGACY_MAP_OFFSET * FACTORY_CELL };
+    }
     s.cars = Array.isArray(data.cars) ? data.cars : [];
     // null = the loaner kart (a valid choice); fall back only when missing or dangling.
     const sel = data.selectedCarId;

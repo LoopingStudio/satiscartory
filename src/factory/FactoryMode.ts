@@ -71,7 +71,7 @@ export class FactoryMode implements Mode {
 
   enter(params?: FactoryModeParams): void {
     if (params?.layout === 'stress') {
-      this.sim = new FactorySim({ hub: null });
+      this.sim = new FactorySim({ hub: null, width: 64, height: 64 });
       spawnStressLoops(this.sim);
       this.state.sim = this.sim;
       this.state.ephemeral = true;

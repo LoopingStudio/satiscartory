@@ -6,6 +6,7 @@ import { RECIPES } from '../../data/recipes';
 import { ITEMS } from '../../data/items';
 import { BUILDINGS } from '../../data/buildings';
 import type { ConveyorB, MachineB } from './types';
+import { FACTORY_MAP, LEGACY_MAP_OFFSET } from '../../data/factoryMap';
 
 const rich = { plate: 10_000, bolt: 10_000 };
 const TICKS_PER_TILE = BELT.SEG / BELT.SPEED;
@@ -277,13 +278,13 @@ describe('determinism & persistence', () => {
   function bigFactory() {
     const s = FactorySim.newGame();
     s.give({ plate: 500, bolt: 500 });
-    // two iron drills on the node at (24..26, 24..26) feeding a press then the hub (30..32, 30..32)
-    s.place('drill', 24, 24, 1); // cells (24,24),(24,25), out +X → (25,24)
-    line(s, 25, 24, 1, 4); // (25..28, 24)
-    const p = s.place('press', 29, 24, 1); // cells (29,24),(29,25): in from -X; out +X → (30,24)
+    // an iron drill on the west node (44..47, 61..64) feeding a press then the hub (62..64, 62..64)
+    s.place('drill', 46, 61, 1); // cells (46,61),(46,62), out +X → (47,62)
+    line(s, 47, 62, 1, 4); // (47..50, 62)
+    const p = s.place('press', 51, 62, 1); // cells (51,62),(51,63): in from -X; out +X → (52,62)
     if (!p.ok) throw new Error(p.check.error);
     s.setRecipe(p.building.id, 'plate');
-    line(s, 30, 24, 0, 6); // (30,24..29) → hub at z=30
+    line(s, 52, 62, 1, 10); // (52..61, 62) → hub at x=62
     return s;
   }
 
@@ -336,7 +337,7 @@ describe('test layouts', () => {
 
   it('stress loops keep every item moving forever without loss', async () => {
     const { spawnStressLoops } = await import('./testLayouts');
-    const s = new FactorySim({ hub: null });
+    const s = new FactorySim({ hub: null, width: 64, height: 64 });
     const n = spawnStressLoops(s);
     expect(n).toBeGreaterThanOrEqual(2000);
     s.run(200);
@@ -457,6 +458,22 @@ describe('machine orientation', () => {
     }
   });
 
+  it('saves from the 64×64 map are shifted onto the 128×128 map around the hub', () => {
+    const old = FactorySim.newGame().serialize();
+    old.version = 2;
+    old.buildings = [
+      { type: 'hub', id: 1, x: 30, z: 30, rot: 0 },
+      { type: 'conveyor', id: 2, x: 29, z: 31, rot: 1, items: [], lastFrom: -1 },
+    ];
+    old.nextId = 3;
+    const t = FactorySim.fromSave(old);
+    expect(t.width).toBe(128);
+    const hub = t.buildings.get(1)!;
+    expect([hub.x, hub.z]).toEqual([FACTORY_MAP.hub.x, FACTORY_MAP.hub.z]);
+    expect(t.at(61, 63)?.id).toBe(2);
+    expect(t.linkOf(2)?.target).toBe(1); // still feeding the hub
+  });
+
   it('v1 saves turn machines a quarter so they keep the same cells', () => {
     const s = sim();
     const p = s.place('press', 5, 5, 0);
@@ -465,14 +482,15 @@ describe('machine orientation', () => {
     const save = s.serialize();
     save.version = 1;
     const old = save.buildings.find((b) => b.id === p.building.id)!;
-    old.rot = 0; // v1 rot 0 = 1×2 along Z: cells (5,5),(5,6)
+    old.rot = 0; // v1 rot 0 = 1×2 along Z: cells (5,5),(5,6), shifted by the map growth
     s.buildings.clear();
-    const t = FactorySim.fromSave(save, { width: 32, height: 32 });
+    const t = FactorySim.fromSave(save, { width: 128, height: 128 });
     const m = t.buildings.get(p.building.id)!;
     expect(m.rot).toBe(1);
-    expect(t.cellsFor(m.type, m.x, m.z, m.rot)).toEqual([[5, 5], [5, 6]]);
+    const o = LEGACY_MAP_OFFSET;
+    expect(t.cellsFor(m.type, m.x, m.z, m.rot)).toEqual([[5 + o, 5 + o], [5 + o, 6 + o]]);
     expect(t.buildings.get(c.building.id)!.rot).toBe(0); // conveyors untouched
-    expect(t.serialize().version).toBe(2);
+    expect(t.serialize().version).toBe(3);
   });
 });
 

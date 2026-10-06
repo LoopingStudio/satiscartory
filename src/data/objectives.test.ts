@@ -29,7 +29,8 @@ describe('onboarding objectives', () => {
 
   it('the starting stock pays for both chains, an assembler, belts and the kart parts', () => {
     const c = (t: keyof typeof BUILDINGS) => BUILDINGS[t].cost;
-    const plates = 2 * (c('drill').plate ?? 0) + 2 * (c('press').plate ?? 0) + (c('assembler').plate ?? 0) + 25 * (c('conveyor').plate ?? 0) + 9;
+    // The starting nodes are ~17 cells from the hub: ~15 belts per chain, plus links to the assembler.
+    const plates = 2 * (c('drill').plate ?? 0) + 2 * (c('press').plate ?? 0) + (c('assembler').plate ?? 0) + 40 * (c('conveyor').plate ?? 0) + 9;
     const bolts = 2 * (c('drill').bolt ?? 0) + 2 * (c('press').bolt ?? 0) + (c('assembler').bolt ?? 0) + 8;
     expect(START_STORAGE.plate).toBeGreaterThanOrEqual(plates);
     expect(START_STORAGE.bolt).toBeGreaterThanOrEqual(bolts);

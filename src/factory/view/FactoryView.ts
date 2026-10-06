@@ -54,17 +54,13 @@ export class FactoryView {
 
   private buildGround(): void {
     const { width, height } = this.sim;
-    // Tiled floor (one instanced draw call).
-    const floorGeo = this.assets.mergedGeometry('factory-kit/floor');
-    const floor = new THREE.InstancedMesh(floorGeo, this.assets.material('factory-kit'), width * height);
-    const m = new THREE.Matrix4();
-    let i = 0;
-    for (let z = 0; z < height; z++) {
-      for (let x = 0; x < width; x++) {
-        m.makeScale(FACTORY_CELL, 1, FACTORY_CELL).setPosition((x + 0.5) * FACTORY_CELL, 0, (z + 0.5) * FACTORY_CELL);
-        floor.setMatrixAt(i++, m);
-      }
-    }
+    // Floor: the kit's floor tile is a flat quad of one solid color, so a single quad
+    // stretched over the whole grid looks the same as one tile per cell (16k instances
+    // on the 128×128 map cost ~40% of the frame).
+    const floorGeo = this.assets.mergedGeometry('factory-kit/floor').clone();
+    floorGeo.scale(width * FACTORY_CELL, 1, height * FACTORY_CELL);
+    const floor = new THREE.Mesh(floorGeo, this.assets.material('factory-kit'));
+    floor.position.set((width * FACTORY_CELL) / 2, 0, (height * FACTORY_CELL) / 2);
     floor.receiveShadow = true;
     floor.name = 'floor';
     this.root.add(floor);
@@ -86,6 +82,7 @@ export class FactoryView {
 
     // Resource nodes: colored patches + rocks.
     const rng = mulberry32(42);
+    const m = new THREE.Matrix4();
     const rockGeo = new THREE.IcosahedronGeometry(0.5, 0);
     for (const n of this.sim.nodes) {
       const def = RESOURCES[n.resource];
@@ -224,6 +221,7 @@ export class FactoryView {
     for (const v of this.visuals.values()) v.dispose();
     this.items.dispose();
     for (const m of this.conveyorMeshes.values()) m.dispose();
+    (this.root.getObjectByName('floor') as THREE.Mesh | undefined)?.geometry.dispose(); // own clone, not the cached tile
     this.root.removeFromParent();
   }
 }
