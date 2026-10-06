@@ -20,6 +20,8 @@ interface Base {
   x: number;
   z: number;
   rot: Rot;
+  /** Placed without paying (dev layouts): dismantling refunds no cost. */
+  free?: true;
 }
 
 export interface ConveyorB extends Base {

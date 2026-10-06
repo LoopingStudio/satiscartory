@@ -1,7 +1,7 @@
 import { BELT, DRILL, MACHINE, START_STORAGE } from '../../data/balance';
 import { BUILDINGS, type BuildingType, type Side } from '../../data/buildings';
 import { FACTORY_MAP, RESOURCES, type ResourceId, type ResourceNode } from '../../data/factoryMap';
-import { ITEMS, type Inventory, type ItemId } from '../../data/items';
+import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
@@ -54,6 +54,8 @@ export class FactorySim {
   private convOrder: ConveyorB[] = [];
   private producers: (DrillB | MachineB)[] = [];
   private topoDirty = true;
+  /** Transient (within one tick): items inserted onto belts that must not move until the next tick. */
+  private fresh = new Set<BeltItem>();
 
   constructor(opts: FactorySimOptions = {}) {
     this.width = opts.width ?? 64;
@@ -195,6 +197,7 @@ export class FactorySim {
     if (!opts.free) this.take(BUILDINGS[type].cost);
     const id = this.nextId++;
     const b = this.makeBuilding(type, id, x, z, rot, check.resource ?? null);
+    if (opts.free) b.free = true;
     this.insert(b);
     this.events.emit('placed', b);
     return { ok: true, building: b };
@@ -226,7 +229,8 @@ export class FactorySim {
     if (!b || !BUILDINGS[b.type].buildable) return false;
     for (const [cx, cz] of this.cellsFor(b.type, b.x, b.z, b.rot)) this.grid[this.idx(cx, cz)] = 0;
     this.buildings.delete(id);
-    this.give(BUILDINGS[b.type].cost);
+    // Buildings placed for free (dev layouts) refund nothing for their cost.
+    if (!b.free) this.give(BUILDINGS[b.type].cost);
     this.refundContents(b);
     this.topoDirty = true;
     this.events.emit('removed', b);
@@ -239,9 +243,10 @@ export class FactorySim {
     if (b.type === 'press' || b.type === 'assembler') {
       this.give(b.inBuf);
       for (const it of b.outBuf) this.giveOne(it);
-      if (b.status === 'working' && b.recipe) {
+      const r = b.recipe ? RECIPES_BY_ID[b.recipe] : undefined;
+      if (b.status === 'working' && r) {
         // Inputs of the interrupted craft go back to storage.
-        for (const s of RECIPES_BY_ID[b.recipe]!.inputs) this.storage[s.item] = this.count(s.item) + s.count;
+        for (const s of r.inputs) this.storage[s.item] = this.count(s.item) + s.count;
       }
     }
   }
@@ -366,6 +371,7 @@ export class FactorySim {
       if (link && this.tryInsert(link, b.outBuf[0]!, b.id, 0)) b.outBuf.shift();
     }
     for (const c of this.convOrder) this.stepConveyor(c);
+    this.fresh.clear();
   }
 
   /** Runs n ticks (tests, offline catch-up). */
@@ -385,11 +391,11 @@ export class FactorySim {
   }
 
   private stepMachine(m: MachineB): void {
-    if (!m.recipe) {
+    const r = m.recipe ? RECIPES_BY_ID[m.recipe] : undefined;
+    if (!r) {
       m.status = 'noRecipe';
       return;
     }
-    const r = RECIPES_BY_ID[m.recipe]!;
     if (m.status === 'working') {
       m.progress++;
       if (m.progress < r.ticks) return;
@@ -422,6 +428,12 @@ export class FactorySim {
     let i = 0;
     while (i < items.length) {
       const it = items[i]!;
+      if (this.fresh.has(it)) {
+        // Entered this tick: keep its hand-off position, move from the next tick on.
+        limit = it.pos - BELT.SPACING;
+        i++;
+        continue;
+      }
       it.prev = it.pos;
       const np = Math.min(it.pos + BELT.SPEED, limit);
       if (np > it.pos) it.pos = np;
@@ -455,21 +467,22 @@ export class FactorySim {
         if (from === 0) return false;
         const last = t.items[t.items.length - 1];
         if (last && last.pos < BELT.SPACING) return false;
-        if (t.lastFrom === from) {
-          // Round-robin merge: let another waiting feeder go first.
-          for (const f of this.feeders.get(t.id) ?? []) {
-            if (f.id !== fromId && f.side !== from && this.isReady(f.id)) return false;
-          }
+        // Round-robin merge: the side right after the last accepted one has priority.
+        const mine = mergePriority(from, t.lastFrom);
+        for (const f of this.feeders.get(t.id) ?? []) {
+          if (f.id !== fromId && f.side !== from && mergePriority(f.side, t.lastFrom) < mine && this.isReady(f.id)) return false;
         }
         const entry: BeltItem = { item, pos: 0, prev, from };
         t.items.push(entry);
+        this.fresh.add(entry);
         t.lastFrom = from;
         return true;
       }
       case 'press':
       case 'assembler': {
-        if (!t.recipe) return false;
-        const need = RECIPES_BY_ID[t.recipe]!.inputs.find((s) => s.item === item);
+        const recipe = t.recipe ? RECIPES_BY_ID[t.recipe] : undefined;
+        if (!recipe) return false;
+        const need = recipe.inputs.find((s) => s.item === item);
         if (!need) return false;
         const cur = t.inBuf[item] ?? 0;
         if (cur >= need.count * MACHINE.IN_CAP_FACTOR) return false;
@@ -488,7 +501,10 @@ export class FactorySim {
   /** Craft progress 0..1 of a machine/drill (for animations). */
   progressOf(b: Building): number {
     if (b.type === 'drill') return b.progress / DRILL.PERIOD;
-    if ((b.type === 'press' || b.type === 'assembler') && b.recipe && b.status === 'working') return b.progress / RECIPES_BY_ID[b.recipe]!.ticks;
+    if ((b.type === 'press' || b.type === 'assembler') && b.recipe && b.status === 'working') {
+      const r = RECIPES_BY_ID[b.recipe];
+      return r ? b.progress / r.ticks : 0;
+    }
     return 0;
   }
 
@@ -526,7 +542,20 @@ export class FactorySim {
       if (!BUILDINGS[b.type]) continue;
       const cells = sim.cellsFor(b.type, b.x, b.z, b.rot);
       if (cells.some(([cx, cz]) => !sim.inBounds(cx, cz) || sim.grid[sim.idx(cx, cz)])) continue;
-      if (b.type === 'conveyor') b.items = b.items.filter((it) => it.item in ITEMS);
+      if (b.type === 'conveyor') b.items = b.items.filter((it) => isItemId(it.item));
+      if (b.type === 'press' || b.type === 'assembler') {
+        const r = b.recipe ? RECIPES_BY_ID[b.recipe] : undefined;
+        if (b.recipe && (!r || r.machine !== b.type)) {
+          // Recipe no longer exists (older save): give buffered items back and reset.
+          for (const [item, n] of Object.entries(b.inBuf ?? {})) if (isItemId(item) && n) sim.give({ [item]: n });
+          for (const item of b.outBuf ?? []) if (isItemId(item)) sim.give({ [item]: 1 });
+          b.recipe = null;
+          b.inBuf = {};
+          b.outBuf = [];
+          b.progress = 0;
+          b.status = 'noRecipe';
+        }
+      }
       sim.insert(b);
     }
     return sim;
@@ -542,6 +571,15 @@ export class FactorySim {
     }
     return (h1 >>> 0).toString(16);
   }
+}
+
+/** Cyclic merge order of a conveyor's input sides (back, right, left). */
+const MERGE_ORDER = [2, 1, 3];
+/** 0 = highest priority: the side just after the last accepted side in the cycle. */
+function mergePriority(side: number, lastFrom: number): number {
+  const i = MERGE_ORDER.indexOf(side);
+  const l = MERGE_ORDER.indexOf(lastFrom);
+  return l < 0 ? i : (i - l - 1 + 3) % 3;
 }
 
 /** JSON with object keys sorted (stable regardless of insertion order). */

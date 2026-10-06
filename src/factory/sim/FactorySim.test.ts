@@ -343,3 +343,82 @@ describe('test layouts', () => {
     expect(s.beltItemCount()).toBe(n);
   });
 });
+
+describe('review regressions', () => {
+  it('dismantling a building placed for free does not mint its cost', () => {
+    const s = new FactorySim({ width: 16, height: 16, storage: {}, hub: null });
+    const r = s.place('press', 2, 2, 0, { free: true });
+    if (!r.ok) throw new Error(r.check.error);
+    const saved = FactorySim.fromSave(s.serialize(), { width: 16, height: 16 });
+    expect(s.remove(r.building.id)).toBe(true);
+    expect(s.count('plate')).toBe(0);
+    expect(saved.remove(r.building.id)).toBe(true);
+    expect(saved.count('plate')).toBe(0);
+  });
+
+  it('a save referencing an unknown recipe loads safely and refunds buffers', () => {
+    const s = new FactorySim({ width: 20, height: 20, storage: { plate: 100, bolt: 100 }, hub: null });
+    const p = s.place('press', 5, 5, 0);
+    if (!p.ok) throw new Error();
+    s.setRecipe(p.building.id, 'plate');
+    const save = s.serialize();
+    const m = save.buildings.find((b) => b.id === p.building.id) as MachineB;
+    m.recipe = 'plate_v0';
+    m.status = 'working';
+    m.progress = 3;
+    m.inBuf = { iron_ore: 2 };
+    const t = FactorySim.fromSave(save, { width: 20, height: 20 });
+    expect(() => t.run(5)).not.toThrow();
+    expect(t.count('iron_ore')).toBe(2);
+    expect(() => t.remove(p.building.id)).not.toThrow();
+  });
+
+  it('a junction with three saturated inputs serves all of them fairly', () => {
+    const s = sim({ hub: { x: 4, z: 12, rot: 0 } });
+    line(s, 5, 5, 0, 7); // trunk (5,5..11) → hub
+    const back = line(s, 5, 2, 0, 3); // (5,2..4) into (5,5) from the back
+    const left = line(s, 2, 5, 1, 3);
+    const right = line(s, 8, 5, 3, 3);
+    for (let t = 0; t < 4000; t++) {
+      for (const [ids, item] of [[back, 'tire'], [left, 'plate'], [right, 'bolt']] as const) {
+        const c = conveyor(s, ids[0]!);
+        const last = c.items[c.items.length - 1];
+        if (!last || last.pos >= BELT.SPACING) c.items.push({ item, pos: 0, prev: 0, from: 2 });
+      }
+      s.tick();
+    }
+    const counts = ['tire', 'plate', 'bolt'].map((i) => s.delivered[i as 'tire'] ?? 0);
+    expect(Math.min(...counts)).toBeGreaterThan(100);
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(2);
+  });
+
+  it('a producer feeding a junction side is not starved by belts', () => {
+    const s = sim({ hub: { x: 4, z: 12, rot: 0 }, nodes: [{ resource: 'iron', x: 1, z: 5, w: 1, h: 1 }] });
+    line(s, 5, 5, 0, 7);
+    const back = line(s, 5, 2, 0, 3);
+    s.place('drill', 1, 5, 1); // (1..2, 5) → out (2,5) +X → (3,5)
+    line(s, 3, 5, 1, 2); // (3..4, 5) into (5,5) from the left
+    for (let t = 0; t < 2000; t++) {
+      const c = conveyor(s, back[0]!);
+      const last = c.items[c.items.length - 1];
+      if (!last || last.pos >= BELT.SPACING) c.items.push({ item: 'plate', pos: 0, prev: 0, from: 2 });
+      s.tick();
+    }
+    // the drill makes 1 ore / 2 s = 50 in 2000 ticks; nearly all must get through
+    expect(s.delivered.iron_ore ?? 0).toBeGreaterThanOrEqual(45);
+  });
+
+  it('items on a closed loop move at exactly one tile per second', () => {
+    const s = sim();
+    line(s, 2, 2, 1, 1); // (2,2) → +X
+    line(s, 3, 2, 0, 1); // (3,2) → +Z
+    line(s, 3, 3, 3, 1); // (3,3) → -X
+    line(s, 2, 3, 2, 1); // (2,3) → -Z
+    const start = conveyor(s, s.at(2, 2)!.id);
+    start.items.push({ item: 'bolt', pos: 0, prev: 0, from: 2 });
+    s.run(TICKS_PER_TILE * 4);
+    // after exactly one lap it is back on the start tile at the same position
+    expect(start.items.length).toBe(1);
+    expect(start.items[0]!.pos).toBe(0);
+  });
+});
