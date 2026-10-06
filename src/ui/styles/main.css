@@ -265,6 +265,7 @@ kbd {
 .stock-grid { display: flex; flex-direction: column; gap: 2px; }
 .stat-bar { grid-template-columns: 100px 1fr 36px; }
 .objective { font-size: 13px; margin: 3px 0; }
+.objective.next { font-weight: 800; font-size: 14px; }
 .objective.done { color: var(--good); opacity: 0.75; }
 .objective-hint { margin: 0 0 6px 16px; }
 .settings-layer { pointer-events: auto; background: rgba(10, 12, 24, 0.45); }

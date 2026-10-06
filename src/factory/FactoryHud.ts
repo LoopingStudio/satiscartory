@@ -224,20 +224,24 @@ export class FactoryHud {
     this.panel.append(list);
   }
 
-  /** Onboarding checklist (top-left). */
+  /** Onboarding checklist (top-left): remaining objectives, the next one with its hint. */
   renderObjectives(items: { text: string; hint: string; done: boolean }[]): void {
-    const allDone = items.every((i) => i.done);
     const key = items.map((i) => (i.done ? 1 : 0)).join('');
     if (this.objectives.dataset.key === key) return;
     this.objectives.dataset.key = key;
     clear(this.objectives);
-    this.objectives.style.display = 'block';
-    this.objectives.appendChild(el('h3', {}, allDone ? 'Bravo, la boucle est bouclée !' : 'Objectifs'));
-    const next = items.find((i) => !i.done);
-    for (const i of items) {
-      this.objectives.appendChild(el('div', { class: `objective${i.done ? ' done' : ''}` }, `${i.done ? '✔' : '○'} ${i.text}`));
-      if (i === next) this.objectives.appendChild(el('div', { class: 'muted small objective-hint' }, i.hint));
+    const doneCount = items.filter((i) => i.done).length;
+    if (doneCount === items.length) {
+      this.objectives.style.display = 'none';
+      return;
     }
+    this.objectives.style.display = 'block';
+    this.objectives.appendChild(el('h3', {}, `Objectifs ${doneCount}/${items.length}`));
+    const next = items.find((i) => !i.done)!;
+    this.objectives.appendChild(el('div', { class: 'objective next' }, `○ ${next.text}`));
+    this.objectives.appendChild(el('div', { class: 'muted small objective-hint' }, next.hint));
+    const later = items.filter((i) => !i.done && i !== next).length;
+    if (later) this.objectives.appendChild(el('div', { class: 'muted small' }, `+ ${later} étape${later > 1 ? 's' : ''} ensuite`));
   }
 
   /** Live refresh of the open machine panel. */
