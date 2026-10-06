@@ -13,6 +13,8 @@ import { OrbitCamera } from '../player/OrbitCamera';
 import { FACTORY_CELL, GRAVITY_FACTORY } from '../config/constants';
 import { FACTORY_MAP } from '../data/factoryMap';
 import { BUILDINGS, BUILD_MENU } from '../data/buildings';
+import { ITEMS, ITEM_IDS, countLabel } from '../data/items';
+import type { Wallet } from '../state/Inventory';
 import { PLAYER } from '../data/player';
 import { OBJECTIVES, type ObjectiveContext } from '../data/objectives';
 import { toast } from '../ui/dom';
@@ -41,6 +43,7 @@ export class FactoryMode implements Mode {
   private avatar!: PlayerAvatar;
   private orbit!: OrbitCamera;
   private build!: BuildController;
+  private wallet!: Wallet;
   private hud!: FactoryHud;
   private freeCursor = false;
   private started = false;
@@ -85,20 +88,50 @@ export class FactoryMode implements Mode {
     this.faceYaw = this.orbit.yaw;
     this.applySettings();
 
-    this.build = new BuildController(this.game.assets, this.sim, this.world, this.scene);
-    this.hud = new FactoryHud(this.sim, {
+    this.wallet = this.state.wallet();
+    const inv = this.state.inventory;
+    this.build = new BuildController(this.game.assets, this.sim, this.world, this.scene, this.wallet);
+    this.hud = new FactoryHud(this.sim, inv, this.wallet, this.game.icons, {
       selectTool: (t) => this.selectTool(t),
       setRecipe: (id, r) => {
-        this.sim.setRecipe(id, r);
+        // Buffered items of the previous recipe go back to the backpack (overflow: hub).
+        this.sim.setRecipe(id, r, this.wallet);
       },
       loadMachine: (id) => {
-        const n = this.sim.loadFromStorage(id);
+        const n = this.sim.loadFrom(id, this.wallet);
         toast(n ? `${n} objet${n > 1 ? 's' : ''} chargé${n > 1 ? 's' : ''}` : 'Rien à charger', n ? 'success' : 'info', 1200);
       },
       collect: (id) => {
-        const n = this.sim.collectOutput(id);
-        if (n) toast(`${n} objet${n > 1 ? 's' : ''} envoyé${n > 1 ? 's' : ''} au hangar`, 'success', 1200);
+        const b = this.sim.buildings.get(id);
+        const item = b && 'outBuf' in b ? b.outBuf[0] : undefined;
+        const waiting = b && 'outBuf' in b ? b.outBuf.length : 0;
+        const n = this.sim.collectOutput(id, inv);
+        if (n && item) toast(`+${countLabel(item, n)} dans le sac`, 'success', 1400);
+        else if (waiting) toast('Sac plein : dépose des objets au hangar', 'error', 1800);
       },
+      takeFromHub: (item) => {
+        const want = Math.min(ITEMS[item].stack, this.sim.count(item), inv.room(item));
+        const got = this.sim.hub.remove(item, want);
+        const added = inv.add(item, got);
+        if (added < got) this.sim.hub.add(item, got - added);
+        if (added) toast(`+${countLabel(item, added)} dans le sac`, 'success', 1200);
+      },
+      depositSlot: (i) => {
+        const st = inv.takeSlot(i);
+        if (st) this.sim.hub.add(st.item, st.count);
+      },
+      depositAll: () => {
+        let n = 0;
+        for (let i = 0; i < inv.slots.length; i++) {
+          const st = inv.takeSlot(i);
+          if (st) {
+            this.sim.hub.add(st.item, st.count);
+            n += st.count;
+          }
+        }
+        if (n) toast(`${n} objet${n > 1 ? 's' : ''} déposé${n > 1 ? 's' : ''} au hangar`, 'success', 1400);
+      },
+      nearHub: () => this.nearHub(),
       resume: () => this.resume(),
       menu: () => void this.game.switchMode('menu'),
       garage: () => void this.game.switchMode('garage'),
@@ -146,11 +179,21 @@ export class FactoryMode implements Mode {
     this.hud.buildHotbar(this.build.tool);
   }
 
-  private openPanel(kind: 'build' | 'machine' | 'hub', id?: number): void {
+  private openPanel(kind: 'build' | 'machine' | 'hub' | 'inventory', id?: number): void {
     if (kind === 'build') this.hud.openBuildMenu();
     else if (kind === 'machine' && id !== undefined) this.hud.openMachine(id);
     else if (kind === 'hub') this.hud.openHub();
+    else if (kind === 'inventory') this.hud.openInventory();
     this.game.pointer.release();
+  }
+
+  /** Within reach of the central hub (deposit / take). */
+  private nearHub(): boolean {
+    const hub = [...this.sim.buildings.values()].find((b) => b.type === 'hub');
+    if (!hub) return false;
+    const cx = (hub.x + 1.5) * FACTORY_CELL;
+    const cz = (hub.z + 1.5) * FACTORY_CELL;
+    return Math.hypot(this.player.cur.x - cx, this.player.cur.z - cz) < 12;
   }
 
   private closePanel(): void {
@@ -221,7 +264,7 @@ export class FactoryMode implements Mode {
     this.build.update();
 
     if (controlling) this.handleActions();
-    else if (this.hud.panelOpen && (input.wasPressed('cancel') || input.wasPressed('buildMenu') && this.hudIsBuildMenu())) this.closePanel();
+    else if (this.hud.panelOpen && (input.wasPressed('cancel') || (input.wasPressed('buildMenu') && this.hud.openPanelKind === 'build') || (input.wasPressed('inventory') && this.hud.openPanelKind === 'inventory'))) this.closePanel();
 
     this.hud.setCrosshair(this.game.pointer.locked && !this.hud.panelOpen);
     this.updateHint();
@@ -247,7 +290,7 @@ export class FactoryMode implements Mode {
         recipe: b.type === 'press' || b.type === 'assembler' ? b.recipe : null,
         resource: b.type === 'drill' ? b.resource : null,
       })),
-      storage: this.sim.storage,
+      storage: this.wallet.totals(ITEM_IDS),
       cars: this.state.cars.length,
       delivered: this.sim.delivered,
       blueprints: this.state.cars.map((c) => c.blueprint),
@@ -259,10 +302,6 @@ export class FactoryMode implements Mode {
       return { text: o.text, hint: o.hint, done };
     });
     this.hud.renderObjectives(items);
-  }
-
-  private hudIsBuildMenu(): boolean {
-    return !!document.querySelector('.build-grid');
   }
 
   private handleActions(): void {
@@ -280,6 +319,7 @@ export class FactoryMode implements Mode {
       this.hud.buildHotbar(this.build.tool);
     }
     if (input.wasPressed('buildMenu')) this.openPanel('build');
+    if (input.wasPressed('inventory')) this.openPanel('inventory');
     if (input.wasPressed('garage')) void this.game.switchMode('garage');
     if (input.wasPressed('interact')) {
       const id = this.build.interactTarget();
@@ -337,6 +377,7 @@ export class FactoryMode implements Mode {
     return {
       tick: this.sim.tickCount,
       storage: { ...this.sim.storage },
+      inventory: this.state.inventory.totals(),
       delivered: { ...this.sim.delivered },
       beltItems: this.sim.beltItemCount(),
       buildings: this.sim.buildings.size,

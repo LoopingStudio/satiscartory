@@ -9,6 +9,7 @@ import type { FactorySim } from '../sim/FactorySim';
 import type { FactoryWorld } from '../FactoryWorld';
 import { buildModel, footprintCenter } from '../view/BuildingVisuals';
 import type { PlaceCheck } from '../sim/types';
+import type { Wallet } from '../../state/Inventory';
 import { countLabel, type Inventory, type ItemId } from '../../data/items';
 
 export type Tool = { kind: 'none' } | { kind: 'build'; type: BuildingType } | { kind: 'dismantle' };
@@ -81,6 +82,8 @@ export class BuildController {
     private readonly sim: FactorySim,
     private readonly world: FactoryWorld,
     private readonly scene: THREE.Scene,
+    /** Pays costs (backpack first, then hub) and receives dismantling refunds. */
+    private readonly wallet: Wallet,
   ) {
     this.highlight = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), highlightMat);
     this.highlight.visible = false;
@@ -169,7 +172,7 @@ export class BuildController {
     }
     if (!this.ghost || this.ghostType !== type) this.makeGhost(type);
     const [ax, az] = this.anchorFor(type, cell);
-    const check = this.sim.check(type, ax, az, this.rot);
+    const check = this.sim.check(type, ax, az, this.rot, { wallet: this.wallet });
     this.lastCheck = check;
     const ghost = this.ghost!;
     ghost.visible = true;
@@ -255,7 +258,7 @@ export class BuildController {
       this.scene.add(g);
       this.dragGhosts.push(g);
     }
-    let budget = this.sim.count('plate');
+    let budget = this.wallet.count('plate');
     const cost = BUILDINGS.conveyor.cost.plate ?? 0;
     let okCount = 0;
     this.dragGhosts.forEach((g, i) => {
@@ -308,15 +311,15 @@ export class BuildController {
     const id = this.aim.buildingId;
     if (id === null) return;
     const b = this.sim.buildings.get(id);
-    if (b && (b.type === 'press' || b.type === 'assembler' || b.type === 'hub')) this.boxAround(id, hoverMat);
+    if (b && b.type !== 'conveyor') this.boxAround(id, hoverMat);
   }
 
-  /** Building the player can interact with (E). */
+  /** Building the player can interact with (E): machines, drills and the hub. */
   interactTarget(): number | null {
     const id = this.aim.buildingId;
     if (id === null) return null;
     const b = this.sim.buildings.get(id);
-    return b && (b.type === 'press' || b.type === 'assembler' || b.type === 'hub') ? id : null;
+    return b && b.type !== 'conveyor' ? id : null;
   }
 
   // ------------------------------------------------------------ actions
@@ -341,7 +344,7 @@ export class BuildController {
   private placeSingle(type: BuildingType): void {
     if (!this.aim.cell) return;
     const [ax, az] = this.anchorFor(type, this.aim.cell);
-    const r = this.sim.place(type, ax, az, this.rot);
+    const r = this.sim.place(type, ax, az, this.rot, { wallet: this.wallet });
     if (r.ok) {
       this.onMessage?.(`${BUILDINGS[type].name} : construction terminée`, 'success');
       this.ghostType = null;
@@ -357,7 +360,7 @@ export class BuildController {
     let placed = 0;
     let lastError: PlaceCheck | null = null;
     for (const p of path) {
-      const r = this.sim.place('conveyor', p.x, p.z, p.rot);
+      const r = this.sim.place('conveyor', p.x, p.z, p.rot, { wallet: this.wallet });
       if (r.ok) placed++;
       else lastError = r.check;
     }
@@ -377,7 +380,7 @@ export class BuildController {
       this.onMessage?.('Le hangar central ne peut pas être démonté', 'error');
       return;
     }
-    if (this.sim.remove(id)) this.onMessage?.(`${BUILDINGS[b.type].name} démonté (remboursé)`, 'info');
+    if (this.sim.remove(id, this.wallet)) this.onMessage?.(`${BUILDINGS[b.type].name} démonté (remboursé dans le sac)`, 'info');
     this.onChange?.();
   }
 

@@ -13,6 +13,7 @@ import { TrackSelectMode } from './race/TrackSelectMode';
 import { TrackEditorMode } from './track/editor/TrackEditorMode';
 import { GarageMode } from './garage/GarageMode';
 import { applySettings, openSettings } from './ui/menus/SettingsPanel';
+import { ItemIcons } from './core/assets/IconRenderer';
 import { fr } from './ui/i18n/fr';
 
 function loadingScreen() {
@@ -38,6 +39,7 @@ async function main() {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   const game = new Game(canvas);
   await game.assets.loadMany(game.assets.allKeys(), (d, t) => loading.progress(d, t));
+  game.icons = new ItemIcons(game.assets);
 
   const state = SaveManager.load() ?? new GameState();
   const menuEntries = (): MenuEntry[] => [

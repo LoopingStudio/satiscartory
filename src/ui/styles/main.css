@@ -272,3 +272,32 @@ kbd {
 .settings-panel { width: min(440px, 92vw); }
 .setting { margin: 8px 0; gap: 10px; }
 .setting input[type='range'] { width: 150px; }
+
+/* Inventory / backpack */
+.item-icon { width: 40px; height: 40px; object-fit: contain; pointer-events: none; }
+.item-icon.tiny { width: 22px; height: 22px; }
+.item-icon-text { display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; background: #3a3e63; border-radius: 6px; }
+.inv-grid { display: grid; grid-template-columns: repeat(6, 56px); gap: 6px; margin-top: 8px; }
+.inv-slot {
+  position: relative; width: 56px; height: 56px; padding: 0; display: flex; align-items: center; justify-content: center;
+  background: #262842; border: 1px solid var(--panel-border); border-radius: 10px;
+}
+button.inv-slot:hover { background: #343861; border-color: var(--accent); }
+.inv-slot.empty { opacity: 0.45; }
+.inv-count { position: absolute; right: 4px; bottom: 2px; font-size: 12px; font-weight: 800; text-shadow: 0 1px 0 #000; }
+.bag-strip { display: grid; grid-template-columns: repeat(4, 44px); gap: 4px; }
+.bag-strip .inv-slot { width: 44px; height: 44px; }
+.bag-strip .item-icon { width: 32px; height: 32px; }
+.inventory-panel { width: min(430px, 94vw); }
+.hub-panel { width: min(700px, 96vw); }
+.hub-columns { display: grid; grid-template-columns: auto 1fr; gap: 18px; margin-top: 8px; }
+.hub-list { display: flex; flex-direction: column; gap: 4px; max-height: 330px; overflow: auto; margin-top: 8px; }
+.hub-row { display: flex; align-items: center; gap: 8px; text-align: left; padding: 5px 10px; }
+.machine-io { gap: 18px; flex-wrap: wrap; margin-top: 6px; }
+.machine-io .inv-slot { width: 48px; height: 48px; }
+.storage-row { gap: 6px; }
+@media (max-width: 760px) {
+  .hub-columns { grid-template-columns: 1fr; }
+  .inv-grid { grid-template-columns: repeat(6, 46px); }
+  .inv-slot { width: 46px; height: 46px; }
+}

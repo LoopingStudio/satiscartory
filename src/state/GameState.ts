@@ -2,6 +2,7 @@ import { FactorySim } from '../factory/sim/FactorySim';
 import type { FactorySave } from '../factory/sim/types';
 import type { CarInstance } from '../garage/assembly';
 import type { TrackRecord } from '../race/records';
+import { Inventory, Wallet, type Stack } from './Inventory';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -29,6 +30,8 @@ export interface SaveData {
   settings?: Partial<Settings>;
   objectives?: Record<string, boolean>;
   carCounter?: number;
+  /** Player backpack slots. */
+  inventory?: (Stack | null)[];
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -43,9 +46,16 @@ export class GameState {
   carCounter = 0;
   /** Dev/test states (stress layout) are never saved. */
   ephemeral = false;
+  /** Player backpack. */
+  inventory = new Inventory();
 
   constructor(sim?: FactorySim) {
     this.sim = sim ?? FactorySim.newGame();
+  }
+
+  /** Backpack first, then the hub (pays costs, receives refunds and pickups). */
+  wallet(): Wallet {
+    return new Wallet(this.inventory, this.sim.hub);
   }
 
   get selectedCar(): CarInstance | null {
@@ -64,6 +74,7 @@ export class GameState {
       settings: this.settings,
       objectives: this.objectives,
       carCounter: this.carCounter,
+      inventory: this.inventory.serialize(),
     };
   }
 
@@ -78,6 +89,7 @@ export class GameState {
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) };
     s.objectives = data.objectives ?? {};
     s.carCounter = data.carCounter ?? s.cars.length;
+    s.inventory = Inventory.fromSave(data.inventory);
     return s;
   }
 
@@ -92,5 +104,6 @@ export class GameState {
     this.objectives = other.objectives;
     this.carCounter = other.carCounter;
     this.ephemeral = other.ephemeral;
+    this.inventory = other.inventory;
   }
 }

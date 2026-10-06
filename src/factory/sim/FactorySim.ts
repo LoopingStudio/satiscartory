@@ -5,7 +5,7 @@ import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
-import type { BeltItem, Building, ConveyorB, DrillB, FactorySave, HubB, Link, MachineB, PlaceCheck } from './types';
+import type { BeltItem, Building, ConveyorB, DrillB, FactorySave, HubB, ItemSink, ItemSource, Link, MachineB, PlaceCheck } from './types';
 
 export interface SimEvents extends Record<string, unknown> {
   placed: Building;
@@ -158,9 +158,46 @@ export class FactorySim {
     this.storage[item] = this.count(item) + 1;
   }
 
+  /** The hub storage as an item source/sink (unlimited capacity). */
+  readonly hub: ItemSource & ItemSink = {
+    count: (item) => this.count(item),
+    remove: (item, n) => {
+      const k = Math.max(0, Math.min(n, this.count(item)));
+      if (k) this.storage[item] = this.count(item) - k;
+      return k;
+    },
+    add: (item, n) => {
+      if (n > 0) this.storage[item] = this.count(item) + n;
+      return Math.max(0, n);
+    },
+  };
+
+  /** Gives items to `sink` first; whatever it refuses goes to the hub. */
+  private refund(item: ItemId, n: number, sink?: ItemSink): void {
+    if (n <= 0) return;
+    const accepted = sink ? sink.add(item, n) : 0;
+    if (accepted < n) this.storage[item] = this.count(item) + (n - accepted);
+  }
+
+  private missingIn(source: ItemSource, cost: Inventory): Inventory | null {
+    const missing: Inventory = {};
+    let any = false;
+    for (const [item, n] of Object.entries(cost) as [ItemId, number][]) {
+      const have = source.count(item);
+      if (have < n) {
+        missing[item] = n - have;
+        any = true;
+      }
+    }
+    return any ? missing : null;
+  }
+
   // ---------------------------------------------------------------- placement
 
-  check(type: BuildingType, x: number, z: number, rot: Rot, opts: { free?: boolean; force?: boolean } = {}): PlaceCheck {
+  /**
+   * @param opts.wallet where the cost is paid from (default: the hub storage).
+   */
+  check(type: BuildingType, x: number, z: number, rot: Rot, opts: { free?: boolean; force?: boolean; wallet?: ItemSource } = {}): PlaceCheck {
     const def = BUILDINGS[type];
     const cells = this.cellsFor(type, x, z, rot);
     if (!def.buildable && !opts.force) return { ok: false, error: 'notBuildable', cells };
@@ -179,7 +216,7 @@ export class FactorySim {
       if (!resource) return { ok: false, error: 'needsNode', cells, resource: null };
     }
     if (!opts.free) {
-      const missing = this.missingFor(def.cost);
+      const missing = this.missingIn(opts.wallet ?? this.hub, def.cost);
       if (missing) return { ok: false, error: 'cost', cells, missing, resource };
     }
     return { ok: true, cells, resource };
@@ -190,11 +227,14 @@ export class FactorySim {
     x: number,
     z: number,
     rot: Rot,
-    opts: { free?: boolean; force?: boolean } = {},
+    opts: { free?: boolean; force?: boolean; wallet?: ItemSource } = {},
   ): { ok: true; building: Building } | { ok: false; check: PlaceCheck } {
     const check = this.check(type, x, z, rot, opts);
     if (!check.ok) return { ok: false, check };
-    if (!opts.free) this.take(BUILDINGS[type].cost);
+    if (!opts.free) {
+      const wallet = opts.wallet ?? this.hub;
+      for (const [item, n] of Object.entries(BUILDINGS[type].cost) as [ItemId, number][]) wallet.remove(item, n);
+    }
     const id = this.nextId++;
     const b = this.makeBuilding(type, id, x, z, rot, check.resource ?? null);
     if (opts.free) b.free = true;
@@ -223,35 +263,35 @@ export class FactorySim {
     this.topoDirty = true;
   }
 
-  /** Dismantles a building, refunding its cost and any items it holds. */
-  remove(id: number): boolean {
+  /** Dismantles a building, refunding its cost and any items it holds (to `sink` first, overflow to the hub). */
+  remove(id: number, sink?: ItemSink): boolean {
     const b = this.buildings.get(id);
     if (!b || !BUILDINGS[b.type].buildable) return false;
     for (const [cx, cz] of this.cellsFor(b.type, b.x, b.z, b.rot)) this.grid[this.idx(cx, cz)] = 0;
     this.buildings.delete(id);
     // Buildings placed for free (dev layouts) refund nothing for their cost.
-    if (!b.free) this.give(BUILDINGS[b.type].cost);
-    this.refundContents(b);
+    if (!b.free) for (const [item, n] of Object.entries(BUILDINGS[b.type].cost) as [ItemId, number][]) this.refund(item, n, sink);
+    this.refundContents(b, sink);
     this.topoDirty = true;
     this.events.emit('removed', b);
     return true;
   }
 
-  private refundContents(b: Building): void {
-    if (b.type === 'conveyor') for (const it of b.items) this.giveOne(it.item);
-    if (b.type === 'drill') for (const it of b.outBuf) this.giveOne(it);
+  private refundContents(b: Building, sink?: ItemSink): void {
+    if (b.type === 'conveyor') for (const it of b.items) this.refund(it.item, 1, sink);
+    if (b.type === 'drill') for (const it of b.outBuf) this.refund(it, 1, sink);
     if (b.type === 'press' || b.type === 'assembler') {
-      this.give(b.inBuf);
-      for (const it of b.outBuf) this.giveOne(it);
+      for (const [item, n] of Object.entries(b.inBuf) as [ItemId, number][]) this.refund(item, n, sink);
+      for (const it of b.outBuf) this.refund(it, 1, sink);
       const r = b.recipe ? RECIPES_BY_ID[b.recipe] : undefined;
       if (b.status === 'working' && r) {
-        // Inputs of the interrupted craft go back to storage.
-        for (const s of r.inputs) this.storage[s.item] = this.count(s.item) + s.count;
+        // Inputs of the interrupted craft are given back too.
+        for (const st of r.inputs) this.refund(st.item, st.count, sink);
       }
     }
   }
 
-  setRecipe(id: number, recipeId: string | null): boolean {
+  setRecipe(id: number, recipeId: string | null, sink?: ItemSink): boolean {
     const b = this.buildings.get(id);
     if (!b || (b.type !== 'press' && b.type !== 'assembler')) return false;
     if (recipeId !== null) {
@@ -259,7 +299,7 @@ export class FactorySim {
       if (!r || r.machine !== b.type) return false;
     }
     if (b.recipe === recipeId) return true;
-    this.refundContents(b);
+    this.refundContents(b, sink);
     b.recipe = recipeId;
     b.inBuf = {};
     b.outBuf = [];
@@ -274,6 +314,11 @@ export class FactorySim {
    * Returns the number of items moved.
    */
   loadFromStorage(id: number): number {
+    return this.loadFrom(id, this.hub);
+  }
+
+  /** Manual feeding from any source (backpack, hub, or both through a wallet). */
+  loadFrom(id: number, source: ItemSource): number {
     const m = this.buildings.get(id);
     if (!m || (m.type !== 'press' && m.type !== 'assembler')) return 0;
     const r = m.recipe ? RECIPES_BY_ID[m.recipe] : undefined;
@@ -281,23 +326,30 @@ export class FactorySim {
     let moved = 0;
     for (const s of r.inputs) {
       const cap = s.count * MACHINE.MANUAL_CAP_FACTOR;
-      const n = Math.min(cap - (m.inBuf[s.item] ?? 0), this.count(s.item));
-      if (n <= 0) continue;
-      this.storage[s.item] = this.count(s.item) - n;
+      const want = Math.min(cap - (m.inBuf[s.item] ?? 0), source.count(s.item));
+      if (want <= 0) continue;
+      const n = source.remove(s.item, want);
       m.inBuf[s.item] = (m.inBuf[s.item] ?? 0) + n;
       moved += n;
     }
     return moved;
   }
 
-  /** Manual pickup: moves everything waiting in a producer's output buffer to storage. */
-  collectOutput(id: number): number {
+  /**
+   * Manual pickup: moves what waits in a producer's output buffer into `sink`
+   * (default: the hub). Items the sink refuses (full backpack) stay in the machine.
+   */
+  collectOutput(id: number, sink: ItemSink = this.hub): number {
     const b = this.buildings.get(id);
     if (!b || (b.type !== 'press' && b.type !== 'assembler' && b.type !== 'drill')) return 0;
-    const n = b.outBuf.length;
-    for (const it of b.outBuf) this.giveOne(it);
-    b.outBuf = [];
-    return n;
+    const kept: ItemId[] = [];
+    let moved = 0;
+    for (const it of b.outBuf) {
+      if (sink.add(it, 1) === 1) moved++;
+      else kept.push(it);
+    }
+    b.outBuf = kept;
+    return moved;
   }
 
   // ---------------------------------------------------------------- topology

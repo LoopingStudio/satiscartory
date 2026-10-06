@@ -6,6 +6,7 @@ import { AssetLoader } from './assets/AssetLoader';
 import { ModeManager, type ModeName } from './ModeManager';
 import { Loop } from './Loop';
 import { el } from '../ui/dom';
+import type { ItemIcons } from './assets/IconRenderer';
 
 export interface DebugMode {
   /** Called when the F3 debug flag toggles. */
@@ -23,6 +24,8 @@ export class Game {
   readonly modes = new ModeManager();
   readonly loop: Loop;
   debug = false;
+  /** Item icons (rendered from the 3D models after loading). */
+  icons: ItemIcons | null = null;
   private overlay: HTMLElement | null = null;
   private overlayTimer = 0;
   private readonly factoryTickers = new Set<() => void>();
@@ -116,7 +119,9 @@ export class Game {
   makeCamera(fov = 60, near = 0.1, far = 2000): { camera: THREE.PerspectiveCamera; dispose: () => void } {
     const camera = new THREE.PerspectiveCamera(fov, 1, near, far);
     const dispose = this.renderer.onResize((w, h) => {
-      camera.aspect = w / Math.max(1, h);
+      // A collapsed/hidden view reports 0×0: keep the last valid aspect instead of a degenerate one.
+      if (w <= 0 || h <= 0) return;
+      camera.aspect = w / h;
       camera.updateProjectionMatrix();
     });
     return { camera, dispose };

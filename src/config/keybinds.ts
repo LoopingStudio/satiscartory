@@ -12,6 +12,7 @@ export const KEYBINDS = {
   dismantle: ['KeyF'],
   cancel: ['Escape'],
   garage: ['KeyG'],
+  inventory: ['Tab', 'KeyI'],
   hotbar1: ['Digit1'],
   hotbar2: ['Digit2'],
   hotbar3: ['Digit3'],

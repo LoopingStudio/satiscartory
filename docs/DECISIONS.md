@@ -142,3 +142,16 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
   - La boucle n'a plus de `dt` négatif et ses alphas restent dans [0, 1].
   - Masse et centre de masse retirés du panneau de réglages : ils sont figés à la création du corps.
 - **Rejetés après vérification** : types de pièces `Object.prototype` (inatteignable) et poteaux de portique absents de la simulation du bot (ils sont hors de la route).
+
+## Inventaire (sac du joueur)
+
+- **Sac** : 24 emplacements, avec une taille de pile par objet (`data/items.ts`, champ `stack`) : 100 minerais ou plaques, 200 boulons, 10 moteurs, etc. Il est sauvegardé avec la partie et nettoyé au chargement (objets inconnus ignorés, piles plafonnées).
+- **« Sac d'abord, puis hangar »** (choix validé) : un `Wallet` pioche dans le sac puis complète avec le hangar. Il sert pour :
+  - les coûts de construction et le chargement manuel des machines ;
+  - l'assemblage au garage ;
+  - les remboursements (démontage, changement de recette, démontage d'une voiture), qui remplissent le sac puis débordent au hangar.
+- **Récolte** : E sur une machine **ou une foreuse**, puis « Prendre ». La production va dans le sac ; ce qui ne rentre pas reste dans la machine (sac plein signalé).
+- **Hangar** : E ouvre le panneau d'échange. Un clic sur une case du sac la dépose ; un clic sur un objet du hangar en prend une pile, dans la limite de la place. « Tout déposer » aussi depuis le sac (Tab), mais seulement près du hangar (12 m).
+- **La simulation reste pure** : elle ne connaît que les interfaces `ItemSource` / `ItemSink`. Le hangar en est une (capacité illimitée), le sac et le portefeuille aussi. Un test vérifie la conservation des objets (poser, charger, produire, prendre, démonter).
+- **Icônes** : chaque objet est rendu une fois au démarrage depuis son modèle 3D, avec un petit renderer dédié, en PNG.
+- **Vue repliée** : un redimensionnement à 0×0 (volet masqué) est ignoré. Sinon le ratio d'aspect nul cassait la projection.

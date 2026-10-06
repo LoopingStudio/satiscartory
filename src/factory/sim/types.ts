@@ -86,3 +86,16 @@ export interface PlaceCheck {
 }
 
 export type BuildingTypeOf<T extends BuildingType> = Extract<Building, { type: T }>;
+
+/** Something items can be taken from (hub storage, player backpack…). */
+export interface ItemSource {
+  count(item: ItemId): number;
+  /** Removes up to n items; returns how many were removed. */
+  remove(item: ItemId, n: number): number;
+}
+
+/** Something items can be put into. */
+export interface ItemSink {
+  /** Adds up to n items; returns how many were accepted. */
+  add(item: ItemId, n: number): number;
+}

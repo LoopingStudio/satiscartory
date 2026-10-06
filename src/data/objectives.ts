@@ -43,13 +43,13 @@ export const OBJECTIVES: Objective[] = [
   {
     id: 'assembler',
     text: 'Construis une assembleuse et règle-la sur « Roue »',
-    hint: 'Les pneus arrivent par convoyeur ; les plaques se chargent depuis le hangar (E → Charger).',
+    hint: 'Les pneus arrivent par convoyeur ; les plaques se chargent depuis ton sac ou le hangar (E → « Charger »).',
     done: (c) => c.buildings.some((b) => b.type === 'assembler'),
   },
   {
     id: 'parts',
     text: 'Produis 4 roues, 1 châssis et 1 moteur',
-    hint: 'Change la recette de l’assembleuse ; envoie la production au hangar (convoyeur ou « Récupérer »).',
+    hint: 'Change la recette de l’assembleuse ; envoie la production au hangar par convoyeur, ou prends-la dans ton sac (E → « Prendre »).',
     done: (c) => c.cars > 0 || ((c.storage.wheel ?? 0) + (c.storage.wheel_racing ?? 0) >= 4 && (c.storage.chassis ?? 0) >= 1 && (c.storage.engine ?? 0) >= 1),
   },
   {

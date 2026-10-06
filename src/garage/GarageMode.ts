@@ -5,7 +5,7 @@ import { addLightRig } from '../core/Renderer';
 import type { GameState } from '../state/GameState';
 import { SaveManager } from '../state/SaveManager';
 import { BLUEPRINTS, BLUEPRINT_IDS, type BlueprintId } from '../data/blueprints';
-import { ITEMS, countLabel, type ItemId } from '../data/items';
+import { ITEMS, ITEM_IDS, countLabel, type ItemId, type Inventory as ItemCounts } from '../data/items';
 import { PART_MODIFIERS } from '../data/parts';
 import { CarModel } from '../car/CarModel';
 import { computeCarStats, statBars, type CarSpec, type StatBars } from '../car/stats';
@@ -94,8 +94,19 @@ export class GarageMode implements Mode {
 
   // ------------------------------------------------------------------ helpers
 
-  private get storage() {
-    return this.state.sim.storage;
+  /** Parts available for assembly: backpack + hub (counts only; use applyChange to spend/refund). */
+  private get storage(): ItemCounts {
+    return this.state.wallet().totals(ITEM_IDS);
+  }
+
+  /** Applies the difference between two count snapshots to the backpack-then-hub wallet. */
+  private applyChange(before: ItemCounts, after: ItemCounts): void {
+    const w = this.state.wallet();
+    for (const id of ITEM_IDS) {
+      const d = (after[id] ?? 0) - (before[id] ?? 0);
+      if (d < 0) w.remove(id, -d);
+      else if (d > 0) w.add(id, d);
+    }
   }
 
   private car(id: string | null): CarInstance | null {
@@ -166,7 +177,7 @@ export class GarageMode implements Mode {
         ),
       );
     }
-    l.appendChild(el('h3', { style: 'margin-top:12px' }, 'Pièces en stock'));
+    l.appendChild(el('h3', { style: 'margin-top:12px' }, 'Pièces (sac + hangar)'));
     const parts: ItemId[] = ['chassis', 'engine', 'wheel', 'wheel_racing', 'panel', 'spoiler'];
     const grid = el('div', { class: 'stock-grid small' });
     for (const p of parts) grid.appendChild(el('div', { class: 'row' }, el('span', {}, ITEMS[p].name), el('span', { class: 'spacer' }), el('b', { class: 'mono' }, this.storage[p] ?? 0)));
@@ -254,7 +265,10 @@ export class GarageMode implements Mode {
               class: `small${active ? ' selected' : ''}`,
               disabled: !can,
               onclick: () => {
-                if (swapPart(this.storage, car, slot.id, item)) {
+                const before = this.storage;
+                const after = { ...before };
+                if (swapPart(after, car, slot.id, item)) {
+                  this.applyChange(before, after);
                   toast('Pièce changée', 'success');
                   SaveManager.save(this.state);
                 }
@@ -279,12 +293,15 @@ export class GarageMode implements Mode {
   private doAssemble(): void {
     if (this.view.kind !== 'draft') return;
     const serial = ++this.state.carCounter;
-    const car = assemble(this.storage, this.view.blueprint, this.view.choices, serial);
+    const before = this.storage;
+    const after = { ...before };
+    const car = assemble(after, this.view.blueprint, this.view.choices, serial);
     if (!car) {
       this.state.carCounter--;
       toast('Pièces insuffisantes', 'error');
       return;
     }
+    this.applyChange(before, after);
     this.state.cars.push(car);
     this.state.selectedCarId = car.id;
     this.state.objectives.assembled = true;
@@ -296,7 +313,10 @@ export class GarageMode implements Mode {
 
   private doDisassemble(car: CarInstance): void {
     if (!window.confirm(`Démonter « ${car.name} » ? Les pièces retournent au hangar.`)) return;
-    disassemble(this.storage, car);
+    const before = this.storage;
+    const after = { ...before };
+    disassemble(after, car);
+    this.applyChange(before, after);
     this.state.cars = this.state.cars.filter((c) => c.id !== car.id);
     if (this.state.selectedCarId === car.id) this.state.selectedCarId = this.state.cars[0]?.id ?? null;
     SaveManager.save(this.state);
@@ -314,7 +334,8 @@ export class GarageMode implements Mode {
     this.display?.update(dt, 0, 0);
     if (this.game.input.wasPressed('cancel')) void this.game.switchMode('menu');
     // Parts keep arriving from the factory: refresh counts when storage changes.
-    const key = ['chassis', 'engine', 'wheel', 'wheel_racing', 'panel', 'spoiler'].map((i) => this.storage[i as ItemId] ?? 0).join(',');
+    const stock = this.storage;
+    const key = ['chassis', 'engine', 'wheel', 'wheel_racing', 'panel', 'spoiler'].map((i) => stock[i as ItemId] ?? 0).join(',');
     if (key !== this.storageKey) {
       this.storageKey = key;
       this.renderLeft();

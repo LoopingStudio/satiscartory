@@ -34,6 +34,7 @@ export class Renderer {
   private resize = () => {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
+    if (w <= 0 || h <= 0) return;
     this.three.setSize(w, h, false);
     for (const cb of this.onResizeCbs) cb(w, h);
   };
