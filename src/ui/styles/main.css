@@ -252,3 +252,18 @@ kbd {
   .editor-status { width: 200px; }
   .editor-palette { width: 170px; }
 }
+
+/* Garage */
+.garage-left { position: absolute; left: 14px; top: 14px; bottom: 70px; width: min(290px, 38vw); overflow: auto; display: flex; flex-direction: column; gap: 5px; }
+.garage-right { position: absolute; right: 14px; top: 14px; width: min(380px, 50vw); max-height: calc(100% - 90px); overflow: auto; }
+.garage-nav { gap: 8px; }
+.car-row { display: flex; align-items: center; gap: 10px; text-align: left; }
+.car-row.selected { outline: 2px solid var(--accent); }
+.car-star { font-size: 18px; color: var(--gold); width: 18px; text-align: center; }
+.slot-row { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.slot-row.lacking b { color: var(--bad); }
+.stock-grid { display: flex; flex-direction: column; gap: 2px; }
+.stat-bar { grid-template-columns: 100px 1fr 36px; }
+.objective { font-size: 13px; margin: 3px 0; }
+.objective.done { color: var(--good); opacity: 0.75; }
+.objective-hint { margin: 0 0 6px 16px; }

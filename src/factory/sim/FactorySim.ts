@@ -268,6 +268,38 @@ export class FactorySim {
     return true;
   }
 
+  /**
+   * Manual feeding (like inserting items by hand in Satisfactory): moves the
+   * current recipe's inputs from storage into the machine, up to its buffer cap.
+   * Returns the number of items moved.
+   */
+  loadFromStorage(id: number): number {
+    const m = this.buildings.get(id);
+    if (!m || (m.type !== 'press' && m.type !== 'assembler')) return 0;
+    const r = m.recipe ? RECIPES_BY_ID[m.recipe] : undefined;
+    if (!r) return 0;
+    let moved = 0;
+    for (const s of r.inputs) {
+      const cap = s.count * MACHINE.MANUAL_CAP_FACTOR;
+      const n = Math.min(cap - (m.inBuf[s.item] ?? 0), this.count(s.item));
+      if (n <= 0) continue;
+      this.storage[s.item] = this.count(s.item) - n;
+      m.inBuf[s.item] = (m.inBuf[s.item] ?? 0) + n;
+      moved += n;
+    }
+    return moved;
+  }
+
+  /** Manual pickup: moves everything waiting in a producer's output buffer to storage. */
+  collectOutput(id: number): number {
+    const b = this.buildings.get(id);
+    if (!b || (b.type !== 'press' && b.type !== 'assembler' && b.type !== 'drill')) return 0;
+    const n = b.outBuf.length;
+    for (const it of b.outBuf) this.giveOne(it);
+    b.outBuf = [];
+    return n;
+  }
+
   // ---------------------------------------------------------------- topology
 
   /** Does `target` accept items entering cell (cx, cz) through world side `entry`? */

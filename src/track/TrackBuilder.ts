@@ -143,7 +143,8 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
     const g = new THREE.Group();
     for (const s of [-1, 1]) {
       const post = new THREE.Mesh(postGeo, postMat);
-      post.position.copy(center).addScaledVector(lateral, s * (halfWidth - 0.2)).add(new THREE.Vector3(0, 3.5, 0));
+      // Posts stand just outside the tile so they never block the road or its sidewalks.
+      post.position.copy(center).addScaledVector(lateral, s * (halfWidth + 0.6)).add(new THREE.Vector3(0, 3.5, 0));
       post.castShadow = true;
       g.add(post);
       world?.createCollider(RAPIER.ColliderDesc.cuboid(0.45, 3.5, 0.45).setTranslation(post.position.x, post.position.y, post.position.z));
@@ -152,14 +153,14 @@ export function buildTrack(track: TrackData, assets: AssetLoader, world: RAPIER.
     disposables.push(tex);
     const bannerMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, emissive: 0xffffff, emissiveIntensity: 0.25, emissiveMap: tex });
     disposables.push(bannerMat);
-    const banner = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_CELL - 0.4, 1.6), bannerMat);
+    const banner = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_CELL + 0.8, 1.6), bannerMat);
     disposables.push(banner.geometry);
     banner.position.copy(center).add(new THREE.Vector3(0, 6.2, 0));
     // Face the oncoming car (banner normal = -forward), readable from both sides.
     banner.rotation.y = Math.atan2(-forward.x, -forward.z);
     bannerMat.side = THREE.DoubleSide;
     g.add(banner);
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(TRACK_CELL - 0.2, 0.25, 0.3), postMat);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(TRACK_CELL + 1.2, 0.25, 0.3), postMat);
     disposables.push(beam.geometry);
     beam.position.copy(center).add(new THREE.Vector3(0, 7.05, 0));
     beam.rotation.y = Math.atan2(lateral.x, lateral.z) - Math.PI / 2;

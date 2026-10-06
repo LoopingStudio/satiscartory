@@ -22,6 +22,10 @@ export function costText(cost: Inventory): string {
 export interface HudCallbacks {
   selectTool(tool: Tool): void;
   setRecipe(machineId: number, recipe: string): void;
+  /** Manual feeding from the hub storage. */
+  loadMachine(machineId: number): void;
+  /** Manual pickup of the machine output into the hub. */
+  collect(machineId: number): void;
   resume(): void;
   menu(): void;
   garage(): void;
@@ -114,7 +118,7 @@ export class FactoryHud {
         el('div', { class: 'controls-help' },
           el('div', {}, el('kbd', {}, 'Z Q S D'), ' / ', el('kbd', {}, 'W A S D'), ' se déplacer · ', el('kbd', {}, 'Maj'), ' courir · ', el('kbd', {}, 'Espace'), ' sauter'),
           el('div', {}, el('kbd', {}, '1-4'), ' construire · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter · ', el('kbd', {}, 'Q'), ' menu de construction'),
-          el('div', {}, el('kbd', {}, 'E'), ' configurer une machine / hangar · ', el('kbd', {}, 'Échap'), ' pause'),
+          el('div', {}, el('kbd', {}, 'E'), ' configurer une machine / hangar · ', el('kbd', {}, 'G'), ' garage · ', el('kbd', {}, 'Échap'), ' pause'),
         ),
         el('div', { class: 'row', style: 'margin-top:12px' },
           el('button', { class: 'primary', onclick: () => this.cb.resume() }, paused ? 'Reprendre' : 'Jouer'),
@@ -194,8 +198,15 @@ export class FactoryHud {
       el('div', { class: 'progress' }, el('div', { style: `width:${Math.round(progress * 100)}%` })),
     );
     if (recipe) {
-      const bufs = recipe.inputs.map((s) => `${ITEMS[s.item].name} ${m.inBuf[s.item] ?? 0}/${s.count * MACHINE.IN_CAP_FACTOR}`).join(' · ');
+      const bufs = recipe.inputs.map((s) => `${ITEMS[s.item].name} ${m.inBuf[s.item] ?? 0} (recette : ${s.count})`).join(' · ');
       this.panel.append(el('div', { class: 'muted small' }, `Entrées : ${bufs} — Sortie : ${m.outBuf.length}/${MACHINE.OUT_CAP}`));
+      const canLoad = recipe.inputs.some((s) => this.sim.count(s.item) > 0 && (m.inBuf[s.item] ?? 0) < s.count * MACHINE.MANUAL_CAP_FACTOR);
+      this.panel.append(
+        el('div', { class: 'row', style: 'margin-top:6px;flex-wrap:wrap' },
+          el('button', { class: 'small', disabled: !canLoad, title: 'Prend les entrées de la recette dans le hangar central', onclick: () => { this.cb.loadMachine(m.id); this.renderMachine(); } }, 'Charger depuis le hangar'),
+          el('button', { class: 'small', disabled: m.outBuf.length === 0, title: 'Envoie la production au hangar central', onclick: () => { this.cb.collect(m.id); this.renderMachine(); } }, `Récupérer la production (${m.outBuf.length})`),
+        ),
+      );
     }
     this.panel.append(el('h3', { style: 'margin-top:12px' }, 'Recettes'));
     const list = el('div', { class: 'recipe-list' });
@@ -209,6 +220,22 @@ export class FactoryHud {
       );
     }
     this.panel.append(list);
+  }
+
+  /** Onboarding checklist (top-left). */
+  renderObjectives(items: { text: string; hint: string; done: boolean }[]): void {
+    const allDone = items.every((i) => i.done);
+    const key = items.map((i) => (i.done ? 1 : 0)).join('');
+    if (this.objectives.dataset.key === key) return;
+    this.objectives.dataset.key = key;
+    clear(this.objectives);
+    this.objectives.style.display = 'block';
+    this.objectives.appendChild(el('h3', {}, allDone ? 'Bravo, la boucle est bouclée !' : 'Objectifs'));
+    const next = items.find((i) => !i.done);
+    for (const i of items) {
+      this.objectives.appendChild(el('div', { class: `objective${i.done ? ' done' : ''}` }, `${i.done ? '✔' : '○'} ${i.text}`));
+      if (i === next) this.objectives.appendChild(el('div', { class: 'muted small objective-hint' }, i.hint));
+    }
   }
 
   /** Live refresh of the open machine panel. */

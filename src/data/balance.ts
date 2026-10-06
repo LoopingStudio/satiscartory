@@ -17,13 +17,15 @@ export const DRILL = {
 } as const;
 
 export const MACHINE = {
-  /** Input buffer cap per item = recipe count × this. */
+  /** Input buffer cap per item = recipe count × this (belt deliveries). */
   IN_CAP_FACTOR: 2,
+  /** Manual loading from the hub may fill up to recipe count × this. */
+  MANUAL_CAP_FACTOR: 10,
   OUT_CAP: 10,
 } as const;
 
 /** Stock available in the central hub on a new game (pays for the first buildings). */
 export const START_STORAGE: Inventory = {
-  plate: 70,
-  bolt: 36,
+  plate: 100,
+  bolt: 60,
 };

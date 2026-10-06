@@ -422,3 +422,25 @@ describe('review regressions', () => {
     expect(start.items[0]!.pos).toBe(0);
   });
 });
+
+describe('manual feeding & pickup', () => {
+  it('loads recipe inputs from storage up to the cap and collects outputs', () => {
+    const s = sim({ storage: { plate: 10, bolt: 3, latex: 5 } });
+    const r = s.place('assembler', 2, 2, 0, { free: true });
+    if (!r.ok) throw new Error();
+    const m = r.building as MachineB;
+    expect(s.loadFromStorage(m.id)).toBe(0); // no recipe yet
+    s.setRecipe(m.id, 'chassis'); // 2 plates + 4 bolts, manual cap ×10
+    expect(s.loadFromStorage(m.id)).toBe(10 + 3);
+    expect(m.inBuf).toEqual({ plate: 10, bolt: 3 });
+    expect(s.count('plate')).toBe(0);
+    expect(s.count('bolt')).toBe(0);
+    s.give({ bolt: 10 });
+    s.loadFromStorage(m.id);
+    s.run(130);
+    expect(m.outBuf).toEqual(['chassis']);
+    expect(s.collectOutput(m.id)).toBe(1);
+    expect(s.count('chassis')).toBe(1);
+    expect(m.outBuf).toEqual([]);
+  });
+});

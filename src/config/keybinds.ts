@@ -11,6 +11,7 @@ export const KEYBINDS = {
   rotate: ['KeyR'],
   dismantle: ['KeyF'],
   cancel: ['Escape'],
+  garage: ['KeyG'],
   hotbar1: ['Digit1'],
   hotbar2: ['Digit2'],
   hotbar3: ['Digit3'],

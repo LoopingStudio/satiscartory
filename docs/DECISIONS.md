@@ -94,3 +94,29 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
   - Le clic droit **sans glisser** efface, le clic droit glissé fait pivoter la caméra.
 - **Aperçu** : l'éditeur reconstruit tout le circuit (mesh fusionné) à chaque modification avec `buildTrack(…, world = null)`, sans collider. C'est instantané jusqu'à quelques centaines de pièces.
 - **Stockage** : clé localStorage `satiscartory.tracks.v1`. Les circuits officiels se copient dans l'éditeur au lieu de se modifier.
+
+## P6
+
+- **Chargement et collecte manuels** (comme l'insertion à la main dans Satisfactory) :
+  - Le panneau d'une machine peut **charger depuis le hangar** les entrées de sa recette, jusqu'à 10× la quantité de la recette ; les convoyeurs restent plafonnés à 2×.
+  - Il peut aussi **récupérer la production** vers le hangar.
+  - Les convoyeurs restent la voie automatique. Le manuel évite d'imposer une usine complète pour un premier kart.
+- **Économie de départ** : 100 plaques et 60 boulons. Le test `objectives.test.ts` vérifie qu'on paie les deux chaînes (fer et caoutchouc), une assembleuse, 25 convoyeurs et les pièces du kart. Le premier essai à 70/36 laissait un joueur à 0 plaque sans chaîne de fer, donc bloqué.
+- **Objectifs d'accueil**, dans l'ordre :
+  1. Plaques (fer)
+  2. Foreuse sur le caoutchouc
+  3. Presse « Pneu »
+  4. Assembleuse
+  5. Pièces
+  6. Assemblage
+  7. Course avec sa voiture
+  8. Bonus : la Sportive
+
+  Ils sont mémorisés dans la sauvegarde.
+- **Garage** :
+  - Assemblage par emplacement : roues standard ou racing, aileron optionnel.
+  - Les barres de stats se comparent à la voiture de course actuelle.
+  - On peut changer une pièce (échange avec le stock) ou démonter la voiture, ce qui rembourse ses pièces.
+  - La voiture assemblée devient la voiture de course (★).
+- **Touche G** : ouvre le garage depuis l'usine. Le panneau du hangar (E) y mène aussi.
+- **Poteaux des portiques** : déplacés juste hors de la tuile. Sur le trottoir, ils accrochaient les voitures en sortie de virage.

@@ -14,6 +14,7 @@ import { FACTORY_CELL, GRAVITY_FACTORY } from '../config/constants';
 import { FACTORY_MAP } from '../data/factoryMap';
 import { BUILDINGS, BUILD_MENU } from '../data/buildings';
 import { PLAYER } from '../data/player';
+import { OBJECTIVES, type ObjectiveContext } from '../data/objectives';
 import { toast } from '../ui/dom';
 import { FactorySim } from './sim/FactorySim';
 import { spawnDemoFactory, spawnStressLoops } from './sim/testLayouts';
@@ -88,6 +89,14 @@ export class FactoryMode implements Mode {
       selectTool: (t) => this.selectTool(t),
       setRecipe: (id, r) => {
         this.sim.setRecipe(id, r);
+      },
+      loadMachine: (id) => {
+        const n = this.sim.loadFromStorage(id);
+        toast(n ? `${n} objet${n > 1 ? 's' : ''} chargé${n > 1 ? 's' : ''}` : 'Rien à charger', n ? 'success' : 'info', 1200);
+      },
+      collect: (id) => {
+        const n = this.sim.collectOutput(id);
+        if (n) toast(`${n} objet${n > 1 ? 's' : ''} envoyé${n > 1 ? 's' : ''} au hangar`, 'success', 1200);
       },
       resume: () => this.resume(),
       menu: () => void this.game.switchMode('menu'),
@@ -224,8 +233,30 @@ export class FactoryMode implements Mode {
       this.hud.updateStorage();
       this.hud.tick();
       this.hud.buildHotbar(this.build.tool);
+      this.updateObjectives();
     }
     this.state.player = { x: this.player.cur.x, y: this.player.cur.y, z: this.player.cur.z, yaw: this.orbit.yaw };
+  }
+
+  private updateObjectives(): void {
+    const ctx: ObjectiveContext = {
+      buildings: [...this.sim.buildings.values()].map((b) => ({
+        type: b.type,
+        recipe: b.type === 'press' || b.type === 'assembler' ? b.recipe : null,
+        resource: b.type === 'drill' ? b.resource : null,
+      })),
+      storage: this.sim.storage,
+      cars: this.state.cars.length,
+      delivered: this.sim.delivered,
+      blueprints: this.state.cars.map((c) => c.blueprint),
+      racesWithOwnCar: Object.values(this.state.records).filter((r) => r.carId).length,
+    };
+    const items = OBJECTIVES.map((o) => {
+      const done = !!this.state.objectives[o.id] || o.done(ctx);
+      if (done) this.state.objectives[o.id] = true;
+      return { text: o.text, hint: o.hint, done };
+    });
+    this.hud.renderObjectives(items);
   }
 
   private hudIsBuildMenu(): boolean {
@@ -247,6 +278,7 @@ export class FactoryMode implements Mode {
       this.hud.buildHotbar(this.build.tool);
     }
     if (input.wasPressed('buildMenu')) this.openPanel('build');
+    if (input.wasPressed('garage')) void this.game.switchMode('garage');
     if (input.wasPressed('interact')) {
       const id = this.build.interactTarget();
       const b = id !== null ? this.sim.buildings.get(id) : undefined;
