@@ -6,7 +6,7 @@ import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
-import type { BeltItem, Building, ConveyorB, DrillB, FactorySave, HubB, ItemSink, ItemSource, Link, MachineB, PlaceCheck } from './types';
+import { isMachine, isProducer, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck } from './types';
 
 export interface SimEvents extends Record<string, unknown> {
   placed: Building;
@@ -193,6 +193,17 @@ export class FactorySim {
     return any ? missing : null;
   }
 
+  /**
+   * Hand mining: one item of the resource under a free cell (not covered by a building) into `sink`.
+   * Returns the item, or null if there is nothing to mine or the sink is full.
+   */
+  mineAt(x: number, z: number, sink: ItemSink): ItemId | null {
+    const res = this.resourceAt(x, z);
+    if (!res || this.grid[this.idx(x, z)]) return null;
+    const item = RESOURCES[res].item;
+    return sink.add(item, 1) === 1 ? item : null;
+  }
+
   // ---------------------------------------------------------------- placement
 
   /**
@@ -250,6 +261,7 @@ export class FactorySim {
         return { type, id, x, z, rot, items: [], lastFrom: -1 };
       case 'drill':
         return { type, id, x, z, rot, resource, progress: 0, outBuf: [] };
+      case 'smelter':
       case 'press':
       case 'assembler':
         return { type, id, x, z, rot, recipe: null, inBuf: {}, outBuf: [], progress: 0, status: 'noRecipe' };
@@ -281,7 +293,7 @@ export class FactorySim {
   private refundContents(b: Building, sink?: ItemSink): void {
     if (b.type === 'conveyor') for (const it of b.items) this.refund(it.item, 1, sink);
     if (b.type === 'drill') for (const it of b.outBuf) this.refund(it, 1, sink);
-    if (b.type === 'press' || b.type === 'assembler') {
+    if (isMachine(b)) {
       for (const [item, n] of Object.entries(b.inBuf) as [ItemId, number][]) this.refund(item, n, sink);
       for (const it of b.outBuf) this.refund(it, 1, sink);
       const r = b.recipe ? RECIPES_BY_ID[b.recipe] : undefined;
@@ -294,7 +306,7 @@ export class FactorySim {
 
   setRecipe(id: number, recipeId: string | null, sink?: ItemSink): boolean {
     const b = this.buildings.get(id);
-    if (!b || (b.type !== 'press' && b.type !== 'assembler')) return false;
+    if (!isMachine(b)) return false;
     if (recipeId !== null) {
       const r = RECIPES_BY_ID[recipeId];
       if (!r || r.machine !== b.type) return false;
@@ -321,7 +333,7 @@ export class FactorySim {
   /** Manual feeding from any source (backpack, hub, or both through a wallet). */
   loadFrom(id: number, source: ItemSource): number {
     const m = this.buildings.get(id);
-    if (!m || (m.type !== 'press' && m.type !== 'assembler')) return 0;
+    if (!isMachine(m)) return 0;
     const r = m.recipe ? RECIPES_BY_ID[m.recipe] : undefined;
     if (!r) return 0;
     let moved = 0;
@@ -342,7 +354,7 @@ export class FactorySim {
    */
   collectOutput(id: number, sink: ItemSink = this.hub): number {
     const b = this.buildings.get(id);
-    if (!b || (b.type !== 'press' && b.type !== 'assembler' && b.type !== 'drill')) return 0;
+    if (!isProducer(b)) return 0;
     const kept: ItemId[] = [];
     let moved = 0;
     for (const it of b.outBuf) {
@@ -414,7 +426,7 @@ export class FactorySim {
       }
       for (let i = chain.length - 1; i >= 0; i--) this.convOrder.push(chain[i]!);
     }
-    this.producers = sorted.filter((b): b is DrillB | MachineB => b.type === 'drill' || b.type === 'press' || b.type === 'assembler');
+    this.producers = sorted.filter(isProducer);
     this.events.emit('topology', undefined);
   }
 
@@ -541,7 +553,7 @@ export class FactorySim {
     const f = this.buildings.get(feederId);
     if (!f) return false;
     if (f.type === 'conveyor') return (f.items[0]?.pos ?? -1) >= BELT.SEG - BELT.SPEED;
-    if (f.type === 'drill' || f.type === 'press' || f.type === 'assembler') return f.outBuf.length > 0;
+    if (isProducer(f)) return f.outBuf.length > 0;
     return false;
   }
 
@@ -565,6 +577,7 @@ export class FactorySim {
         t.lastFrom = from;
         return true;
       }
+      case 'smelter':
       case 'press':
       case 'assembler': {
         const recipe = t.recipe ? RECIPES_BY_ID[t.recipe] : undefined;
@@ -588,7 +601,7 @@ export class FactorySim {
   /** Craft progress 0..1 of a machine/drill (for animations). */
   progressOf(b: Building): number {
     if (b.type === 'drill') return b.progress / DRILL.PERIOD;
-    if ((b.type === 'press' || b.type === 'assembler') && b.recipe && b.status === 'working') {
+    if (isMachine(b) && b.recipe && b.status === 'working') {
       const r = RECIPES_BY_ID[b.recipe];
       return r ? b.progress / r.ticks : 0;
     }
@@ -639,7 +652,7 @@ export class FactorySim {
       const cells = sim.cellsFor(b.type, b.x, b.z, b.rot);
       if (cells.some(([cx, cz]) => !sim.inBounds(cx, cz) || sim.grid[sim.idx(cx, cz)])) continue;
       if (b.type === 'conveyor') b.items = b.items.filter((it) => isItemId(it.item));
-      if (b.type === 'press' || b.type === 'assembler') {
+      if (isMachine(b)) {
         const r = b.recipe ? RECIPES_BY_ID[b.recipe] : undefined;
         if (b.recipe && (!r || r.machine !== b.type)) {
           // Recipe no longer exists (older save): give buffered items back and reset.
@@ -650,6 +663,13 @@ export class FactorySim {
           b.outBuf = [];
           b.progress = 0;
           b.status = 'noRecipe';
+        } else if (r) {
+          // Same recipe id, different inputs (rebalance): stale items go back to the hub.
+          for (const [item, n] of Object.entries(b.inBuf ?? {}) as [string, number][]) {
+            if (r.inputs.some((s) => s.item === item)) continue;
+            if (isItemId(item) && n > 0) sim.give({ [item]: n });
+            delete (b.inBuf as Record<string, number>)[item];
+          }
         }
       }
       sim.insert(b);

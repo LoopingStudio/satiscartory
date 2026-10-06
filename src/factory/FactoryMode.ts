@@ -14,6 +14,11 @@ import { FACTORY_CELL, GRAVITY_FACTORY } from '../config/constants';
 import { FACTORY_MAP } from '../data/factoryMap';
 import { BUILDINGS, BUILD_MENU } from '../data/buildings';
 import { ITEMS, ITEM_IDS, countLabel } from '../data/items';
+import { RECIPES_BY_ID, recipesFor } from '../data/recipes';
+import { TIERS, tierOf } from '../data/tiers';
+import { HAND } from '../data/balance';
+import { RESOURCES } from '../data/factoryMap';
+import { isMachine } from './sim/types';
 import type { Wallet } from '../state/Inventory';
 import { PLAYER } from '../data/player';
 import { OBJECTIVES, type ObjectiveContext } from '../data/objectives';
@@ -27,7 +32,7 @@ export interface FactoryModeParams {
   layout?: 'demo' | 'stress';
 }
 
-const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4'];
+const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4', 'hotbar5'];
 /** The Escape keydown and the pointer-lock change arrive in either order: treat them as one press. */
 const ESC_GRACE_MS = 400;
 
@@ -56,6 +61,9 @@ export class FactoryMode implements Mode {
   private readonly raycaster = new THREE.Raycaster();
   private faceYaw = 0;
   private rmbDragged = 0;
+  /** Hand mining: seconds E has been held on the current resource cell. */
+  private mineT = 0;
+  private mineCell: string | null = null;
   /** Time (ms) a build/dismantle tool was last closed by Escape. */
   private toolEscAt = -Infinity;
   /** Pointer released by Escape while a tool was active: no pause menu, click to resume. */
@@ -77,15 +85,22 @@ export class FactoryMode implements Mode {
       this.state.ephemeral = true;
     } else {
       this.sim = this.state.sim;
-      if (params?.layout === 'demo') spawnDemoFactory(this.sim);
+      if (params?.layout === 'demo') {
+        spawnDemoFactory(this.sim);
+        // Dev layout: every building available to play with the demo chains.
+        this.state.tier = TIERS.length;
+      }
     }
     this.rig = addLightRig(this.scene, { shadowSize: 45, fog: [90, 320] });
     this.view = new FactoryView(this.game.assets, this.sim);
     this.scene.add(this.view.root);
     this.world = new FactoryWorld(this.sim);
 
-    const spawn = this.state.player
-      ? new THREE.Vector3(this.state.player.x, this.state.player.y, this.state.player.z)
+    // A saved position inside a building (e.g. where the hub's bench now stands) falls back to the spawn.
+    const saved = this.state.player;
+    const inside = saved ? this.sim.at(Math.floor(saved.x / FACTORY_CELL), Math.floor(saved.z / FACTORY_CELL)) : undefined;
+    const spawn = saved && (!inside || inside.type === 'conveyor')
+      ? new THREE.Vector3(saved.x, saved.y, saved.z)
       : new THREE.Vector3(FACTORY_MAP.spawn.x * FACTORY_CELL, 0.1, FACTORY_MAP.spawn.z * FACTORY_CELL);
     this.player = new CharacterController(this.world.physics, spawn);
     this.avatar = new PlayerAvatar(this.game.assets);
@@ -141,6 +156,25 @@ export class FactoryMode implements Mode {
         if (n) toast(`${n} objet${n > 1 ? 's' : ''} déposé${n > 1 ? 's' : ''} au hangar`, 'success', 1400);
       },
       nearHub: () => this.nearHub(),
+      tier: () => this.state.tier,
+      isUnlocked: (type) => this.state.isUnlocked(type),
+      unlockTier: (n) => {
+        if (this.state.tier !== n - 1) return;
+        const next = TIERS[this.state.tier];
+        const res = this.state.unlockNextTier();
+        if (res.ok && next) {
+          toast(`Palier ${this.state.tier} débloqué : ${next.unlocks.map((t) => BUILDINGS[t].name).join(', ')}`, 'success', 2600);
+          this.hud.buildHotbar(this.build.tool);
+          this.hud.updateStorage();
+        } else if (res.missing) {
+          toast(`Il manque ${Object.entries(res.missing).map(([i, n]) => countLabel(i as keyof typeof ITEMS, n ?? 0)).join(', ')}`, 'error', 2200);
+        }
+      },
+      craft: (id) => {
+        const r = RECIPES_BY_ID[id];
+        return !!r && r.machine === 'bench' && this.wallet.craft(r);
+      },
+      setCrafting: (active) => this.view.setCrafting(active),
       resume: () => this.resume(),
       menu: () => void this.game.switchMode('menu'),
       garage: () => void this.game.switchMode('garage'),
@@ -169,7 +203,14 @@ export class FactoryMode implements Mode {
         }
         this.hud.showOverlay(true, this.started);
       }),
-      this.sim.events.on('placed', () => this.hud.buildHotbar(this.build.tool)),
+      this.sim.events.on('placed', (b) => {
+        // A machine with a single recipe (the smelter) starts on it.
+        if (isMachine(b) && !b.recipe) {
+          const only = recipesFor(b.type);
+          if (only.length === 1) this.sim.setRecipe(b.id, only[0]!.id);
+        }
+        this.hud.buildHotbar(this.build.tool);
+      }),
     );
     this.hud.showOverlay(true, false);
     this.hud.updateStorage();
@@ -204,6 +245,10 @@ export class FactoryMode implements Mode {
   }
 
   private selectTool(t: Tool): void {
+    if (t.kind === 'build' && !this.state.isUnlocked(t.type)) {
+      toast(`${BUILDINGS[t.type].name} : débloque le palier ${tierOf(t.type)} au hangar (E → Paliers)`, 'error', 2200);
+      return;
+    }
     this.build.setTool(t);
     this.hud.buildHotbar(this.build.tool);
   }
@@ -276,9 +321,13 @@ export class FactoryMode implements Mode {
     this.renderPos.lerpVectors(this.player.prev, this.player.cur, alpha);
     this.orbit.update(this.renderPos, dt);
 
-    // Facing: toward movement, or toward the camera while a build tool is active.
+    // Facing: toward movement, toward the camera while a build tool is active, toward the rock while mining.
     const moving = this.player.speed > 0.5;
     if (this.build.tool.kind !== 'none') this.faceYaw = this.orbit.yaw;
+    else if (this.mineT > 0 && this.mineCell) {
+      const [cx, cz] = this.mineCell.split(',').map(Number) as [number, number];
+      this.faceYaw = Math.atan2((cx + 0.5) * FACTORY_CELL - this.renderPos.x, (cz + 0.5) * FACTORY_CELL - this.renderPos.z);
+    }
     else if (moving) {
       const d = this.player.cur.clone().sub(this.player.prev);
       if (d.lengthSq() > 1e-6) this.faceYaw = Math.atan2(d.x, d.z);
@@ -300,6 +349,8 @@ export class FactoryMode implements Mode {
         this.hud.showOverlay(true, true);
       }
     } else if (this.hud.panelOpen && (input.wasPressed('cancel') || (input.wasPressed('buildMenu') && this.hud.openPanelKind === 'build') || (input.wasPressed('inventory') && this.hud.openPanelKind === 'inventory'))) this.closePanel();
+    this.updateMining(dt, controlling);
+    this.hud.frame(dt);
 
     this.hud.setCrosshair(this.game.pointer.locked && !this.hud.panelOpen);
     this.updateHint();
@@ -318,18 +369,43 @@ export class FactoryMode implements Mode {
     this.state.player = { x: this.player.cur.x, y: this.player.cur.y, z: this.player.cur.z, yaw: this.orbit.yaw };
   }
 
+  /** Hand mining: hold E on a free resource cell within reach; one item per HAND.MINE_SECONDS into the backpack. */
+  private updateMining(dt: number, controlling: boolean): void {
+    const target = controlling ? this.build.mineTarget() : null;
+    const key = target ? target.cell.join(',') : null;
+    if (!target || !this.game.input.isDown('interact') || key !== this.mineCell) {
+      this.mineT = 0;
+      this.mineCell = target && this.game.input.isDown('interact') ? key : null;
+      return;
+    }
+    this.mineT += dt;
+    if (this.mineT < HAND.MINE_SECONDS) return;
+    this.mineT -= HAND.MINE_SECONDS;
+    const item = this.sim.mineAt(target.cell[0], target.cell[1], this.state.inventory);
+    if (item) {
+      this.view.mineEffect(target.cell[0], target.cell[1], target.resource);
+      this.hud.updateStorage();
+    } else {
+      this.mineT = 0;
+      this.mineCell = null;
+      toast('Sac plein : dépose des objets au hangar', 'error', 1800);
+    }
+  }
+
   private updateObjectives(): void {
     const ctx: ObjectiveContext = {
       buildings: [...this.sim.buildings.values()].map((b) => ({
         type: b.type,
-        recipe: b.type === 'press' || b.type === 'assembler' ? b.recipe : null,
+        recipe: isMachine(b) ? b.recipe : null,
         resource: b.type === 'drill' ? b.resource : null,
       })),
       storage: this.wallet.totals(ITEM_IDS),
       cars: this.state.cars.length,
       delivered: this.sim.delivered,
+      crafted: this.sim.crafted,
       blueprints: this.state.cars.map((c) => c.blueprint),
       racesWithOwnCar: Object.values(this.state.records).filter((r) => r.carId).length,
+      tier: this.state.tier,
     };
     const items = OBJECTIVES.map((o) => {
       const done = !!this.state.objectives[o.id] || o.done(ctx);
@@ -394,8 +470,14 @@ export class FactoryMode implements Mode {
     } else {
       const id = this.build.interactTarget();
       const b = id !== null ? this.sim.buildings.get(id) : undefined;
-      if (b) html = `<kbd>E</kbd> ${b.type === 'hub' ? 'ouvrir le hangar' : `configurer : ${BUILDINGS[b.type].name}`}`;
-      else html = '<kbd>1-4</kbd> construire · <kbd>A</kbd> menu · <kbd>F</kbd> démonter';
+      const mine = this.build.mineTarget();
+      if (b) html = `<kbd>E</kbd> ${b.type === 'hub' ? 'hangar : établi, paliers, stock' : `configurer : ${BUILDINGS[b.type].name}`}`;
+      else if (mine) {
+        const pct = Math.round((this.mineT / HAND.MINE_SECONDS) * 100);
+        html = this.mineT > 0
+          ? `Minage : ${RESOURCES[mine.resource].name} <span class="mine-bar"><i style="width:${pct}%"></i></span>`
+          : `<kbd>E</kbd> maintenir : miner (${RESOURCES[mine.resource].name})`;
+      } else html = '<kbd>1-5</kbd> construire · <kbd>A</kbd> menu · <kbd>F</kbd> démonter';
     }
     this.hud.setHint(html);
   }

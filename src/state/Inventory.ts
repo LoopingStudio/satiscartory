@@ -167,6 +167,19 @@ export class Wallet implements ItemSource, ItemSink {
     return any ? missing : null;
   }
 
+  /**
+   * Crafts once by hand: takes the inputs (backpack first, then hub) and adds the outputs
+   * (backpack first, overflow to the hub). Changes nothing and returns false if an input is missing.
+   */
+  craft(recipe: { inputs: readonly { item: ItemId; count: number }[]; outputs: readonly { item: ItemId; count: number }[] }): boolean {
+    const cost: ItemCounts = {};
+    for (const s of recipe.inputs) cost[s.item] = (cost[s.item] ?? 0) + s.count;
+    if (this.missingFor(cost)) return false;
+    for (const s of recipe.inputs) this.remove(s.item, s.count);
+    for (const s of recipe.outputs) this.add(s.item, s.count);
+    return true;
+  }
+
   totals(items: readonly ItemId[]): ItemCounts {
     const t: ItemCounts = {};
     for (const i of items) {

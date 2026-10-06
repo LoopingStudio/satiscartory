@@ -5,12 +5,16 @@ export interface ObjectiveContext {
   buildings: { type: string; recipe?: string | null; resource?: string | null }[];
   storage: Inventory;
   cars: number;
-  /** Items received by the hub so far. */
+  /** Items received by the hub so far (belts only). */
   delivered: Inventory;
+  /** Items produced by drills and machines (sim.crafted); hand mining and the bench never count. */
+  crafted: Inventory;
   /** Blueprints of the assembled cars. */
   blueprints: string[];
   /** Finished runs with an assembled car (not the loaner). */
   racesWithOwnCar: number;
+  /** Hub tiers unlocked. */
+  tier: number;
 }
 
 export interface Objective {
@@ -20,36 +24,76 @@ export interface Objective {
   done(c: ObjectiveContext): boolean;
 }
 
-/** Short guided path through the whole loop (playable in a couple of minutes). */
+/**
+ * Guided path through the whole loop, Satisfactory-style: hand mining and the bench, then the hub tiers
+ * one by one, up to the car and the race. Each step also completes once the player is past it (tier),
+ * so saves from before the tiers (everything unlocked) do not replay the bootstrap.
+ */
 export const OBJECTIVES: Objective[] = [
   {
-    id: 'iron',
-    text: 'Produis des plaques : foreuse sur le fer → presse « Plaque » → hangar',
-    hint: 'Touche 2 : foreuse (R pour tourner) sur les roches rouilles. Touche 1 : convoyeurs (clic maintenu). Touche 3 : presse, puis E pour choisir « Plaque ».',
-    done: (c) => (c.delivered.plate ?? 0) > 0,
+    id: 'mine',
+    text: 'Mine du minerai de fer à la main',
+    hint: 'Vise les roches rouille d’un gisement, tout près, et maintiens E. Le minerai va dans ton sac.',
+    done: (c) => (c.storage.iron_ore ?? 0) >= 5 || c.tier >= 1,
   },
   {
-    id: 'drill',
-    text: 'Pose une foreuse sur un gisement de caoutchouc (roches noires)',
-    hint: 'Le latex sert à fabriquer des pneus.',
-    done: (c) => c.buildings.some((b) => b.type === 'drill' && b.resource === 'rubber'),
+    id: 'bench',
+    text: 'Fabrique 10 tiges de fer à l’établi du hangar',
+    hint: 'E sur le hangar → Établi. Minerai → lingot, puis lingot → tige : maintiens le bouton pour fabriquer.',
+    done: (c) => (c.storage.iron_rod ?? 0) >= 10 || c.tier >= 1,
   },
   {
-    id: 'tire',
-    text: 'Pose une presse réglée sur « Pneu » et relie-la à la foreuse',
-    hint: 'Touche 3 pour la presse, E pour choisir la recette, touche 1 pour tracer des convoyeurs.',
-    done: (c) => c.buildings.some((b) => b.type === 'press' && b.recipe === 'tire'),
+    id: 'tier1',
+    text: 'Débloque le palier 1 (Extraction) au hangar',
+    hint: 'E sur le hangar → Paliers. Le sac paie d’abord, puis le hangar.',
+    done: (c) => c.tier >= 1,
   },
   {
-    id: 'assembler',
-    text: 'Construis une assembleuse et règle-la sur « Roue »',
-    hint: 'Les pneus arrivent par convoyeur ; les plaques se chargent depuis ton sac ou le hangar (E → « Charger »).',
-    done: (c) => c.buildings.some((b) => b.type === 'assembler'),
+    id: 'drill_ore',
+    text: 'Pose une foreuse sur le fer',
+    hint: 'Touche 2 : foreuse (R pour tourner). Touche 1 : convoyeurs (clic maintenu) jusqu’au hangar ; en attendant, E sur la foreuse → « Prendre ».',
+    done: (c) => (c.crafted.iron_ore ?? 0) > 0 || (c.delivered.iron_ore ?? 0) > 0 || c.tier >= 2,
   },
   {
-    id: 'parts',
+    id: 'tier2',
+    text: 'Débloque le palier 2 (Fonderie)',
+    hint: 'Plaques et tiges à l’établi, ou avec le minerai qui arrive au hangar.',
+    done: (c) => c.tier >= 2,
+  },
+  {
+    id: 'smelt',
+    text: 'Fais fondre le minerai dans une fonderie',
+    hint: 'Touche 3 : fonderie, reliée à la foreuse par convoyeur. Une foreuse alimente exactement une fonderie.',
+    done: (c) => (c.crafted.iron_ingot ?? 0) > 0 || (c.delivered.iron_ingot ?? 0) > 0 || c.tier >= 3,
+  },
+  {
+    id: 'tier3',
+    text: 'Débloque le palier 3 (Constructeur)',
+    hint: 'Les boulons se font à l’établi : tige → 4 boulons.',
+    done: (c) => c.tier >= 3,
+  },
+  {
+    id: 'plates',
+    text: 'Produis des plaques avec un constructeur',
+    hint: 'Touche 4, puis E pour choisir « Plaque ». 1 foreuse → 1 fonderie → 1 constructeur.',
+    done: (c) => (c.crafted.plate ?? 0) > 0 || (c.delivered.plate ?? 0) > 0 || c.tier >= 4,
+  },
+  {
+    id: 'tires',
+    text: 'Fais des pneus : foreuse sur le caoutchouc → constructeur « Pneu »',
+    hint: 'Roches noires. Le palier 4 demande 10 pneus.',
+    done: (c) => (c.crafted.tire ?? 0) > 0 || (c.storage.tire ?? 0) > 0 || c.tier >= 4,
+  },
+  {
+    id: 'tier4',
+    text: 'Débloque le palier 4 (Assemblage)',
+    hint: 'E sur le hangar → Paliers.',
+    done: (c) => c.tier >= 4,
+  },
+  {
+    id: 'car_parts',
     text: 'Produis 4 roues, 1 châssis et 1 moteur',
-    hint: 'Change la recette de l’assembleuse ; envoie la production au hangar par convoyeur, ou prends-la dans ton sac (E → « Prendre »).',
+    hint: 'Touche 5 : assembleuse. Châssis et moteur demandent plaques, tiges et boulons ; la roue, un pneu et une plaque.',
     done: (c) => c.cars > 0 || ((c.storage.wheel ?? 0) + (c.storage.wheel_racing ?? 0) >= 4 && (c.storage.chassis ?? 0) >= 1 && (c.storage.engine ?? 0) >= 1),
   },
   {
@@ -67,7 +111,7 @@ export const OBJECTIVES: Objective[] = [
   {
     id: 'sport',
     text: 'Bonus : assemble la Sportive (carrosserie = plaques + boulons)',
-    hint: 'Ajoute une presse « Boulons » ; l’assembleuse fait des panneaux. Les roues racing et l’aileron améliorent la tenue de route.',
+    hint: 'L’assembleuse fait des panneaux. Les roues racing et l’aileron améliorent la tenue de route.',
     done: (c) => c.blueprints.includes('sport'),
   },
 ];

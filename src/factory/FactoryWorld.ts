@@ -1,12 +1,15 @@
 import { PhysicsWorld, RAPIER } from '../core/physics/PhysicsWorld';
 import { FACTORY_CELL, GRAVITY_FACTORY } from '../config/constants';
 import { BUILDINGS } from '../data/buildings';
+import { PLAYER } from '../data/player';
 import { rotatedSize } from './sim/dirs';
+import { HUB_BENCH } from './view/hubBench';
+import { rotateLocal } from './view/beltPath';
 import type { FactorySim } from './sim/FactorySim';
 import type { Building } from './sim/types';
 
 /** Collider heights per building type (meters). Conveyors are low enough to step onto. */
-const HEIGHTS = { conveyor: 0.8, drill: 3.6, press: 2.1, assembler: 2.1 } as const;
+const HEIGHTS = { conveyor: 0.8, drill: 3.6, smelter: 2.1, press: 2.1, assembler: 2.1 } as const;
 
 /** Rapier world of the factory: ground + one static collider set per building, kept in sync with the sim. */
 export class FactoryWorld {
@@ -45,6 +48,12 @@ export class FactoryWorld {
       for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
         descs.push(RAPIER.ColliderDesc.cuboid(0.25, 1.6, 0.8).setTranslation(cx + sx * 2.7, 1.6, cz + sz * 2.7));
       }
+      // Crafting bench on the south face (part of the hub): taller than a step so it is walked around, not climbed.
+      const bench = { x: 0, z: 0 };
+      rotateLocal(0, HUB_BENCH.z, b.rot, bench);
+      const [bhx, bhz] = rotatedSize(HUB_BENCH.halfW, HUB_BENCH.halfD, b.rot);
+      const bhy = Math.max(HUB_BENCH.top, PLAYER.STEP_HEIGHT + 0.2) / 2;
+      descs.push(RAPIER.ColliderDesc.cuboid(bhx, bhy, bhz).setTranslation(cx + bench.x, bhy, cz + bench.z));
       // A thin pickable slab over the whole footprint so the hub can be aimed at.
       descs.push(RAPIER.ColliderDesc.cuboid((rw * FACTORY_CELL) / 2, 0.02, (rh * FACTORY_CELL) / 2).setTranslation(cx, 0.02, cz));
     } else {

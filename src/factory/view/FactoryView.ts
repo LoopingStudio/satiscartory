@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import type { AssetLoader } from '../../core/assets/AssetLoader';
 import { BELT } from '../../data/balance';
-import { RESOURCES } from '../../data/factoryMap';
+import { RESOURCES, type ResourceId } from '../../data/factoryMap';
 import { FACTORY_CELL, FACTORY_MODEL_SCALE } from '../../config/constants';
 import type { FactorySim, ConveyorShape } from '../sim/FactorySim';
 import type { Building, ConveyorB } from '../sim/types';
 import { mulberry32 } from '../../core/rng';
 import { BuildingVisual } from './BuildingVisuals';
 import { ItemRenderer } from './ItemRenderer';
+import { MineBursts } from './MineBursts';
 import { beltLocal, rotateLocal } from './beltPath';
 import type { ModelKey } from '../../core/assets/manifest.gen';
 
@@ -26,6 +27,10 @@ export class FactoryView {
   private conveyorMeshes = new Map<ConveyorShape, THREE.InstancedMesh>();
   private conveyorsDirty = true;
   private items: ItemRenderer;
+  private bursts: MineBursts;
+  /** Visual of the hub (its bench animates while the player crafts). */
+  private hub: BuildingVisual | null = null;
+  private crafting = false;
   private unsub: (() => void)[] = [];
   private t = 0;
   private readonly tmp = { x: 0, z: 0, yaw: 0 };
@@ -36,6 +41,7 @@ export class FactoryView {
   constructor(private readonly assets: AssetLoader, private readonly sim: FactorySim) {
     this.root.name = 'factory';
     this.items = new ItemRenderer(assets, this.root);
+    this.bursts = new MineBursts(this.root);
     this.buildGround();
     for (const b of sim.buildings.values()) this.addVisual(b);
     this.unsub.push(
@@ -44,7 +50,9 @@ export class FactoryView {
         this.conveyorsDirty = true;
       }),
       sim.events.on('removed', (b) => {
-        this.visuals.get(b.id)?.dispose();
+        const v = this.visuals.get(b.id);
+        v?.dispose();
+        if (v && v === this.hub) this.hub = null;
         this.visuals.delete(b.id);
         this.conveyorsDirty = true;
       }),
@@ -121,6 +129,10 @@ export class FactoryView {
     const v = new BuildingVisual(this.assets, b);
     this.visuals.set(b.id, v);
     this.root.add(v.root);
+    if (b.type === 'hub') {
+      this.hub = v;
+      v.crafting = this.crafting;
+    }
   }
 
   private rebuildConveyors(): void {
@@ -188,10 +200,25 @@ export class FactoryView {
     return this.visuals.get(id);
   }
 
+  /**
+   * The player is crafting at the hub bench (true while a craft button is held): the bench lever pumps.
+   * Call with false on release (and when the hub panel closes).
+   */
+  setCrafting(active: boolean): void {
+    this.crafting = active;
+    if (this.hub) this.hub.crafting = active;
+  }
+
+  /** Burst of rock chunks in the resource color at the center of grid cell (cx, cz): one hand-mined ore. */
+  mineEffect(cx: number, cz: number, resource: ResourceId): void {
+    this.bursts.burst((cx + 0.5) * FACTORY_CELL, 0.3, (cz + 0.5) * FACTORY_CELL, RESOURCES[resource].color);
+  }
+
   update(dt: number, factoryAlpha: number): void {
     this.t += dt;
     if (this.conveyorsDirty) this.rebuildConveyors();
     for (const v of this.visuals.values()) v.update(this.sim, this.t);
+    this.bursts.update(dt);
 
     // Belt items, interpolated between the last two sim ticks.
     const items = this.items;
@@ -220,6 +247,7 @@ export class FactoryView {
     for (const u of this.unsub) u();
     for (const v of this.visuals.values()) v.dispose();
     this.items.dispose();
+    this.bursts.dispose();
     for (const m of this.conveyorMeshes.values()) m.dispose();
     (this.root.getObjectByName('floor') as THREE.Mesh | undefined)?.geometry.dispose(); // own clone, not the cached tile
     this.root.removeFromParent();

@@ -165,6 +165,11 @@ kbd {
   background: var(--panel); border: 2px solid var(--panel-border); padding: 4px 9px;
 }
 .slot-top { display: flex; align-items: center; gap: 6px; }
+.hotbar .slot.locked { opacity: 0.5; border-style: dashed; }
+.hotbar .slot.locked .slot-cost { color: var(--muted); }
+.build-card.locked { opacity: 0.55; }
+.mine-bar { display: inline-block; width: 90px; height: 8px; margin-left: 6px; vertical-align: middle; background: #262842; border-radius: 4px; overflow: hidden; }
+.mine-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--gold)); }
 .hotbar .slot.active { border-color: var(--accent); background: rgba(255, 159, 28, 0.18); }
 .hotbar .slot.danger-slot { border-color: var(--bad); background: rgba(255, 93, 93, 0.18); }
 .hotbar .slot.poor .slot-cost { color: var(--bad); }
@@ -320,6 +325,28 @@ button.inv-slot:hover { background: #343861; border-color: var(--accent); }
 .hub-list { display: flex; flex-direction: column; gap: 4px; max-height: 330px; overflow: auto; margin-top: 8px; }
 .hub-row { display: flex; align-items: center; gap: 8px; text-align: left; padding: 5px 10px; }
 .machine-io { gap: 18px; flex-wrap: wrap; margin-top: 6px; }
+/* Hub panel: tabs, bench (hold-to-craft) and tiers */
+.tabs { gap: 6px; margin: 8px 0 2px; }
+.tab { font-size: 14px; padding: 6px 12px; position: relative; }
+.tab.selected { background: var(--accent); color: #2b1a00; border-color: transparent; }
+.tab-badge { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%; background: var(--good); color: #0b2b18; font-size: 11px; line-height: 16px; text-align: center; }
+.bench-list, .tier-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 330px; overflow: auto; }
+.bench-row { display: flex; align-items: center; gap: 8px; background: #262842; border: 1px solid var(--panel-border); border-radius: 10px; padding: 6px 8px; }
+.recipe-io { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.recipe-io .item-icon.tiny { width: 20px; height: 20px; }
+.craft-btn { position: relative; overflow: hidden; min-width: 96px; font-size: 13px; padding: 6px 10px; touch-action: none; }
+.craft-btn .craft-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(61, 220, 132, 0.45); pointer-events: none; }
+.craft-btn .craft-label { position: relative; }
+.craft-btn.active { border-color: var(--good); }
+.tier { background: #262842; border: 1px solid var(--panel-border); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.tier.done { opacity: 0.6; }
+.tier.next { border-color: var(--accent); }
+.tier.later { opacity: 0.75; }
+.tier-cost { display: flex; flex-wrap: wrap; gap: 8px; }
+.tier-item { display: inline-flex; align-items: center; gap: 3px; }
+.tier-item.good .mono { color: var(--good); }
+.tier-item.bad .mono { color: var(--bad); }
+.tier button { align-self: flex-start; }
 .machine-io .inv-slot { width: 48px; height: 48px; }
 .storage-row { gap: 6px; }
 @media (max-width: 760px) {

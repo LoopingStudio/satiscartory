@@ -24,8 +24,13 @@ export const MACHINE = {
   OUT_CAP: 10,
 } as const;
 
-/** Stock available in the central hub on a new game (pays for the first buildings). */
-export const START_STORAGE: Inventory = {
-  plate: 100,
-  bolt: 60,
-};
+/** Stock in the central hub on a new game: nothing, the first parts are mined and crafted by hand. */
+export const START_STORAGE: Inventory = {};
+
+/** Hand work (player side, not simulated). */
+export const HAND = {
+  /** Seconds per ore while holding E on a resource node. */
+  MINE_SECONDS: 0.75,
+  /** Max distance (m) between the player and the nearest point of the mined cell (third-person aim lands a bit ahead). */
+  MINE_REACH: 6,
+} as const;

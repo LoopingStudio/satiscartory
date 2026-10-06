@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { FactorySim } from './FactorySim';
 import { rotateCell, rotatedSize, type Rot } from './dirs';
 import { BELT, DRILL, MACHINE } from '../../data/balance';
-import { RECIPES } from '../../data/recipes';
+import { RECIPES, RECIPES_BY_ID } from '../../data/recipes';
 import { ITEMS } from '../../data/items';
 import { BUILDINGS } from '../../data/buildings';
-import type { ConveyorB, MachineB } from './types';
+import type { ConveyorB, DrillB, FactorySave, MachineB } from './types';
 import { FACTORY_MAP, LEGACY_MAP_OFFSET } from '../../data/factoryMap';
+import { Inventory, Wallet } from '../../state/Inventory';
 
-const rich = { plate: 10_000, bolt: 10_000 };
+const rich = { plate: 10_000, iron_rod: 10_000, bolt: 10_000 };
 const TICKS_PER_TILE = BELT.SEG / BELT.SPEED;
 
 function sim(opts: ConstructorParameters<typeof FactorySim>[0] = {}) {
@@ -198,20 +199,20 @@ describe('conveyors', () => {
 });
 
 describe('machines', () => {
-  it('drill → press → hub produces plates at the drill rate', () => {
+  it('drill → smelter → hub produces ingots at the drill rate', () => {
     const s = sim({ nodes: [{ resource: 'iron', x: 5, z: 0, w: 1, h: 2 }], hub: { x: 4, z: 8, rot: 0 } });
     expect(s.place('drill', 5, 0, 0).ok).toBe(true); // cells (5,0),(6,0); out (5,0) +Z → (5,1)
     line(s, 5, 1, 0, 3); // (5,1..3)
-    const press = s.place('press', 5, 4, 0); // cells (5,4),(6,4); in at (5,4) back; out (5,4) +Z → (5,5)
-    if (!press.ok) throw new Error(press.check.error);
-    s.setRecipe(press.building.id, 'plate');
+    const smelter = s.place('smelter', 5, 4, 0); // cells (5,4),(6,4); in at (5,4) back; out (5,4) +Z → (5,5)
+    if (!smelter.ok) throw new Error(smelter.check.error);
+    s.setRecipe(smelter.building.id, 'iron_ingot');
     line(s, 5, 5, 0, 3); // (5,5..7) → hub at z=8
     s.run(20 * 60); // one minute
-    const plates = s.delivered.plate ?? 0;
-    // 1 ore / 2 s → ~30 plates/min minus pipeline latency
-    expect(plates).toBeGreaterThanOrEqual(25);
-    expect(plates).toBeLessThanOrEqual(30);
-    expect((s.buildings.get(press.building.id) as MachineB).status).not.toBe('noRecipe');
+    const ingots = s.delivered.iron_ingot ?? 0;
+    // 1 ore / 2 s → ~30 ingots/min minus pipeline latency
+    expect(ingots).toBeGreaterThanOrEqual(25);
+    expect(ingots).toBeLessThanOrEqual(30);
+    expect((s.buildings.get(smelter.building.id) as MachineB).status).not.toBe('noRecipe');
   });
 
   it('respects recipe duration and input caps', () => {
@@ -221,7 +222,7 @@ describe('machines', () => {
     const m = r.building as MachineB;
     s.setRecipe(m.id, 'chassis');
     const recipe = RECIPES.find((x) => x.id === 'chassis')!;
-    m.inBuf = { plate: 2, bolt: 4 };
+    m.inBuf = { plate: 2, iron_rod: 2, bolt: 4 };
     s.tick(); // starts
     expect(m.status).toBe('working');
     s.run(recipe.ticks - 1);
@@ -244,9 +245,9 @@ describe('machines', () => {
     const r = s.place('press', 2, 2, 0);
     if (!r.ok) throw new Error();
     const m = r.building as MachineB;
-    s.setRecipe(m.id, 'bolt');
+    s.setRecipe(m.id, 'bolts'); // 1 rod → 4 bolts: 9 waiting + 4 does not fit
     m.outBuf = Array(MACHINE.OUT_CAP - 1).fill('bolt');
-    m.inBuf = { iron_ore: 2 };
+    m.inBuf = { iron_rod: 2 };
     s.tick();
     expect(m.status).toBe('blocked');
     m.outBuf = [];
@@ -258,10 +259,10 @@ describe('machines', () => {
     const s = sim({ storage: {} });
     const r = s.place('press', 2, 2, 0, { free: true });
     if (!r.ok) throw new Error();
-    s.setRecipe(r.building.id, 'plate');
-    (r.building as MachineB).inBuf = { iron_ore: 2 };
-    s.setRecipe(r.building.id, 'bolt');
-    expect(s.count('iron_ore')).toBe(2);
+    s.setRecipe(r.building.id, 'iron_plate');
+    (r.building as MachineB).inBuf = { iron_ingot: 2 };
+    s.setRecipe(r.building.id, 'iron_rod');
+    expect(s.count('iron_ingot')).toBe(2);
   });
 
   it('drills stop when their output is full', () => {
@@ -277,14 +278,18 @@ describe('machines', () => {
 describe('determinism & persistence', () => {
   function bigFactory() {
     const s = FactorySim.newGame();
-    s.give({ plate: 500, bolt: 500 });
-    // an iron drill on the west node (44..47, 61..64) feeding a press then the hub (62..64, 62..64)
+    s.give({ plate: 500, iron_rod: 500, bolt: 500 });
+    // an iron drill on the west node (44..47, 61..64) feeding a smelter, a constructor, then the hub (62..64, 62..64)
     s.place('drill', 46, 61, 1); // cells (46,61),(46,62), out +X → (47,62)
     line(s, 47, 62, 1, 4); // (47..50, 62)
-    const p = s.place('press', 51, 62, 1); // cells (51,62),(51,63): in from -X; out +X → (52,62)
+    const f = s.place('smelter', 51, 62, 1); // cells (51,62),(51,63): in from -X; out +X → (52,62)
+    if (!f.ok) throw new Error(f.check.error);
+    s.setRecipe(f.building.id, 'iron_ingot');
+    line(s, 52, 62, 1, 3); // (52..54, 62)
+    const p = s.place('press', 55, 62, 1); // cells (55,62),(55,63); out → (56,62)
     if (!p.ok) throw new Error(p.check.error);
-    s.setRecipe(p.building.id, 'plate');
-    line(s, 52, 62, 1, 10); // (52..61, 62) → hub at x=62
+    s.setRecipe(p.building.id, 'iron_plate');
+    line(s, 56, 62, 1, 6); // (56..61, 62) → hub at x=62
     return s;
   }
 
@@ -325,14 +330,21 @@ describe('data integrity', () => {
 });
 
 describe('test layouts', () => {
-  it('the demo factory delivers plates, bolts and tires to the hub', async () => {
+  it('the demo factory delivers plates, rods, bolts and tires to the hub', async () => {
     const { spawnDemoFactory } = await import('./testLayouts');
     const s = FactorySim.newGame();
     spawnDemoFactory(s);
+    const machines = [...s.buildings.values()].filter((b): b is MachineB => b.type === 'smelter' || b.type === 'press');
+    expect(machines.map((m) => m.recipe)).toEqual(['iron_ingot', 'iron_plate', 'iron_ingot', 'iron_rod', 'iron_ingot', 'iron_rod', 'bolts', 'tire']);
     s.run(20 * 90);
-    expect(s.delivered.plate ?? 0).toBeGreaterThan(30);
-    expect(s.delivered.bolt ?? 0).toBeGreaterThan(60);
+    expect(s.delivered.plate ?? 0).toBeGreaterThan(15);
+    expect(s.delivered.iron_rod ?? 0).toBeGreaterThan(25);
+    expect(s.delivered.bolt ?? 0).toBeGreaterThan(100);
     expect(s.delivered.tire ?? 0).toBeGreaterThan(15);
+    // intermediates stay inside the chains
+    expect(s.delivered.iron_ore ?? 0).toBe(0);
+    expect(s.delivered.iron_ingot ?? 0).toBe(0);
+    expect(machines.every((m) => m.status !== 'blocked')).toBe(true);
   });
 
   it('stress loops keep every item moving forever without loss', async () => {
@@ -358,10 +370,10 @@ describe('review regressions', () => {
   });
 
   it('a save referencing an unknown recipe loads safely and refunds buffers', () => {
-    const s = new FactorySim({ width: 20, height: 20, storage: { plate: 100, bolt: 100 }, hub: null });
+    const s = new FactorySim({ width: 20, height: 20, storage: rich, hub: null });
     const p = s.place('press', 5, 5, 0);
     if (!p.ok) throw new Error();
-    s.setRecipe(p.building.id, 'plate');
+    s.setRecipe(p.building.id, 'iron_plate');
     const save = s.serialize();
     const m = save.buildings.find((b) => b.id === p.building.id) as MachineB;
     m.recipe = 'plate_v0';
@@ -496,16 +508,18 @@ describe('machine orientation', () => {
 
 describe('manual feeding & pickup', () => {
   it('loads recipe inputs from storage up to the cap and collects outputs', () => {
-    const s = sim({ storage: { plate: 10, bolt: 3, latex: 5 } });
+    const s = sim({ storage: { plate: 10, iron_rod: 25, bolt: 3, latex: 5 } });
     const r = s.place('assembler', 2, 2, 0, { free: true });
     if (!r.ok) throw new Error();
     const m = r.building as MachineB;
     expect(s.loadFromStorage(m.id)).toBe(0); // no recipe yet
-    s.setRecipe(m.id, 'chassis'); // 2 plates + 4 bolts, manual cap ×10
-    expect(s.loadFromStorage(m.id)).toBe(10 + 3);
-    expect(m.inBuf).toEqual({ plate: 10, bolt: 3 });
+    s.setRecipe(m.id, 'chassis'); // 2 plates + 2 rods + 4 bolts, manual cap ×10
+    expect(s.loadFromStorage(m.id)).toBe(10 + 20 + 3);
+    expect(m.inBuf).toEqual({ plate: 10, iron_rod: 20, bolt: 3 });
     expect(s.count('plate')).toBe(0);
+    expect(s.count('iron_rod')).toBe(5); // above the cap: stays in the hub
     expect(s.count('bolt')).toBe(0);
+    expect(s.count('latex')).toBe(5); // not an input
     s.give({ bolt: 10 });
     s.loadFromStorage(m.id);
     s.run(130);
@@ -513,5 +527,200 @@ describe('manual feeding & pickup', () => {
     expect(s.collectOutput(m.id)).toBe(1);
     expect(s.count('chassis')).toBe(1);
     expect(m.outBuf).toEqual([]);
+  });
+});
+
+describe('iron chain (ore → ingot → plate, rod, bolts)', () => {
+  /**
+   * Straight chain along +Z: iron drill at (5,0) → [2 belts → machine] per step → 2 belts → hub.
+   * Machines at rot 0 cover (5,z),(6,z): in through the back of (5,z), out through its front.
+   */
+  function ironChain(steps: [type: 'smelter' | 'press', recipe: string][]) {
+    const s = sim({ nodes: [{ resource: 'iron', x: 5, z: 0, w: 1, h: 1 }] });
+    const d = s.place('drill', 5, 0, 0); // out (5,0) +Z → (5,1)
+    if (!d.ok) throw new Error(d.check.error);
+    let z = 1;
+    const machines: MachineB[] = [];
+    for (const [type, recipe] of steps) {
+      line(s, 5, z, 0, 2);
+      z += 2;
+      const m = s.place(type, 5, z, 0);
+      if (!m.ok) throw new Error(m.check.error);
+      expect(s.setRecipe(m.building.id, recipe)).toBe(true);
+      machines.push(m.building as MachineB);
+      z += 1;
+    }
+    line(s, 5, z, 0, 2);
+    if (!s.place('hub', 4, z + 2, 0, { free: true, force: true }).ok) throw new Error('hub');
+    return { s, machines, drill: d.building as DrillB };
+  }
+
+  /** Items per minute delivered to the hub once the chain is warm (second minute of production). */
+  function steadyRate(s: FactorySim, item: 'plate' | 'iron_rod' | 'bolt' | 'iron_ingot') {
+    s.run(20 * 60);
+    const before = s.delivered[item] ?? 0;
+    const ingots = s.crafted.iron_ingot ?? 0;
+    s.run(20 * 60);
+    return { delivered: (s.delivered[item] ?? 0) - before, ingots: (s.crafted.iron_ingot ?? 0) - ingots };
+  }
+
+  it.each([
+    { name: 'plates', steps: [['smelter', 'iron_ingot'], ['press', 'iron_plate']], item: 'plate', perMin: 20, batch: 2 },
+    { name: 'rods', steps: [['smelter', 'iron_ingot'], ['press', 'iron_rod']], item: 'iron_rod', perMin: 30, batch: 1 },
+    { name: 'bolts', steps: [['smelter', 'iron_ingot'], ['press', 'iron_rod'], ['press', 'bolts']], item: 'bolt', perMin: 120, batch: 4 },
+  ] as const)('drill → smelter → constructor → hub delivers $name at the drill rate', ({ steps, item, perMin, batch }) => {
+    const { s, machines } = ironChain(steps.map((x) => [...x]));
+    const rate = steadyRate(s, item);
+    // 1 drill (30 ore/min) = 1 smelter (30 ingots/min) = 1 constructor, give or take one batch
+    expect(rate.ingots).toBeGreaterThanOrEqual(29);
+    expect(rate.ingots).toBeLessThanOrEqual(31);
+    expect(rate.delivered).toBeGreaterThanOrEqual(perMin - batch);
+    expect(rate.delivered).toBeLessThanOrEqual(perMin + batch);
+    // only the end product reaches the hub, and no machine backs up
+    expect(Object.keys(s.delivered)).toEqual([item]);
+    for (const m of machines) expect(m.status).not.toBe('blocked');
+  });
+
+  it('a constructor ignores ore and accepts only its recipe inputs from a belt', () => {
+    const { s, machines, drill } = ironChain([['press', 'iron_plate']]); // no smelter: ore arrives at the constructor
+    s.run(20 * 30);
+    expect(machines[0]!.inBuf).toEqual({});
+    expect(s.delivered).toEqual({});
+    // the belt in front of it backs up instead of losing anything
+    expect(s.beltItemCount()).toBeGreaterThan(0);
+    expect(s.beltItemCount() + drill.outBuf.length).toBe(s.crafted.iron_ore);
+  });
+
+  it('smelters only take smelter recipes', () => {
+    const s = sim();
+    const f = s.place('smelter', 2, 2, 0);
+    const p = s.place('press', 2, 6, 0);
+    if (!f.ok || !p.ok) throw new Error();
+    expect(s.setRecipe(f.building.id, 'iron_plate')).toBe(false);
+    expect(s.setRecipe(f.building.id, 'hand_ingot')).toBe(false); // bench recipes are hand-only
+    expect(s.setRecipe(p.building.id, 'iron_ingot')).toBe(false);
+    expect(s.setRecipe(p.building.id, 'hand_plate')).toBe(false);
+    expect(s.setRecipe(f.building.id, 'iron_ingot')).toBe(true);
+    expect((f.building as MachineB).status).toBe('idle');
+  });
+});
+
+describe('hand mining (mineAt)', () => {
+  const nodes = [
+    { resource: 'iron' as const, x: 5, z: 5, w: 2, h: 2 },
+    { resource: 'rubber' as const, x: 12, z: 3, w: 1, h: 1 },
+  ];
+
+  it('a free node cell gives one item of its resource', () => {
+    const s = sim({ storage: {}, nodes });
+    const inv = new Inventory();
+    expect(s.mineAt(5, 5, inv)).toBe('iron_ore');
+    expect(s.mineAt(6, 6, inv)).toBe('iron_ore');
+    expect(s.mineAt(12, 3, inv)).toBe('latex');
+    expect(inv.totals()).toEqual({ iron_ore: 2, latex: 1 });
+    // nodes never run out, and mining is not production: the hub and the stats are untouched
+    for (let i = 0; i < 150; i++) s.mineAt(5, 6, inv);
+    expect(inv.count('iron_ore')).toBe(152);
+    expect(s.storage).toEqual({});
+    expect(s.crafted).toEqual({});
+  });
+
+  it('nothing to mine off a node, out of the map, or under a building', () => {
+    const s = sim({ storage: {}, nodes });
+    const inv = new Inventory();
+    expect(s.mineAt(4, 5, inv)).toBeNull();
+    expect(s.mineAt(-1, 5, inv)).toBeNull();
+    expect(s.mineAt(5, 99, inv)).toBeNull();
+    const d = s.place('drill', 5, 5, 0, { free: true }); // covers (5,5),(6,5)
+    const c = s.place('conveyor', 12, 3, 0, { free: true }); // a belt on the rubber node
+    if (!d.ok || !c.ok) throw new Error();
+    expect(s.mineAt(5, 5, inv)).toBeNull();
+    expect(s.mineAt(6, 5, inv)).toBeNull();
+    expect(s.mineAt(12, 3, inv)).toBeNull();
+    expect(inv.usedSlots).toBe(0);
+    expect(s.mineAt(5, 6, inv)).toBe('iron_ore'); // the rest of the node stays minable
+    s.remove(d.building.id);
+    expect(s.mineAt(5, 5, inv)).toBe('iron_ore');
+  });
+
+  it('a full sink gives nothing and nothing is lost', () => {
+    const s = sim({ storage: {}, nodes });
+    const inv = new Inventory(1);
+    inv.add('plate', 1); // the only slot holds something else
+    expect(s.mineAt(5, 5, inv)).toBeNull();
+    expect(inv.totals()).toEqual({ plate: 1 });
+    const full = new Inventory(1);
+    full.add('iron_ore', ITEMS.iron_ore.stack);
+    expect(s.mineAt(5, 5, full)).toBeNull();
+    expect(full.count('iron_ore')).toBe(ITEMS.iron_ore.stack);
+    expect(s.storage).toEqual({});
+    // through a wallet, a full backpack overflows to the hub
+    expect(s.mineAt(5, 5, new Wallet(full, s.hub))).toBe('iron_ore');
+    expect(s.count('iron_ore')).toBe(1);
+  });
+});
+
+describe('save migrations (progression)', () => {
+  function saveWith(type: 'smelter' | 'press' | 'assembler', patch: Partial<MachineB>) {
+    const s = new FactorySim({ width: 20, height: 20, storage: {}, hub: null });
+    const p = s.place(type, 5, 5, 0, { free: true });
+    if (!p.ok) throw new Error();
+    const save = s.serialize();
+    Object.assign(save.buildings.find((b) => b.id === p.building.id)!, patch);
+    return { save, id: p.building.id };
+  }
+  const load = (save: FactorySave) => FactorySim.fromSave(JSON.parse(JSON.stringify(save)), { width: 20, height: 20 });
+
+  it('a constructor saved with an old ore recipe is reset and its items go back to the hub', () => {
+    for (const [recipe, outBuf] of [['plate', ['plate']], ['bolt', ['bolt', 'bolt']]] as const) {
+      const { save, id } = saveWith('press', { recipe, inBuf: { iron_ore: 3 }, outBuf: [...outBuf], status: 'working', progress: 12 });
+      const t = load(save);
+      const m = t.buildings.get(id) as MachineB;
+      expect(m).toMatchObject({ type: 'press', recipe: null, inBuf: {}, outBuf: [], progress: 0, status: 'noRecipe' });
+      expect(t.storage).toEqual({ iron_ore: 3, [outBuf[0]]: outBuf.length });
+      t.run(5);
+      expect(m.status).toBe('noRecipe');
+      expect(t.setRecipe(id, 'iron_plate')).toBe(true); // usable right away with a new recipe
+    }
+  });
+
+  it('a recipe of another machine is reset too', () => {
+    const { save, id } = saveWith('press', { recipe: 'iron_ingot', inBuf: { iron_ore: 2 } });
+    const t = load(save);
+    expect((t.buildings.get(id) as MachineB).recipe).toBeNull();
+    expect(t.count('iron_ore')).toBe(2);
+  });
+
+  it('stale items that are not inputs of a kept recipe are cleaned and refunded', () => {
+    const inBuf = { plate: 2, bolt: 4, tire: 3, unobtainium: 5 } as MachineB['inBuf'];
+    const { save, id } = saveWith('assembler', { recipe: 'chassis', inBuf, outBuf: ['chassis'], status: 'idle' });
+    const t = load(save);
+    const m = t.buildings.get(id) as MachineB;
+    expect(m.recipe).toBe('chassis');
+    expect(m.inBuf).toEqual({ plate: 2, bolt: 4 });
+    expect(m.outBuf).toEqual(['chassis']);
+    expect(t.storage).toEqual({ tire: 3 }); // unknown ids are dropped, not minted
+    // the machine still works once the new input (rods) arrives
+    t.give({ iron_rod: 2 });
+    expect(t.loadFromStorage(id)).toBe(2);
+    t.run(RECIPES_BY_ID.chassis!.ticks + 2);
+    expect(m.outBuf).toEqual(['chassis', 'chassis']);
+  });
+
+  it('a working smelter round-trips', () => {
+    const s = new FactorySim({ width: 20, height: 20, storage: { iron_ore: 7 }, hub: null });
+    const f = s.place('smelter', 5, 5, 0, { free: true });
+    if (!f.ok) throw new Error();
+    s.setRecipe(f.building.id, 'iron_ingot');
+    s.loadFromStorage(f.building.id);
+    s.run(50);
+    const t = load(s.serialize());
+    const m = t.buildings.get(f.building.id) as MachineB;
+    expect(m).toMatchObject({ type: 'smelter', recipe: 'iron_ingot', status: 'working' });
+    expect(t.hash()).toBe(s.hash());
+    s.run(300);
+    t.run(300);
+    expect(t.hash()).toBe(s.hash());
+    expect(m.outBuf).toHaveLength(7);
   });
 });

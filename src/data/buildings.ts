@@ -4,7 +4,7 @@ import type { MachineType } from './recipes';
 /** Grid sides: 0 = +Z, 1 = +X, 2 = -Z, 3 = -X (local, before rotation). */
 export type Side = 0 | 1 | 2 | 3;
 
-export type BuildingType = 'conveyor' | 'drill' | 'press' | 'assembler' | 'hub';
+export type BuildingType = 'conveyor' | 'drill' | 'smelter' | 'press' | 'assembler' | 'hub';
 
 export interface PortDef {
   /** Local cell offset inside the footprint (rotation 0). */
@@ -66,17 +66,28 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     description: 'Extrait du minerai de fer ou du latex. À poser sur un gisement.',
     footprint: [2, 1],
     ports: MACHINE_OUT,
-    cost: { plate: 5, bolt: 4 },
+    cost: { plate: 6, iron_rod: 4 },
     buildable: true,
     needsNode: true,
   },
-  press: {
-    type: 'press',
-    name: 'Presse',
-    description: 'Transforme une matière en pièce simple (plaques, boulons, pneus).',
+  smelter: {
+    type: 'smelter',
+    name: 'Fonderie',
+    description: 'Fond le minerai de fer en lingots.',
     footprint: [2, 1],
     ports: [...MACHINE_IN, ...MACHINE_OUT],
-    cost: { plate: 6, bolt: 4 },
+    cost: { plate: 4, iron_rod: 6 },
+    buildable: true,
+    machine: 'smelter',
+  },
+  // Internal id kept as 'press' (saves); shown as « Constructeur ».
+  press: {
+    type: 'press',
+    name: 'Constructeur',
+    description: 'Façonne lingots et matières : plaques, tiges, boulons, pneus.',
+    footprint: [2, 1],
+    ports: [...MACHINE_IN, ...MACHINE_OUT],
+    cost: { plate: 10, iron_rod: 8, bolt: 16 },
     buildable: true,
     machine: 'press',
   },
@@ -86,14 +97,14 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     description: 'Assemble plusieurs pièces en pièces de voiture.',
     footprint: [2, 1],
     ports: [...MACHINE_IN, ...MACHINE_OUT],
-    cost: { plate: 8, bolt: 8 },
+    cost: { plate: 20, iron_rod: 12, bolt: 40 },
     buildable: true,
     machine: 'assembler',
   },
   hub: {
     type: 'hub',
     name: 'Hangar central',
-    description: 'Stocke tout ce qu’il reçoit. Paie les constructions et alimente le garage.',
+    description: 'Stocke tout ce qu’il reçoit. Abrite l’établi et les paliers ; paie les constructions et alimente le garage.',
     footprint: [3, 3],
     ports: [],
     cost: {},
@@ -102,4 +113,4 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   },
 };
 
-export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'press', 'assembler'];
+export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'press', 'assembler'];

@@ -111,10 +111,11 @@ src/
 
 | Bâtiment | Modèle | Recettes |
 |---|---|---|
-| Foreuse (2×1) | tour de forage (piston, cadres jaunes, entonnoir) | gisement Fer → Minerai ; gisement Caoutchouc → Latex |
-| Presse (2×2, 1→1) | `machine` + piston | Minerai → Plaque ; Minerai → 2 Boulons ; 2 Latex → Pneu |
-| Assembleuse (2×2, 2→1) | `machine-window` + `robot-arm-a` | Châssis, Moteur, Roue, Panneau, Aileron |
-| Hangar central (4×4) | `structure-*` + `hopper-high` + écran | stockage, terminal Garage |
+| Foreuse (2×1) | tour de forage (piston, cadres jaunes, entonnoir) | gisement Fer → Minerai ; gisement Caoutchouc → Latex (1 / 2 s) |
+| Fonderie (2×1, 1→1) | `machine-connection-hole` + cœur en fusion, cheminée, vanne | Minerai → Lingot |
+| Constructeur (2×1, ex-presse) | `machine` + piston | 3 Lingots → 2 Plaques ; Lingot → Tige ; Tige → 4 Boulons ; 2 Latex → Pneu |
+| Assembleuse (2×1, 2 ou 3→1) | `machine-window` + `robot-arm-a` | Châssis, Moteur (plaques, tiges, boulons), Roue, Panneau, Aileron |
+| Hangar central (3×3) | `structure-*` + `hopper-high` + écran, établi sur la face sud | stockage, établi (fabrication à la main), paliers, terminal Garage |
 | Convoyeur (1×1) | `conveyor`, `-corner`, `-junction-t` | — |
 
 **Visuels des objets**
@@ -122,6 +123,8 @@ src/
 | Objet | Modèle |
 |---|---|
 | Minerai, Latex | `box-small` teinté |
+| Lingot | `debris-plate-small-b` |
+| Tige | `pipe-large-long` |
 | Plaque | `debris-plate-a` |
 | Boulon | `debris-bolt` |
 | Pneu | `debris-tire` |
@@ -131,7 +134,7 @@ src/
 | Panneau | `debris-door` |
 | Aileron | `debris-spoiler-a` |
 
-On démarre avec assez de stock pour une petite installation (2 foreuses, 1 presse, 1 assembleuse et 30 convoyeurs). Un kart doit être faisable en moins de 2 minutes.
+Départ (revu en octobre 2026) : aucun stock. Le fer se mine à la main et se travaille à l'établi du hangar, puis quatre paliers débloquent foreuses et convoyeurs, fonderie, constructeur et assembleuse (détails et chiffres dans `docs/DECISIONS.md`, « Progression façon Satisfactory »).
 
 ### Personnage TPS et mode construction
 

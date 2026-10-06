@@ -2,6 +2,8 @@ import type { ModelKey } from '../core/assets/manifest.gen';
 
 export const ITEM_IDS = [
   'iron_ore',
+  'iron_ingot',
+  'iron_rod',
   'latex',
   'plate',
   'bolt',
@@ -36,6 +38,8 @@ export interface ItemDef {
 
 export const ITEMS: Record<ItemId, ItemDef> = {
   iron_ore: { id: 'iron_ore', name: 'Minerai de fer', plural: 'minerais de fer', stack: 100, model: 'factory-kit/box-small', beltScale: 0.9, tint: 0xb5653e },
+  iron_ingot: { id: 'iron_ingot', name: 'Lingot de fer', plural: 'lingots de fer', stack: 100, model: 'car-kit/debris-plate-small-b', beltScale: 1.4 },
+  iron_rod: { id: 'iron_rod', name: 'Tige de fer', plural: 'tiges de fer', stack: 100, model: 'factory-kit/pipe-large-long', beltScale: 0.25, beltYaw: Math.PI / 2 },
   latex: { id: 'latex', name: 'Latex', plural: 'latex', stack: 100, model: 'factory-kit/box-small', beltScale: 0.9, tint: 0x2f3142 },
   plate: { id: 'plate', name: 'Plaque', plural: 'plaques', stack: 100, model: 'car-kit/debris-plate-a', beltScale: 1.2 },
   bolt: { id: 'bolt', name: 'Boulon', plural: 'boulons', stack: 200, model: 'car-kit/debris-bolt', beltScale: 2.2 },

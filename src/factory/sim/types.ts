@@ -40,7 +40,7 @@ export interface DrillB extends Base {
 }
 
 export interface MachineB extends Base {
-  type: 'press' | 'assembler';
+  type: 'smelter' | 'press' | 'assembler';
   recipe: string | null;
   inBuf: Inventory;
   outBuf: ItemId[];
@@ -90,6 +90,16 @@ export interface PlaceCheck {
 }
 
 export type BuildingTypeOf<T extends BuildingType> = Extract<Building, { type: T }>;
+
+/** Recipe machines (smelter, constructor, assembler). */
+export function isMachine(b: Building | undefined): b is MachineB {
+  return b !== undefined && (b.type === 'smelter' || b.type === 'press' || b.type === 'assembler');
+}
+
+/** Buildings with an output buffer (drills and recipe machines). */
+export function isProducer(b: Building | undefined): b is DrillB | MachineB {
+  return b !== undefined && (b.type === 'drill' || isMachine(b));
+}
 
 /** Something items can be taken from (hub storage, player backpack…). */
 export interface ItemSource {

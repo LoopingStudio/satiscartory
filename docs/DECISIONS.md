@@ -101,8 +101,8 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
   - Le panneau d'une machine peut **charger depuis le hangar** les entrées de sa recette, jusqu'à 10× la quantité de la recette ; les convoyeurs restent plafonnés à 2×.
   - Il peut aussi **récupérer la production** vers le hangar.
   - Les convoyeurs restent la voie automatique. Le manuel évite d'imposer une usine complète pour un premier kart.
-- **Économie de départ** : 100 plaques et 60 boulons. Le test `objectives.test.ts` vérifie qu'on paie les deux chaînes (fer et caoutchouc), une assembleuse, 25 convoyeurs et les pièces du kart. Le premier essai à 70/36 laissait un joueur à 0 plaque sans chaîne de fer, donc bloqué.
-- **Objectifs d'accueil**, dans l'ordre :
+- **Économie de départ** (remplacée en octobre 2026 par un hangar vide, voir « Progression façon Satisfactory ») : 100 plaques et 60 boulons. Le test `objectives.test.ts` vérifie qu'on paie les deux chaînes (fer et caoutchouc), une assembleuse, 25 convoyeurs et les pièces du kart. Le premier essai à 70/36 laissait un joueur à 0 plaque sans chaîne de fer, donc bloqué.
+- **Objectifs d'accueil** (réécrits en octobre 2026, voir « Progression façon Satisfactory »), dans l'ordre :
   1. Plaques (fer)
   2. Foreuse sur le caoutchouc
   3. Presse « Pneu »
@@ -164,7 +164,58 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
 - **Orientation des machines** : les modèles Kenney `machine*` sont des tunnels ouverts sur leurs **flancs longs**. Foreuse, presse et assembleuse occupent donc 2×1 cases (2 de large, 1 de profondeur) et les objets les **traversent** : entrée par le flanc arrière (les deux cases), sortie par le flanc avant (l'une ou l'autre case, la première reliée l'emporte). Les entrées par les petits côtés sont supprimées, ce sont des murs pleins. Comme pour un convoyeur, la sortie est « vers l'avant », donc une machine posée après un tracé de convoyeur garde le même sens de flux.
   - Sauvegardes : `FactorySave.version` passe à 2. Au chargement d'une sauvegarde v1, les machines tournent d'un quart de tour, ce qui conserve exactement leurs cases. Les convoyeurs qui arrivaient par les petits côtés ne sont plus reliés et sont à reposer.
 - **Modèle de la foreuse** : elle utilisait `machine-fortified`, presque identique à la presse. C'est maintenant une tour de forage composée de pièces du Factory Kit : `piston-thin-round` (tige de forage) dans deux cadres `structure-yellow-medium`, une tête `piston-round` animée quand elle travaille, et un entonnoir `hopper-high-round` collecteur. Sa hauteur (≈ 3,7 m) passe dans le collider de visée.
-- **Carte agrandie** : la grille passe de 64×64 à **128×128** cases (256 m), hangar au centre (62, 62). Huit gisements au lieu de cinq, plus grands et espacés : un fer et un caoutchouc à ~17 cases du hangar pour les premières chaînes (≈ 15 convoyeurs chacune, payables avec le stock de départ, test `objectives.test.ts`), les autres entre 26 et 50 cases dans toutes les directions.
+- **Carte agrandie** : la grille passe de 64×64 à **128×128** cases (256 m), hangar au centre (62, 62). Huit gisements au lieu de cinq, plus grands et espacés : un fer et un caoutchouc à ~17 cases du hangar pour les premières chaînes (≈ 15 convoyeurs chacune ; payables à l'époque avec le stock de départ, aujourd'hui à la main, test `objectives.test.ts`), les autres entre 26 et 50 cases dans toutes les directions.
   - Sauvegardes : `FactorySave.version` passe à 3. Une sauvegarde de l'ancienne carte est décalée de 32 cases (`LEGACY_MAP_OFFSET`), joueur compris, pour que son hangar tombe sur le nouveau. Les foreuses gardent leur ressource même si l'ancien gisement n'existe plus.
   - Sol : la tuile `floor` du kit est un carré de couleur unie. Un seul carré étiré sur toute la grille remplace les 16 384 instances (≈ 45 → 90 FPS mesurés).
   - Le test de charge (`?layout=stress`) reste sur une grille 64×64 (2 100 objets).
+
+## Progression façon Satisfactory (octobre 2026)
+
+Une nouvelle partie ne donne plus de stock : on part de rien, à la main, et le hangar débloque les bâtiments par paliers, comme les jalons du HUB de Satisfactory.
+
+- **Choix validés** :
+  - **Minage à la main** : maintenir E en visant une case libre d'un gisement, à 6 m au plus du point le plus proche de la case (`HAND.MINE_REACH` ; la visée à la troisième personne tombe un peu devant). Un minerai toutes les 0,75 s (`HAND.MINE_SECONDS`) va dans le sac. Les gisements sont inépuisables. Côté simulation, `FactorySim.mineAt(x, z, sink)` : rien sous un bâtiment (une foreuse couvre ses cases) ni hors gisement, et rien n'est miné si le sac est plein (« Sac plein »), donc rien ne se perd. Le minage à la main ne compte pas dans les statistiques de production (`crafted`).
+  - **Établi intégré au hangar** : ce n'est pas un bâtiment, c'est l'onglet « Établi » du panneau du hangar (E → Hangar / Établi / Paliers). Il est posé sur la face sud du hangar, côté apparition du joueur. Ses recettes (`machine: 'bench'`) se fabriquent en maintenant le bouton. `Wallet.craft` prend les entrées dans le sac puis au hangar, met le résultat dans le sac (le surplus déborde au hangar), et ne fait rien s'il manque une entrée.
+  - **Fer en trois étapes** : foreuse → **Fonderie** (nouveau bâtiment 2×1, même tunnel que les autres machines) → **Constructeur** (l'ancienne presse, renommée ; son id interne reste `press` pour les sauvegardes) → assembleuse. La fonderie n'a qu'une recette et démarre dessus.
+  - **Paliers au hangar** : quatre paliers payés sac d'abord, puis hangar (`GameState.unlockNextTier`). Le palier atteint est sauvegardé (`tier`). Un bâtiment verrouillé reste dans la barre de construction et y affiche son palier.
+  - **Le hangar démarre vide** (`START_STORAGE = {}`).
+- **Cadences** (1 foreuse = 1 fonderie = 1 constructeur) :
+
+  | Machine | Recette | Durée | Débit |
+  |---|---|---|---|
+  | Foreuse | gisement → 1 minerai (ou latex) | 2 s | 30/min |
+  | Fonderie | 1 minerai → 1 lingot | 2 s | 30/min |
+  | Constructeur | 3 lingots → 2 plaques | 6 s | 30 lingots → 20 plaques/min |
+  | Constructeur | 1 lingot → 1 tige | 2 s | 30/min |
+  | Constructeur | 1 tige → 4 boulons | 2 s | 30 tiges → 120 boulons/min |
+  | Constructeur | 2 latex → 1 pneu | 3 s | 30 latex → 15 pneus/min |
+
+  Châssis et moteur demandent en plus 2 tiges chacun. Le test `FactorySim.test.ts` mesure ces débits en régime établi, de la foreuse au hangar.
+- **Coûts des bâtiments** :
+
+  | Bâtiment | Coût |
+  |---|---|
+  | Convoyeur | 1 plaque |
+  | Foreuse | 6 plaques, 4 tiges |
+  | Fonderie | 4 plaques, 6 tiges |
+  | Constructeur | 10 plaques, 8 tiges, 16 boulons |
+  | Assembleuse | 20 plaques, 12 tiges, 40 boulons |
+
+- **Paliers** :
+
+  | Palier | Coût | Débloque |
+  |---|---|---|
+  | 1. Extraction | 10 tiges | foreuse, convoyeur |
+  | 2. Fonderie | 10 plaques, 10 tiges | fonderie |
+  | 3. Constructeur | 30 plaques, 20 tiges, 40 boulons | constructeur |
+  | 4. Assemblage | 60 plaques, 40 tiges, 120 boulons, 10 pneus | assembleuse |
+
+- **Temps à la main** : 0,75 s par minerai ; à l'établi, 0,75 s pour un lingot, une tige ou 4 boulons, et 1 s pour 2 plaques (3 lingots). Le palier 1 demande environ 22 s de travail (10 minerais, 10 lingots, 10 tiges). Le palier 1, la première foreuse et les ~15 convoyeurs jusqu'au hangar en demandent environ 1 min 30 (le test `objectives.test.ts` exige moins de 2 min).
+- **Faisabilité vérifiée par les données** : `tiers.test.ts` calcule par point fixe, sur `RECIPES` et les gisements de la carte, tout ce qui est productible avant chaque palier (main, établi, machines des paliers précédents, foreuses). Il vérifie que le coût du palier et celui des bâtiments qu'il débloque le sont, et qu'au dernier palier tous les objets du jeu le sont. Une modification des recettes, des coûts ou des paliers qui casserait la progression fait donc échouer les tests. `bootstrap.test.ts` joue le début d'une partie (minage, établi, paliers 1 et 2, première foreuse) sur la vraie carte.
+- **Objectifs d'accueil**, dans l'ordre : miner à la main, 10 tiges à l'établi, palier 1, foreuse reliée au hangar, palier 2, fonderie, palier 3, plaques au constructeur, pneus, palier 4, pièces de voiture, assemblage, course, bonus Sportive. Chaque étape est aussi validée dès que le palier suivant est atteint, donc une sauvegarde où tout est débloqué ne rejoue pas l'amorçage.
+- **Sauvegardes** :
+  - Sans champ `tier` (sauvegardes d'avant les paliers) : tous les paliers sont débloqués. Une valeur invalide est bornée : négative → 0, trop grande → 4, non numérique → tout débloqué.
+  - Les recettes de la presse ont changé d'id (`plate` et `bolt` prenaient du minerai ; ce sont maintenant `iron_plate`, `iron_rod` et `bolts`). Une machine sauvegardée avec un ancien id, ou avec la recette d'une autre machine, repart sans recette au chargement, et ses tampons reviennent au hangar.
+  - Une recette gardée dont les entrées ont changé (châssis, moteur) : les objets du tampon d'entrée qui ne sont plus des entrées sont rendus au hangar.
+  - Démonter un bâtiment rembourse son coût **actuel**, même s'il a été payé à l'ancien prix (accepté : retenir le prix payé par bâtiment n'en vaut pas la peine).
+- **Usine de démonstration** (`?layout=demo`) : quatre chaînes, toutes en foreuse → fonderie → constructeur. Les plaques ; les tiges, fusionnées sur la ligne des plaques ; les boulons (un constructeur « Tige » puis un constructeur « Boulons ») ; les pneus.

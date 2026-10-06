@@ -5,6 +5,9 @@ import type { TrackRecord } from '../race/records';
 import { Inventory, Wallet, type Stack } from './Inventory';
 import { LEGACY_MAP_OFFSET } from '../data/factoryMap';
 import { FACTORY_CELL } from '../config/constants';
+import { TIERS, isUnlocked } from '../data/tiers';
+import type { BuildingType } from '../data/buildings';
+import type { Inventory as ItemCounts } from '../data/items';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -34,6 +37,8 @@ export interface SaveData {
   carCounter?: number;
   /** Player backpack slots. */
   inventory?: (Stack | null)[];
+  /** Hub tiers unlocked. Missing in saves older than the tiers: everything stays unlocked. */
+  tier?: number;
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -50,6 +55,8 @@ export class GameState {
   ephemeral = false;
   /** Player backpack. */
   inventory = new Inventory();
+  /** Number of hub tiers unlocked (TIERS); a new game starts at 0. */
+  tier = 0;
 
   constructor(sim?: FactorySim) {
     this.sim = sim ?? FactorySim.newGame();
@@ -58,6 +65,25 @@ export class GameState {
   /** Backpack first, then the hub (pays costs, receives refunds and pickups). */
   wallet(): Wallet {
     return new Wallet(this.inventory, this.sim.hub);
+  }
+
+  isUnlocked(type: BuildingType): boolean {
+    return isUnlocked(type, this.tier);
+  }
+
+  /**
+   * Pays the next tier from the wallet (backpack first, then hub) and unlocks it.
+   * `ok: false` with `missing` when it cannot be paid, without `missing` when every tier is unlocked.
+   */
+  unlockNextTier(): { ok: boolean; missing?: ItemCounts } {
+    const next = TIERS[this.tier];
+    if (!next) return { ok: false };
+    const wallet = this.wallet();
+    const missing = wallet.missingFor(next.cost);
+    if (missing) return { ok: false, missing };
+    for (const [item, n] of Object.entries(next.cost) as [keyof ItemCounts, number][]) wallet.remove(item, n);
+    this.tier++;
+    return { ok: true };
   }
 
   get selectedCar(): CarInstance | null {
@@ -77,6 +103,7 @@ export class GameState {
       objectives: this.objectives,
       carCounter: this.carCounter,
       inventory: this.inventory.serialize(),
+      tier: this.tier,
     };
   }
 
@@ -96,6 +123,9 @@ export class GameState {
     s.objectives = data.objectives ?? {};
     s.carCounter = data.carCounter ?? s.cars.length;
     s.inventory = Inventory.fromSave(data.inventory);
+    // Saves from before the tiers keep every building available.
+    const t = data.tier;
+    s.tier = typeof t === 'number' && Number.isFinite(t) ? Math.max(0, Math.min(TIERS.length, Math.floor(t))) : TIERS.length;
     return s;
   }
 
@@ -111,5 +141,6 @@ export class GameState {
     this.carCounter = other.carCounter;
     this.ephemeral = other.ephemeral;
     this.inventory = other.inventory;
+    this.tier = other.tier;
   }
 }

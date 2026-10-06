@@ -11,6 +11,8 @@ import { buildModel, footprintCenter } from '../view/BuildingVisuals';
 import type { PlaceCheck } from '../sim/types';
 import type { Wallet } from '../../state/Inventory';
 import { countLabel, type Inventory, type ItemId } from '../../data/items';
+import { HAND } from '../../data/balance';
+import type { ResourceId } from '../../data/factoryMap';
 
 export type Tool = { kind: 'none' } | { kind: 'build'; type: BuildingType } | { kind: 'dismantle' };
 
@@ -63,6 +65,8 @@ export class BuildController {
   tool: Tool = { kind: 'none' };
   rot: Rot = 0;
   aim: Aim = { point: null, cell: null, buildingId: null };
+  /** Player position at the last aim update (hand-mining reach). */
+  private playerPos = new THREE.Vector3();
   /** Last placement check (for HUD messages). */
   lastCheck: PlaceCheck | null = null;
   onChange: (() => void) | null = null;
@@ -116,6 +120,7 @@ export class BuildController {
     this.aim.point = null;
     this.aim.cell = null;
     this.aim.buildingId = null;
+    this.playerPos.copy(player);
     let p: THREE.Vector3 | null = null;
     if (this.tool.kind === 'build') {
       if (dir.y < -1e-4) p = origin.clone().addScaledVector(dir, -origin.y / dir.y);
@@ -294,7 +299,7 @@ export class BuildController {
     if (!b) return;
     const [w, h] = BUILDINGS[b.type].footprint;
     const [rw, rh] = rotatedSize(w, h, b.rot);
-    const height = b.type === 'conveyor' ? 1.0 : b.type === 'hub' ? 4.2 : b.type === 'drill' ? 4.1 : 2.6;
+    const height = b.type === 'conveyor' ? 1.0 : b.type === 'hub' || b.type === 'smelter' ? 4.2 : b.type === 'drill' ? 4.1 : 3.0;
     footprintCenter(b.type, b.x, b.z, b.rot, this.highlight.position);
     this.highlight.position.y = height / 2;
     this.highlight.scale.set(rw * FACTORY_CELL + 0.1, height, rh * FACTORY_CELL + 0.1);
@@ -309,9 +314,33 @@ export class BuildController {
 
   private updateHover(): void {
     const id = this.aim.buildingId;
+    const mine = this.mineTarget();
+    if (mine) {
+      // Flat highlight of the resource cell that E would mine.
+      this.highlight.position.set((mine.cell[0] + 0.5) * FACTORY_CELL, 0.2, (mine.cell[1] + 0.5) * FACTORY_CELL);
+      this.highlight.scale.set(FACTORY_CELL, 0.4, FACTORY_CELL);
+      this.highlight.material = hoverMat;
+      this.highlight.visible = true;
+      return;
+    }
     if (id === null) return;
     const b = this.sim.buildings.get(id);
     if (b && b.type !== 'conveyor') this.boxAround(id, hoverMat);
+  }
+
+  /**
+   * Resource cell the player can mine by hand (E held): no tool, aiming at the ground of a free node
+   * cell (a drill on it catches the ray first), within HAND.MINE_REACH of the player.
+   */
+  mineTarget(): { cell: [number, number]; resource: ResourceId } | null {
+    const cell = this.aim.cell;
+    if (this.tool.kind !== 'none' || this.aim.buildingId !== null || !cell || this.sim.at(cell[0], cell[1])) return null;
+    const resource = this.sim.resourceAt(cell[0], cell[1]);
+    if (!resource) return null;
+    // Distance to the nearest point of the cell.
+    const nx = Math.max(cell[0] * FACTORY_CELL, Math.min(this.playerPos.x, (cell[0] + 1) * FACTORY_CELL));
+    const nz = Math.max(cell[1] * FACTORY_CELL, Math.min(this.playerPos.z, (cell[1] + 1) * FACTORY_CELL));
+    return Math.hypot(nx - this.playerPos.x, nz - this.playerPos.z) <= HAND.MINE_REACH ? { cell, resource } : null;
   }
 
   /** Building the player can interact with (E): machines, drills and the hub. */
