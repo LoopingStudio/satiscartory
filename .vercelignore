@@ -1,0 +1,5 @@
+.cache
+node_modules
+dist
+*.scratch.test.ts
+*.zz.test.ts
