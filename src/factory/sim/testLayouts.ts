@@ -21,26 +21,29 @@ export function conveyorLine(sim: FactorySim, x: number, z: number, rot: Rot, n:
  */
 export function spawnDemoFactory(sim: FactorySim): void {
   const free = { free: true };
-  // Plates: drill on iron node (24..26, 24..26), facing +X.
-  sim.place('drill', 24, 24, 1, free); // cells (24,24),(25,24); out (25,24) → (26,24)
-  conveyorLine(sim, 26, 24, 1, 2); // (26..27, 24)
-  const p1 = sim.place('press', 28, 24, 1, free); // (28..29, 24); out → (30,24)
+  // Machines facing +X (rot 1) are 1 cell wide along X and 2 along Z; items cross them along +X.
+  // Plates: drill on iron node (24..26, 24..26).
+  sim.place('drill', 24, 24, 1, free); // cells (24,24),(24,25); out → (25,24)
+  conveyorLine(sim, 25, 24, 1, 3); // (25..27, 24)
+  const p1 = sim.place('press', 28, 24, 1, free); // (28, 24..25); in from (27,24); out → (29,24)
   if (p1.ok) sim.setRecipe(p1.building.id, 'plate');
-  conveyorLine(sim, 30, 24, 0, 6); // (30, 24..29) → hub (30,30)
+  conveyorLine(sim, 29, 24, 1, 2); // (29..30, 24)
+  conveyorLine(sim, 31, 24, 0, 6); // (31, 24..29) → hub (31,30)
 
   // Bolts: second iron drill on the same node, row 26.
-  sim.place('drill', 24, 26, 1, free); // (24..25, 26) → (26,26)
-  conveyorLine(sim, 26, 26, 1, 2);
-  const p2 = sim.place('press', 28, 26, 1, free); // out → (30,26)
+  sim.place('drill', 24, 26, 1, free); // (24, 26..27) → (25,26)
+  conveyorLine(sim, 25, 26, 1, 3); // (25..27, 26)
+  const p2 = sim.place('press', 28, 26, 1, free); // (28, 26..27); out → (29,26)
   if (p2.ok) sim.setRecipe(p2.building.id, 'bolt');
-  conveyorLine(sim, 30, 26, 1, 1); // (30,26) facing +X → (31,26)
-  conveyorLine(sim, 31, 26, 0, 4); // (31, 26..29) → hub
+  conveyorLine(sim, 29, 26, 1, 1); // (29,26) facing +X → (30,26)
+  conveyorLine(sim, 30, 26, 0, 4); // (30, 26..29) → hub (30,30)
 
   // Tires: rubber node (23..25, 36..38) → press → up into the hub's +Z edge.
-  sim.place('drill', 24, 37, 1, free); // (24..25, 37) → (26,37)
-  conveyorLine(sim, 26, 37, 1, 3); // (26..28, 37)
-  const p3 = sim.place('press', 29, 37, 1, free); // (29..30, 37) → (31,37)
+  sim.place('drill', 24, 37, 1, free); // (24, 37..38) → (25,37)
+  conveyorLine(sim, 25, 37, 1, 3); // (25..27, 37)
+  const p3 = sim.place('press', 28, 37, 1, free); // (28, 37..38); out → (29,37)
   if (p3.ok) sim.setRecipe(p3.building.id, 'tire');
+  conveyorLine(sim, 29, 37, 1, 2); // (29..30, 37)
   conveyorLine(sim, 31, 37, 2, 5); // (31, 37..33) facing -Z → hub (31,32)
 }
 

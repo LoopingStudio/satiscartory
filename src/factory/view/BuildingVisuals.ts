@@ -31,13 +31,21 @@ export function footprintCenter(type: BuildingType, x: number, z: number, rot: R
 /** Builds the static model group of a building type (also used for build ghosts). */
 export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group {
   const g = new THREE.Group();
+  // Kenney machines are tunnels open on their long sides (native ±X). Machines are 2 cells
+  // wide along X with items crossing along Z, so their parts are added in a quarter-turned frame.
+  const machine = type === 'press' || type === 'assembler' || type === 'drill';
+  const body = machine ? new THREE.Group() : g;
+  if (machine) {
+    body.rotation.y = Math.PI / 2;
+    g.add(body);
+  }
   const add = (key: ModelKey, pos: [number, number, number], scale: [number, number, number] | number, name?: string) => {
     const o = assets.instantiate(key);
     o.position.set(...pos);
     if (typeof scale === 'number') o.scale.setScalar(scale);
     else o.scale.set(...scale);
     if (name) o.name = name;
-    g.add(o);
+    body.add(o);
     return o;
   };
   switch (type) {
@@ -94,7 +102,7 @@ export class BuildingVisual {
     if (this.arm) this.armParts = ['element-b', 'element-c', 'element-e'].map((n) => this.arm!.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
     if (building.type !== 'conveyor' && building.type !== 'hub') {
       this.lamp = new THREE.Mesh(lampGeometry, statusMaterial('noRecipe'));
-      this.lamp.position.set(0.6, 2.45, 1.1);
+      this.lamp.position.set(1.1, 2.45, -0.6);
       this.root.add(this.lamp);
     }
   }

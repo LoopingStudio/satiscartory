@@ -64,7 +64,8 @@ export interface Link {
 }
 
 export interface FactorySave {
-  version: 1;
+  /** 1: machines 1×2, items along their length. 2: machines 2×1, items across (migrated on load). */
+  version: 1 | 2;
   tick: number;
   nextId: number;
   storage: Inventory;

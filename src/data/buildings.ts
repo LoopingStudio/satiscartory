@@ -30,6 +30,20 @@ export interface BuildingDef {
   acceptsAllEdges?: boolean;
 }
 
+/**
+ * Machines (drill, press, assembler) are 2 cells wide and 1 deep: items cross them
+ * like the tunnel of their model, in through the back long side and out through the
+ * front long side. Either front cell can feed a conveyor (the first linked one wins).
+ */
+const MACHINE_IN: PortDef[] = [
+  { cell: [0, 0], side: 2, dir: 'in' },
+  { cell: [1, 0], side: 2, dir: 'in' },
+];
+const MACHINE_OUT: PortDef[] = [
+  { cell: [0, 0], side: 0, dir: 'out' },
+  { cell: [1, 0], side: 0, dir: 'out' },
+];
+
 export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   conveyor: {
     type: 'conveyor',
@@ -50,8 +64,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     type: 'drill',
     name: 'Foreuse',
     description: 'Extrait du minerai de fer ou du latex. À poser sur un gisement.',
-    footprint: [1, 2],
-    ports: [{ cell: [0, 1], side: 0, dir: 'out' }],
+    footprint: [2, 1],
+    ports: MACHINE_OUT,
     cost: { plate: 5, bolt: 4 },
     buildable: true,
     needsNode: true,
@@ -60,13 +74,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     type: 'press',
     name: 'Presse',
     description: 'Transforme une matière en pièce simple (plaques, boulons, pneus).',
-    footprint: [1, 2],
-    ports: [
-      { cell: [0, 0], side: 2, dir: 'in' },
-      { cell: [0, 0], side: 1, dir: 'in' },
-      { cell: [0, 0], side: 3, dir: 'in' },
-      { cell: [0, 1], side: 0, dir: 'out' },
-    ],
+    footprint: [2, 1],
+    ports: [...MACHINE_IN, ...MACHINE_OUT],
     cost: { plate: 6, bolt: 4 },
     buildable: true,
     machine: 'press',
@@ -75,13 +84,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     type: 'assembler',
     name: 'Assembleuse',
     description: 'Assemble plusieurs pièces en pièces de voiture.',
-    footprint: [1, 2],
-    ports: [
-      { cell: [0, 0], side: 2, dir: 'in' },
-      { cell: [0, 0], side: 1, dir: 'in' },
-      { cell: [0, 0], side: 3, dir: 'in' },
-      { cell: [0, 1], side: 0, dir: 'out' },
-    ],
+    footprint: [2, 1],
+    ports: [...MACHINE_IN, ...MACHINE_OUT],
     cost: { plate: 8, bolt: 8 },
     buildable: true,
     machine: 'assembler',

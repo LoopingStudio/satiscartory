@@ -376,9 +376,10 @@ export class FactorySim {
     this.feeders.clear();
     const sorted = [...this.buildings.values()].sort((a, b) => a.id - b.id);
     for (const b of sorted) {
-      const out = BUILDINGS[b.type].ports.find((p) => p.dir === 'out');
+      // A building may have several output ports (machines): the first one that links wins.
       let link: Link | null = null;
-      if (out) {
+      for (const out of BUILDINGS[b.type].ports) {
+        if (out.dir !== 'out') continue;
         const w = this.portWorld(b, out.cell, out.side);
         const nx = w.cx + DX[w.side];
         const nz = w.cz + DZ[w.side];
@@ -391,6 +392,7 @@ export class FactorySim {
             if (!list) this.feeders.set(t.id, (list = []));
             list.push({ id: b.id, side: unrotateSide(entry, t.rot) });
           }
+          break;
         }
       }
       this.outLinks.set(b.id, link);
@@ -604,7 +606,7 @@ export class FactorySim {
   serialize(): FactorySave {
     const buildings = [...this.buildings.values()].sort((a, b) => a.id - b.id);
     return structuredCloneJSON({
-      version: 1,
+      version: 2,
       tick: this.tickCount,
       nextId: this.nextId,
       storage: this.storage,
@@ -624,6 +626,9 @@ export class FactorySim {
     sim.crafted = data.crafted ?? {};
     for (const b of data.buildings) {
       if (!BUILDINGS[b.type]) continue;
+      // v1 machines were 1×2 with items flowing along their length; v2 machines are 2×1
+      // with items crossing them. A quarter turn keeps exactly the same cells.
+      if ((data.version ?? 1) < 2 && (b.type === 'drill' || b.type === 'press' || b.type === 'assembler')) b.rot = ((b.rot + 1) & 3) as Rot;
       const cells = sim.cellsFor(b.type, b.x, b.z, b.rot);
       if (cells.some(([cx, cz]) => !sim.inBounds(cx, cz) || sim.grid[sim.idx(cx, cz)])) continue;
       if (b.type === 'conveyor') b.items = b.items.filter((it) => isItemId(it.item));
