@@ -314,7 +314,7 @@ On démarre avec assez de stock pour une petite installation (2 foreuses, 1 pres
 
 - [x] **P0** : couleurs correctes, la boîte Rapier se pose sur le trimesh de route, console propre, `npm test` et `npm run build` passent.
 - [x] **P1** : les tests Vitest passent ; le minerai circule jusqu'au hangar et le compteur monte ; 2000 objets tiennent 60 FPS (2100 objets mesurés à 60 FPS, 19 draw calls).
-- [ ] **P2** : on construit la chaîne à pied ; après rechargement, l'usine est intacte et produit encore.
+- [x] **P2** : on construit la chaîne à pied (foreuse, convoyeurs tracés, presse configurée avec E, convoyeurs jusqu'au hangar, via de vrais événements d'entrée) ; après rechargement, l'usine est intacte et produit encore.
 - [ ] **P3** : la voiture roule, drifte et saute sans se retourner, atteint environ 200 km/h ; les roues tournent et braquent ; les tests sans rendu passent.
 - [ ] **P4** : on boucle un tour par les CP ; respawn et restart fonctionnent ; médaille et record persistent.
 - [ ] **P5** : on crée un circuit fermé avec une pente ; il est validé, on le pilote, et il survit au rechargement.

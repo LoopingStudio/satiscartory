@@ -27,14 +27,16 @@ export class Game {
   private overlayTimer = 0;
   private readonly factoryTickers = new Set<() => void>();
   private readonly frameListeners = new Set<(dt: number) => void>();
+  private readonly modeListeners = new Set<(name: ModeName) => void>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     this.input = new Input(canvas);
     this.pointer = new PointerLock(canvas);
-    this.modes.onSwitch = () => {
+    this.modes.onSwitch = (name) => {
       this.input.reset();
       this.applyDebug();
+      for (const fn of this.modeListeners) fn(name);
     };
     this.loop = new Loop({
       physics: (dt) => this.modes.current?.fixedUpdate(dt),
@@ -55,6 +57,11 @@ export class Game {
   addFrameListener(fn: (dt: number) => void): () => void {
     this.frameListeners.add(fn);
     return () => this.frameListeners.delete(fn);
+  }
+
+  onModeChange(fn: (name: ModeName) => void): () => void {
+    this.modeListeners.add(fn);
+    return () => this.modeListeners.delete(fn);
   }
 
   switchMode(name: ModeName, params?: unknown): Promise<void> {

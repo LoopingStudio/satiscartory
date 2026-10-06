@@ -5,7 +5,8 @@ export const fr = {
   loading: 'Chargement des modèles…',
   loadingRapier: 'Initialisation de la physique…',
   menu: {
-    play: 'Usine',
+    play: 'Jouer',
+    continue: 'Continuer',
     garage: 'Garage',
     race: 'Courses',
     editor: 'Éditeur de circuit',
