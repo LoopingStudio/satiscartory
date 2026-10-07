@@ -9,6 +9,8 @@ import { RECIPES_BY_ID } from '../../data/recipes';
 import { FACTORY_CELL } from '../../config/constants';
 import { rotatedSize, type Rot } from '../sim/dirs';
 import type { FactorySim } from '../sim/FactorySim';
+import type { DeckPlane } from '../sim/terrain';
+import { deckShear } from './terrain/deck';
 import { isMachine, type Building } from '../sim/types';
 import type { ModelKey } from '../../core/assets/manifest.gen';
 import { HUB_BENCH } from './hubBench';
@@ -507,9 +509,30 @@ export class BuildingVisual {
     this.icon = icon;
   }
 
+  /**
+   * Puts the visual on the relief: a padded building on its pad, a splitter or merger laid on its deck
+   * (sheared like the conveyors). No-op on a flat map. Call again when the ground under it changes.
+   */
+  placeOn(sim: FactorySim): void {
+    if (sim.terrain.flat) return;
+    const b = this.building;
+    if (!isBelt(b.type)) {
+      this.root.position.y = (b.py ?? 0) / 100;
+      return;
+    }
+    const deck = sim.deckOf(b, DECK);
+    this.root.matrixAutoUpdate = false;
+    this.root.updateMatrix();
+    this.root.matrix.premultiply(deckShear(deck, b.x, b.z, SHEAR));
+    this.root.matrixWorldNeedsUpdate = true;
+  }
+
   dispose(): void {
     this.root.removeFromParent();
     this.glow?.dispose();
     this.glow = null;
   }
 }
+
+const DECK: DeckPlane = { c: 0, sx: 0, sz: 0 };
+const SHEAR = new THREE.Matrix4();

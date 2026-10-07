@@ -6,7 +6,7 @@ import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
 import { FACTORY_TERRAIN_DEFAULT, TERRAIN_RULES, type TerrainId } from '../../data/factoryTerrain';
-import { Terrain, isTerrainId, type Pad, type PadSource } from './terrain';
+import { Terrain, isTerrainId, type DeckPlane, type Pad, type PadSource } from './terrain';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
 import { isMachine, isNode, isProducer, type NodeB, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
 
@@ -154,6 +154,16 @@ export class FactorySim implements PadSource {
   /** A belt piece can stand on cell (x, z): on the map, dry, not too steep. */
   beltFits(x: number, z: number): boolean {
     return this.terrain.beltFits(x, z);
+  }
+
+  /**
+   * Deck of a belt piece (where its items ride, 0.8 m below their height): a straight conveyor ramps along
+   * its flow and stays level across; corners, junctions, splitters and mergers take the plane of their
+   * four corners. Both meet the neighbors' decks at every shared edge.
+   */
+  deckOf(b: Building, out: DeckPlane): DeckPlane {
+    const straight = b.type === 'conveyor' && this.conveyorShape(b.id) === 'straight';
+    return this.terrain.deckPlane(b.x, b.z, straight ? b.rot : null, out);
   }
 
   /** Same, with a planned padded building's banks (its py from check()): what a ghost's ports would face. */

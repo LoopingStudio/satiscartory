@@ -11,7 +11,9 @@ export class ItemRenderer {
   private readonly q = new THREE.Quaternion();
   private readonly s = new THREE.Vector3();
   private readonly p = new THREE.Vector3();
-  private readonly e = new THREE.Euler();
+  private readonly e = new THREE.Euler(0, 0, 0, 'YXZ');
+  private readonly qYaw = new THREE.Quaternion();
+  private readonly up = new THREE.Vector3(0, 1, 0);
   private readonly color = new THREE.Color();
 
   constructor(private readonly assets: AssetLoader, private readonly parent: THREE.Object3D) {}
@@ -49,12 +51,19 @@ export class ItemRenderer {
     for (const id of ITEM_IDS) this.counts.set(id, 0);
   }
 
-  add(item: ItemId, x: number, y: number, z: number, yaw: number): void {
+  /** @param pitch tilt along the heading (a belt going up or down a slope: up is negative). */
+  add(item: ItemId, x: number, y: number, z: number, yaw: number, pitch = 0): void {
     const n = this.counts.get(item) ?? 0;
     const mesh = this.ensure(item, n + 1);
     const def = ITEMS[item];
-    this.e.set(0, yaw + (def.beltYaw ?? 0), 0);
-    this.q.setFromEuler(this.e);
+    if (pitch === 0) {
+      this.e.set(0, yaw + (def.beltYaw ?? 0), 0);
+      this.q.setFromEuler(this.e);
+    } else {
+      // Heading, then the slope's pitch, then the model's own yaw on belts (items tilt, they do not shear).
+      this.e.set(pitch, yaw, 0);
+      this.q.setFromEuler(this.e).multiply(this.qYaw.setFromAxisAngle(this.up, def.beltYaw ?? 0));
+    }
     this.s.setScalar(def.beltScale);
     this.p.set(x, y + (def.beltLift ?? 0), z);
     this.m.compose(this.p, this.q, this.s);

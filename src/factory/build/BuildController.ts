@@ -13,6 +13,8 @@ import { GARAGE_DOOR_SIDE } from '../../garage/parking';
 import type { Building, PlaceCheck, Placement, PlanLinks } from '../sim/types';
 import { endCell, planDrag, snapConveyorRot, startCell, steals, type DragEnd } from '../sim/planning';
 import { POINTER_Y, PORT_COLORS, crossGeometry, pointerGeometry, portMarker, sharedPointer, yawOf } from '../view/portMarkers';
+import { deckShear } from '../view/terrain/deck';
+import type { DeckPlane } from '../sim/terrain';
 import type { Wallet } from '../../state/Inventory';
 import { countLabel, type Inventory, type ItemId } from '../../data/items';
 import { HAND } from '../../data/balance';
@@ -40,6 +42,16 @@ const hoverMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: tru
 const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.13, depthWrite: false });
 /** Unit box of the line highlight, shared by its instanced mesh as it grows (never disposed). */
 const lineBox = new THREE.BoxGeometry(1, 1, 1);
+/** Unit box with its top at y = 0 (the fill under a ghost's pad). */
+const slabBox = new THREE.BoxGeometry(1, 1, 1).translate(0, -0.5, 0);
+const UP = new THREE.Vector3(0, 1, 0);
+/** Per side: the two corners (offsets from the cell's lowest corner) of that edge. */
+const EDGE_CORNERS: Record<number, [[number, number], [number, number]]> = {
+  0: [[0, 1], [1, 1]],
+  1: [[1, 0], [1, 1]],
+  2: [[0, 0], [1, 0]],
+  3: [[0, 0], [0, 1]],
+};
 /** Hollow buildings (garage) get edges + a floor tint instead of a box that would tint the view from inside. */
 const outlineMats = {
   dismantle: { edges: new THREE.LineBasicMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.9, depthWrite: false }), floor: highlightMat },
@@ -180,8 +192,15 @@ export class BuildController {
   private ghost: THREE.Group | null = null;
   private ghostType: BuildingType | null = null;
   private ghostValid = true;
-  /** Port markers of a building ghost, by port index. */
+  /** Port markers of a building ghost, by port index (in the scene, on the ground in front of each port). */
   private ghostPorts: ReturnType<typeof portMarker>[] = [];
+  /** Relief: the fill under a building ghost's pad (a translucent slab from the lowest corner up). */
+  private slab: THREE.Mesh;
+  private readonly deck: DeckPlane = { c: 0, sx: 0, sz: 0 };
+  private readonly shear = new THREE.Matrix4();
+  private readonly q = new THREE.Quaternion();
+  private readonly v = new THREE.Vector3();
+  private readonly one = new THREE.Vector3(1, 1, 1);
   /** Single conveyor ghost: where it stands and how it is turned (after snapping). */
   private shown: { x: number; z: number; rot: Rot } | null = null;
   /** Cell where R turned the single conveyor ghost by hand: no snapping there until the aim leaves it. */
@@ -232,6 +251,60 @@ export class BuildController {
     this.outline.visible = false;
     this.outline.renderOrder = 5;
     scene.add(this.outline);
+    this.slab = new THREE.Mesh(slabBox, ghostOk);
+    this.slab.visible = false;
+    this.slab.renderOrder = 4;
+    scene.add(this.slab);
+  }
+
+  // ------------------------------------------------------------ relief heights
+
+  private get relief(): boolean {
+    return !this.sim.terrain.flat;
+  }
+
+  /** Height (m) of the middle of a cell's edge on side `side` (ground as it is now). */
+  private edgeY(cx: number, cz: number, side: number): number {
+    if (!this.relief) return 0;
+    const t = this.sim.terrain;
+    const [[a, b], [c, d]] = EDGE_CORNERS[side]!;
+    return (t.effAt(cx + a, cz + b) + t.effAt(cx + c, cz + d)) / 200;
+  }
+
+  /** Lays a ghost tile (a conveyor at x, z, rot, with its arrow) on the deck it would ride on. */
+  private placeTile(g: THREE.Object3D, x: number, z: number, rot: Rot): void {
+    if (!this.relief) {
+      g.matrixAutoUpdate = true;
+      g.position.set((x + 0.5) * FACTORY_CELL, 0.02, (z + 0.5) * FACTORY_CELL);
+      g.rotation.set(0, rot * (Math.PI / 2), 0);
+      return;
+    }
+    const deck = this.sim.terrain.deckPlane(x, z, rot, this.deck);
+    g.matrixAutoUpdate = false;
+    this.q.setFromAxisAngle(UP, rot * (Math.PI / 2));
+    g.matrix.compose(this.v.set((x + 0.5) * FACTORY_CELL, 0.02, (z + 0.5) * FACTORY_CELL), this.q, this.one).premultiply(deckShear(deck, x, z, this.shear));
+    g.matrixWorldNeedsUpdate = true;
+  }
+
+  /** Puts a building ghost's port markers on the ground in front of its ports. */
+  private placeGhostPorts(plan: Placement): void {
+    const ports = BUILDINGS[plan.type].ports;
+    this.ghostPorts.forEach((marker, i) => {
+      const p = ports[i]!;
+      const w = this.sim.portWorld(plan, p.cell, p.side);
+      const fx = w.cx + DX[w.side];
+      const fz = w.cz + DZ[w.side];
+      const x = (fx + 0.5) * FACTORY_CELL;
+      const z = (fz + 0.5) * FACTORY_CELL;
+      this.q.setFromAxisAngle(UP, yawOf(w.side) + (p.dir === 'in' ? Math.PI : 0));
+      marker.matrix.compose(this.v.set(x, 0, z), this.q, this.one);
+      if (this.relief) {
+        const t = this.sim.terrain;
+        const plane = t.deckPlane(Math.max(0, Math.min(this.sim.width - 1, fx)), Math.max(0, Math.min(this.sim.height - 1, fz)), null, this.deck);
+        marker.matrix.premultiply(deckShear(plane, fx, fz, this.shear));
+      }
+      marker.matrixWorldNeedsUpdate = true;
+    });
   }
 
   setTool(tool: Tool): void {
@@ -338,8 +411,10 @@ export class BuildController {
       return;
     }
     const cell = this.aim.cell;
+    this.slab.visible = false;
     if (!cell) {
       if (this.ghost) this.ghost.visible = false;
+      for (const m of this.ghostPorts) m.visible = false;
       // Ground within reach past the edge of the grid: say why nothing shows.
       this.lastCheck = this.aim.outside ? { ok: false, error: 'outOfBounds', cells: [] } : null;
       return;
@@ -357,15 +432,37 @@ export class BuildController {
     this.lastCheck = check;
     const ghost = this.ghost!;
     ghost.visible = true;
-    footprintCenter(type, ax, az, rot, ghost.position);
-    ghost.position.y = 0.02;
-    ghost.rotation.y = rot * (Math.PI / 2);
+    const plan: Placement[] = [{ type, x: ax, z: az, rot }];
+    let base = 0;
+    if (type === 'conveyor') this.placeTile(ghost, ax, az, rot);
+    else {
+      footprintCenter(type, ax, az, rot, ghost.position);
+      // On the relief, a padded building stands on the pad it would get, its fill shown under it.
+      if (this.relief) {
+        const py = check.py ?? this.sim.padPlan(type, ax, az, rot).py;
+        base = py / 100;
+        const [w, h] = BUILDINGS[type].footprint;
+        const [rw, rh] = rotatedSize(w, h, rot);
+        const t = this.sim.terrain;
+        let low = Infinity;
+        for (let i = ax; i <= ax + rw; i++) for (let j = az; j <= az + rh; j++) low = Math.min(low, t.baseAt(i, j));
+        const fill = py - low;
+        if (fill >= 10) {
+          this.slab.position.set(ghost.position.x, base, ghost.position.z);
+          this.slab.scale.set(rw * FACTORY_CELL, fill / 100, rh * FACTORY_CELL);
+          this.slab.material = check.ok ? ghostOk : ghostBad;
+          this.slab.visible = true;
+        }
+      }
+      ghost.position.y = base + 0.02;
+      ghost.rotation.y = rot * (Math.PI / 2);
+      this.placeGhostPorts(plan[0]!);
+    }
     if (check.ok !== this.ghostValid) {
       this.ghostValid = check.ok;
       setGhostMaterial(ghost, check.ok ? ghostOk : ghostBad);
     }
     // Connections it would make (only where it can stand).
-    const plan: Placement[] = [{ type, x: ax, z: az, rot }];
     const links = cellsFree(check) ? this.sim.planLinks(plan) : null;
     if (links) this.showLinks(plan, links, type === 'conveyor');
     if (type === 'conveyor') return;
@@ -413,7 +510,7 @@ export class BuildController {
       this.lastLinks.blockedBy = blocked;
       const fx = faces.reduce((a, f) => a + f[0], 0) / faces.length;
       const fz = faces.reduce((a, f) => a + f[1], 0) / faces.length;
-      this.deadMark.position.set(fx, buildingHeight(type) + 0.6, fz);
+      this.deadMark.position.set(fx, base + buildingHeight(type) + 0.6, fz);
       this.deadMark.visible = true;
     }
   }
@@ -450,7 +547,7 @@ export class BuildController {
       k++;
       m.material = stolen ? sharedPointer.dead : sharedPointer.linked;
       // On the shared edge, over the belts, pointing into the receiving cell.
-      m.position.set((cx + 0.5 + DX[entry]! * 0.5) * FACTORY_CELL, POINTER_Y, (cz + 0.5 + DZ[entry]! * 0.5) * FACTORY_CELL);
+      m.position.set((cx + 0.5 + DX[entry]! * 0.5) * FACTORY_CELL, this.edgeY(cx, cz, entry) + POINTER_Y, (cz + 0.5 + DZ[entry]! * 0.5) * FACTORY_CELL);
       m.rotation.y = yawOf(opposite(entry as Rot));
       m.visible = true;
     };
@@ -478,7 +575,7 @@ export class BuildController {
         if (stuck) {
           summary.blockedBy = stuck;
           const f = 0.4 * FACTORY_CELL;
-          this.deadMark.position.set((p.x + 0.5) * FACTORY_CELL + DX[p.rot] * f, POINTER_Y, (p.z + 0.5) * FACTORY_CELL + DZ[p.rot] * f);
+          this.deadMark.position.set((p.x + 0.5) * FACTORY_CELL + DX[p.rot] * f, this.edgeY(p.x, p.z, p.rot) + POINTER_Y, (p.z + 0.5) * FACTORY_CELL + DZ[p.rot] * f);
           this.deadMark.visible = true;
         }
       }
@@ -504,21 +601,17 @@ export class BuildController {
     const g = buildModel(this.assets, type);
     setGhostMaterial(g, ghostOk);
     this.ghostValid = true;
-    // Port markers in the cell in front of each port (local, unrotated footprint coordinates), as on
-    // placed buildings; a conveyor shows its direction with an arrow over it instead.
+    // Port markers in the cell in front of each port, as on placed buildings; a conveyor shows its
+    // direction with an arrow over it instead.
     const def = BUILDINGS[type];
-    const [w, h] = def.footprint;
     this.ghostPorts = [];
     if (type === 'conveyor') g.add(conveyorArrow());
     else {
       for (const p of def.ports) {
+        // Placed each frame by placeGhostPorts (on the ground of the cell in front, slope included).
         const marker = portMarker(p.dir);
-        const lx = (p.cell[0] + 0.5 - w / 2 + DX[p.side]) * FACTORY_CELL;
-        const lz = (p.cell[1] + 0.5 - h / 2 + DZ[p.side]) * FACTORY_CELL;
-        // The ghost stands 2 cm up: keep the pad on the floor.
-        marker.position.set(lx, -0.02, lz);
-        marker.rotation.y = yawOf(p.side) + (p.dir === 'in' ? Math.PI : 0);
-        g.add(marker);
+        marker.matrixAutoUpdate = false;
+        this.scene.add(marker);
         this.ghostPorts.push(marker);
       }
     }
@@ -540,7 +633,9 @@ export class BuildController {
     this.ghost?.removeFromParent();
     this.ghost = null;
     this.ghostType = null;
+    for (const m of this.ghostPorts) m.removeFromParent();
     this.ghostPorts = [];
+    this.slab.visible = false;
   }
 
   // ------------------------------------------------------------ conveyor drag
@@ -593,8 +688,7 @@ export class BuildController {
       const p = path[i];
       g.visible = !!p && !(merge && i === n - 1);
       if (!g.visible || !p) return;
-      g.position.set((p.x + 0.5) * FACTORY_CELL, 0.02, (p.z + 0.5) * FACTORY_CELL);
-      g.rotation.y = p.rot * (Math.PI / 2);
+      this.placeTile(g, p.x, p.z, p.rot);
       const check = checks[i]!;
       const affordable = budget >= cost;
       if (check.ok && affordable) budget -= cost;
@@ -629,8 +723,11 @@ export class BuildController {
     const height = buildingHeight(b.type);
     const sx = rw * FACTORY_CELL + 0.1;
     const sz = rh * FACTORY_CELL + 0.1;
+    // Its base: the pad of a padded building, the deck of a belt piece (on the relief).
+    const base = !this.relief ? 0 : isBelt(b.type) ? this.sim.deckOf(b, this.deck).c : (b.py ?? 0) / 100;
     if (BUILDINGS[b.type].hollow) {
       footprintCenter(b.type, b.x, b.z, b.rot, this.outline.position);
+      this.outline.position.y = base;
       this.outlineEdges.scale.set(sx, height, sz);
       this.outlineEdges.material = outlineMats[kind].edges;
       this.outlineFloor.scale.set(sx, 1, sz);
@@ -639,7 +736,7 @@ export class BuildController {
       return;
     }
     footprintCenter(b.type, b.x, b.z, b.rot, this.highlight.position);
-    this.highlight.position.y = height / 2;
+    this.highlight.position.y = base + height / 2;
     this.highlight.scale.set(sx, height, sz);
     this.highlight.material = kind === 'dismantle' ? highlightMat : hoverMat;
     this.highlight.visible = true;
@@ -715,7 +812,8 @@ export class BuildController {
     const s = FACTORY_CELL + 0.06;
     ids.forEach((id, i) => {
       const b = this.sim.buildings.get(id)!;
-      m.makeScale(s, 1.0, s).setPosition((b.x + 0.5) * FACTORY_CELL, 0.5, (b.z + 0.5) * FACTORY_CELL);
+      const y = this.relief ? this.sim.deckOf(b, this.deck).c : 0;
+      m.makeScale(s, 1.0, s).setPosition((b.x + 0.5) * FACTORY_CELL, y + 0.5, (b.z + 0.5) * FACTORY_CELL);
       mesh!.setMatrixAt(i, m);
     });
     mesh.count = ids.length;
@@ -880,6 +978,7 @@ export class BuildController {
     }
     this.highlight.removeFromParent();
     this.highlight.geometry.dispose();
+    this.slab.removeFromParent();
     this.outline.removeFromParent();
     this.outlineEdges.geometry.dispose();
     this.outlineFloor.geometry.dispose();

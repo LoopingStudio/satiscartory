@@ -59,6 +59,11 @@ export interface Lake {
   level: number;
 }
 
+/** Height (m) of a deck plane of cell (cx, cz) at world (x, z). */
+export function deckY(p: DeckPlane, cx: number, cz: number, x: number, z: number): number {
+  return p.c + p.sx * (x - (cx + 0.5) * CELL) + p.sz * (z - (cz + 0.5) * CELL);
+}
+
 export function isTerrainId(v: unknown): v is TerrainId {
   return typeof v === 'string' && (TERRAIN_IDS as readonly string[]).includes(v);
 }

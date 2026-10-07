@@ -621,8 +621,24 @@ export class FactoryMode implements Mode {
     return this.freeCursor && this.game.input.device !== 'pad';
   }
 
+  /**
+   * Physics catches up with the relief (pads placed or removed since the last step): before anything
+   * moves or casts. The heightfield has one side: the player is put back on top if the ground rose
+   * over them (a bank of a pad placed or dismantled next to them).
+   */
+  private flushTerrain(): void {
+    const area = this.world.flush();
+    if (!area || this.driving) return;
+    const p = this.player.cur;
+    const [x0, z0, x1, z1] = area;
+    if (p.x < x0 - 1 || p.x > x1 + 1 || p.z < z0 - 1 || p.z > z1 + 1) return;
+    const g = this.sim.terrain.heightAt(p.x, p.z);
+    if (p.y < g - 0.02) this.player.teleport(this.tmpV.set(p.x, g + 0.02, p.z));
+  }
+
   fixedUpdate(dt: number): void {
     const input = this.game.input;
+    this.flushTerrain();
     if (this.driving) {
       // The player capsule is disabled while driving; the car drives (race controls).
       this.cars.fixedUpdate(dt, this.controlling ? input : null);
@@ -678,6 +694,7 @@ export class FactoryMode implements Mode {
 
   update(dt: number, alpha: number): void {
     const input = this.game.input;
+    this.flushTerrain();
     input.padProfile = this.driving ? 'drive' : 'foot';
     // A pad user left without control (pointer lock refused after a panel, Escape with a tool): any pad
     // input takes it back.
@@ -761,7 +778,9 @@ export class FactoryMode implements Mode {
     this.updateHint();
 
     this.rig.follow(this.renderPos);
-    this.view.setPortEmphasis(this.build.tool.kind === 'build' && !this.garagePanel.isOpen);
+    const building = this.build.tool.kind === 'build' && !this.garagePanel.isOpen;
+    this.view.setPortEmphasis(building);
+    this.view.setBuildGrid(building, this.build.aim.point);
     this.view.update(dt, this.game.loop.factoryAlpha, this.camera.position);
     this.tickHud(dt);
     this.state.player = { x: this.player.cur.x, y: this.player.cur.y, z: this.player.cur.z, yaw: this.orbit.yaw };
@@ -785,6 +804,7 @@ export class FactoryMode implements Mode {
     } else if (this.resumeHint && input.wasPressed('cancel') && performance.now() - this.toolEscAt > ESC_GRACE_MS) this.pause();
     this.hud.setCrosshair(false);
     this.updateHint();
+    this.view.setBuildGrid(false, null);
     this.rig.follow(this.renderPos);
     this.view.update(dt, this.game.loop.factoryAlpha, this.camera.position);
     this.tickHud(dt);

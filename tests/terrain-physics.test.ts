@@ -118,3 +118,55 @@ describe('character controller on the relief', () => {
     expect(airborne).toBe(0);
   });
 });
+
+describe('buildings on the relief (physics)', () => {
+  /** Ray straight down at (x, z), first collider of any kind (buildings included). */
+  function topY(fw: FactoryWorld, x: number, z: number, filter?: (c: RAPIER.Collider) => boolean): number | null {
+    const hit = fw.physics.world.castRay(new RAPIER.Ray({ x, y: 50, z }, { x: 0, y: -1, z: 0 }), 100, true, undefined, undefined, undefined, undefined, filter);
+    return hit ? 50 - hit.timeOfImpact : null;
+  }
+
+  it('a pad levels the heightfield (same collider), its belt rides from the port edge at pad + 0.8, removal gives the ground back', () => {
+    const sim = rampSim(10);
+    const fw = new FactoryWorld(sim);
+    fw.physics.step(0);
+    const handle = fw.ground.handle;
+    const before = groundY(fw, 25, 21);
+    const r = sim.place('smelter', 12, 10, 0, { free: true }); // cells (12..13, 10), outputs toward +Z
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const belt = sim.place('conveyor', 12, 11, 0, { free: true });
+    expect(belt.ok).toBe(true);
+    expect(fw.flush()).not.toBeNull();
+    fw.physics.step(0);
+    expect(fw.ground.handle).toBe(handle);
+    const py = r.building.py! / 100;
+    // The ground under the smelter is its pad.
+    expect(groundY(fw, 25, 21)).toBeCloseTo(py, 3);
+    expect(groundY(fw, 25, 21)).not.toBeCloseTo(before!, 1);
+    // The belt's top at the middle of its back edge (the smelter's port) is the pad + 0.8 m.
+    const isBeltCollider = (c: RAPIER.Collider) => fw.buildingOf(c) === (belt.ok ? belt.building.id : -1);
+    expect(topY(fw, 25, 22.01, isBeltCollider)).toBeCloseTo(py + 0.8, 1);
+    // Dismantling gives the natural ground back.
+    sim.remove(belt.ok ? belt.building.id : -1);
+    sim.remove(r.building.id);
+    fw.flush();
+    fw.physics.step(0);
+    expect(groundY(fw, 25, 21)).toBeCloseTo(before!, 3);
+    expect(fw.ground.handle).toBe(handle);
+    fw.dispose();
+  });
+
+  it('padded colliders stand on their pad and reach under it', () => {
+    const sim = rampSim(10);
+    const fw = new FactoryWorld(sim);
+    const r = sim.place('press', 14, 6, 0, { free: true });
+    expect(r.ok).toBe(true);
+    fw.flush();
+    fw.physics.step(0);
+    const py = r.ok ? r.building.py! / 100 : 0;
+    // Top of the press: pad + 2.1 m.
+    expect(topY(fw, 30, 13, (c) => !fw.isGround(c))).toBeCloseTo(py + 2.1, 2);
+    fw.dispose();
+  });
+});
