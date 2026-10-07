@@ -134,6 +134,13 @@ export function installTestHelpers(game: Game): void {
       return { cx: r.left + ((v.x + 1) / 2) * r.width, cy: r.top + ((1 - v.y) / 2) * r.height, onScreen: Math.abs(v.x) < 1 && Math.abs(v.y) < 1 && v.z < 1 };
     },
     terrain: terrainHelpers,
+    /** What the build tool aims at and what its check says (HUD text included). */
+    aimInfo() {
+      const b = mode()?.build;
+      if (!b) return null;
+      const c = b.lastCheck;
+      return { cell: b.aim.cell, outside: b.aim.outside, ok: c?.ok ?? null, error: c?.error ?? null, detail: c?.detail ?? null, grad: c?.grad ?? null, py: c?.py ?? null, fill: c?.fill ?? null, hint: document.querySelector('.hint')?.textContent ?? null };
+    },
     screenOfCell(x: number, z: number, y = terrainHelpers.cellY(x, z)) {
       return T.screenOf(new THREE.Vector3((x + 0.5) * FACTORY_CELL, y, (z + 0.5) * FACTORY_CELL));
     },

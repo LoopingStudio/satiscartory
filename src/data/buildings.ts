@@ -4,6 +4,9 @@ import type { MachineType } from './recipes';
 /** Grid sides: 0 = +Z, 1 = +X, 2 = -Z, 3 = -X (local, before rotation). */
 export type Side = 0 | 1 | 2 | 3;
 
+/** Local side of the garage door (rotation 0: +Z, the short side). */
+export const GARAGE_DOOR_SIDE: Side = 0;
+
 export type BuildingType = 'conveyor' | 'splitter' | 'merger' | 'drill' | 'smelter' | 'press' | 'assembler' | 'garage' | 'hub';
 
 export interface PortDef {
@@ -170,4 +173,12 @@ export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'pres
 /** Belt-height logistics piece (conveyor, splitter, merger). */
 export function isBelt(type: BuildingType): boolean {
   return !!BUILDINGS[type].belt;
+}
+
+/**
+ * Stands on a pad: on the relief, its footprint is leveled to one height (machines, drill, garage, hub).
+ * Belt pieces follow the ground instead.
+ */
+export function isPadded(type: BuildingType): boolean {
+  return !BUILDINGS[type].belt;
 }

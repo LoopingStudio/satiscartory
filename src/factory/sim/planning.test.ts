@@ -5,6 +5,7 @@ import { dirTo, endCell, planConveyorPath, planDrag, snapConveyorRot, snapToPort
 import { BUILDINGS, type BuildingType } from '../../data/buildings';
 import { mulberry32 } from '../../core/rng';
 import type { Placement } from './types';
+import { Terrain } from './terrain';
 
 const rich = { plate: 10_000, iron_rod: 10_000, bolt: 10_000 };
 
@@ -420,5 +421,41 @@ describe('port definitions', () => {
       if (def.hollow || def.acceptsAllEdges) continue;
       expect(def.ports.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('planning on the relief', () => {
+  /** 32×32 with margin 2: a steep 3×3 knoll (corners 6..9) and a pond (corners 20..24), flat elsewhere. */
+  function hilly(): FactorySim {
+    const M = 2;
+    const n = 32 + 2 * M + 1;
+    const cm: number[] = [];
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const gi = i - M;
+        const gj = j - M;
+        cm.push(gi >= 6 && gi <= 9 && gj >= 6 && gj <= 9 ? 300 : gi >= 20 && gi <= 24 && gj >= 20 && gj <= 24 ? -150 : 0);
+      }
+    }
+    return sim({ terrain: Terrain.fromHeights(32, 32, M, cm, -50) });
+  }
+
+  it('the L-shaped drag goes around a steep knoll instead of over it', () => {
+    const s = hilly();
+    // From (2, 7) to (14, 3): x first crosses the knoll's flanks at z = 7, z first stays clear.
+    const path = planConveyorPath(s, [2, 7], [14, 3], 0);
+    expect(path.every((t) => s.check('conveyor', t.x, t.z, t.rot).ok)).toBe(true);
+    expect(path.some((t) => t.x >= 5 && t.x <= 9 && t.z >= 5 && t.z <= 9)).toBe(false);
+  });
+
+  it('never starts or ends a belt in the water, and ports facing it are blocked', () => {
+    const s = hilly();
+    const d = place(s, 'press', 18, 22, 1); // a 1×2 press beside the pond, outputs toward +X (into it)
+    const outs = s.portsOf(d.id).filter((p) => p.dir === 'out');
+    expect(outs.every((p) => p.state === 'blocked' && p.blockedBy === 'terrain')).toBe(true);
+    // Aiming at the press starts a belt at its input (west), not at its outputs in the water.
+    const start = startCell(s, [18, 22], [18.95, 22.5]).cell;
+    expect(s.terrain.isWetCell(start[0], start[1])).toBe(false);
+    expect(start[0]).toBeLessThan(18);
   });
 });

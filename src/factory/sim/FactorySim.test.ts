@@ -502,7 +502,7 @@ describe('machine orientation', () => {
     const o = LEGACY_MAP_OFFSET;
     expect(t.cellsFor(m.type, m.x, m.z, m.rot)).toEqual([[5 + o, 5 + o], [5 + o, 6 + o]]);
     expect(t.buildings.get(c.building.id)!.rot).toBe(0); // conveyors untouched
-    expect(t.serialize().version).toBe(3);
+    expect(t.serialize().version).toBe(4);
   });
 });
 

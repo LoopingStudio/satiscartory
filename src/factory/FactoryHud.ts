@@ -518,21 +518,23 @@ export class FactoryHud {
       } else if (own.some((p) => p.state === 'free')) {
         text = dir === 'in' ? 'Entrée non reliée : amène un convoyeur sur une flèche bleue' : 'Sortie non reliée : pose un convoyeur sur une flèche orange, devant la machine';
       } else {
-        // Every port of that side faces something that does not connect (or the map edge).
+        // Every port of that side faces something that does not connect (or the map edge, or ground no
+        // belt can stand on).
         const n = own.map((p) => (p.neighbor !== null ? this.sim.buildings.get(p.neighbor) : undefined)).find((b) => b);
+        const where = own.some((p) => p.blockedBy === 'terrain') ? 'sur une pente trop forte ou sur l’eau' : 'sur le bord de la carte';
         if (dir === 'out') {
           cls = 'bad';
           text = n?.type === 'conveyor'
             ? 'Sortie bloquée : le convoyeur devant pointe vers la machine, repose-le dans l’autre sens'
             : n
               ? `Sortie bloquée (${BUILDINGS[n.type].name}) : libère une case devant la machine`
-              : 'Sortie bloquée : elle donne sur le bord de la carte, tourne ou déplace la machine';
+              : `Sortie bloquée : elle donne ${where}, tourne ou déplace la machine`;
         } else {
           text = n?.type === 'conveyor'
             ? 'Entrée non reliée : le convoyeur derrière ne pointe pas vers la machine'
             : n
               ? `Entrée bloquée (${BUILDINGS[n.type].name}) : libère une case derrière la machine`
-              : 'Entrée bloquée : elle donne sur le bord de la carte, tourne ou déplace la machine';
+              : `Entrée bloquée : elle donne ${where}, tourne ou déplace la machine`;
         }
       }
       return el('div', { class: 'row small' }, el('span', { class: `port-dot port-${dir}` }), el('span', { class: cls }, text));

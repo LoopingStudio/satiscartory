@@ -463,14 +463,15 @@ export class Terrain {
     if (this.cellWet[cx + cz * this.width]) return false;
     const e = this.eff;
     const k = this.vi(cx, cz);
-    const h00 = e[k]!;
-    const h10 = e[k + 1]!;
-    const h01 = e[k + this.nx]!;
-    const h11 = e[k + this.nx + 1]!;
-    const gx = h10 + h11 - h00 - h01;
-    const gz = h01 + h11 - h00 - h10;
-    const R = TERRAIN_RULES.BELT_GRAD * 2;
-    return gx <= R && gx >= -R && gz <= R && gz >= -R && Math.abs(h00 + h11 - h10 - h01) <= TERRAIN_RULES.BELT_TWIST;
+    return beltCorners(e[k]!, e[k + 1]!, e[k + this.nx]!, e[k + this.nx + 1]!);
+  }
+
+  /** Same, if the padded building `extra` were placed too (build ghosts: its banks count). */
+  beltFitsWith(cx: number, cz: number, pads: PadSource, extra: Pad | null): boolean {
+    if (!extra || this.flat) return this.beltFits(cx, cz);
+    if (cx < 0 || cz < 0 || cx >= this.width || cz >= this.height || this.cellWet[cx + cz * this.width]) return false;
+    const h = (i: number, j: number) => this.cornerEff(i, j, pads, extra);
+    return beltCorners(h(cx, cz), h(cx + 1, cz), h(cx, cz + 1), h(cx + 1, cz + 1));
   }
 
   /** Same test on the natural ground (static: build-grid tint, scenery). */
@@ -608,3 +609,11 @@ export class Terrain {
 }
 
 const SCRATCH_GRAD: CellGrad = { gx: 0, gz: 0, twist: 0 };
+
+/** Belt limits on a cell's four corners (cm): gradient along x and z, and twist. */
+function beltCorners(h00: number, h10: number, h01: number, h11: number): boolean {
+  const gx = h10 + h11 - h00 - h01;
+  const gz = h01 + h11 - h00 - h10;
+  const R = TERRAIN_RULES.BELT_GRAD * 2;
+  return gx <= R && gx >= -R && gz <= R && gz >= -R && Math.abs(h00 + h11 - h10 - h01) <= TERRAIN_RULES.BELT_TWIST;
+}

@@ -1,4 +1,4 @@
-import { BUILDINGS } from '../data/buildings';
+import { BUILDINGS, GARAGE_DOOR_SIDE } from '../data/buildings';
 import { FACTORY_CELL } from '../config/constants';
 import { DX, DZ, rotateSide, rotatedSize, type Rot } from '../factory/sim/dirs';
 import type { CarInstance, CarPose } from './assembly';
@@ -12,8 +12,7 @@ export interface GarageSpot {
   rot: Rot;
 }
 
-/** Local side of the garage door (rotation 0: +Z, the short side). */
-export const GARAGE_DOOR_SIDE = 0;
+export { GARAGE_DOOR_SIDE };
 /** Who blocks a garage's bay, from the cars' real footprints (FactoryCars); see carInBay for the pure fallback. */
 export type BayBlocker = (g: Omit<GarageSpot, 'id'>) => CarInstance | null;
 

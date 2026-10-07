@@ -8,7 +8,7 @@ import { FactoryView, SUN_OFFSET } from './view/FactoryView';
 import { SKY } from './view/terrain/SkyDome';
 import { FactoryWorld } from './FactoryWorld';
 import { BUILD_ORDER, FactoryHud } from './FactoryHud';
-import { BuildController, describeError, describeLinks, type Tool } from './build/BuildController';
+import { BuildController, describeError, describeFill, describeLinks, type Tool } from './build/BuildController';
 import { CharacterController } from '../player/CharacterController';
 import { PlayerAvatar } from '../player/PlayerAvatar';
 import { OrbitCamera } from '../player/OrbitCamera';
@@ -139,8 +139,10 @@ export class FactoryMode implements Mode {
       this.state.replaceWith(new GameState(FactorySim.newGame({ terrain: devTerrain })));
       this.state.settings = settings;
       this.state.ephemeral = true;
+      // Dev game: every building unlocked and a well-stocked hub, to try building on the relief.
       this.state.tier = TIERS.length;
       this.sim = this.state.sim;
+      this.sim.give(Object.fromEntries(ITEM_IDS.map((i) => [i, 1000])));
       if (params?.layout === 'demo') spawnDemoFactory(this.sim);
     } else {
       this.sim = this.state.sim;
@@ -331,6 +333,13 @@ export class FactoryMode implements Mode {
     this.hud.showOverlay(true, false);
     this.hud.updateStorage();
     this.game.renderer.canvas.addEventListener('click', this.onCanvasClick);
+    // A factory built before the relief, loaded on it: once (the next save stores the pad heights).
+    const migrated = this.sim.migration;
+    if (migrated?.padded) {
+      const lake = migrated.inWater ? `, ${migrated.inWater} dans le lac sur un remblai` : '';
+      toast(`Nouvelle carte avec du relief : tes bâtiments ont été posés sur des fondations${lake}`, 'info', 6000);
+      this.sim.migration = null;
+    }
   }
 
   private applySettings(): void {
@@ -981,7 +990,8 @@ export class FactoryMode implements Mode {
       const err = check && !check.ok ? `<span class="bad">${describeError(check)}</span> · ` : '';
       const links = describeLinks(this.build.lastLinks);
       const name = BUILDINGS[t.type].name;
-      const status = `${err}<b>${name}</b>${links ? ` · ${links}` : ''}`;
+      const fill = describeFill(check);
+      const status = `${err}<b>${name}</b>${fill ? ` <span class="muted">${fill}</span>` : ''}${links ? ` · ${links}` : ''}`;
       const place = t.type === 'conveyor'
         ? pad ? `${padGlyph('rt')} maintenu : tracer` : 'clic gauche maintenu : tracer'
         : pad ? `${padGlyph('rt')} poser` : 'clic gauche : poser';

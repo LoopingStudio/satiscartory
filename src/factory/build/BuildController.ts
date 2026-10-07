@@ -17,6 +17,7 @@ import type { Wallet } from '../../state/Inventory';
 import { countLabel, type Inventory, type ItemId } from '../../data/items';
 import { HAND } from '../../data/balance';
 import type { ResourceId } from '../../data/factoryMap';
+import { TERRAIN_RULES } from '../../data/factoryTerrain';
 
 export type Tool = { kind: 'none' } | { kind: 'build'; type: BuildingType } | { kind: 'dismantle' };
 
@@ -67,7 +68,7 @@ export type BuildCheck = Omit<PlaceCheck, 'error'> & { error?: PlaceCheck['error
 export interface LinkSummary {
   from: BuildingType[];
   to: BuildingType[];
-  blockedBy: BuildingType | 'edge' | null;
+  blockedBy: BuildingType | 'edge' | 'terrain' | null;
   steals: BuildingType[];
 }
 
@@ -80,8 +81,37 @@ export function describeLinks(s: LinkSummary | null): string {
   if (s.to.length) parts.push(`alimente : ${names(s.to)}`);
   const ok = parts.length ? `<span class="good">✓ ${parts.join(' · ')}</span>` : '';
   const steal = s.steals.length ? `<span class="bad">⚠ prend la sortie de : ${names(s.steals)} (sa ligne actuelle n’aura plus rien)</span>` : '';
-  const bad = s.blockedBy === 'edge' ? '<span class="bad">✕ sortie vers le bord de la carte</span>' : s.blockedBy ? `<span class="bad">✕ sortie bloquée par : ${BUILDINGS[s.blockedBy].name}</span>` : '';
+  const bad =
+    s.blockedBy === 'edge'
+      ? '<span class="bad">✕ sortie vers le bord de la carte</span>'
+      : s.blockedBy === 'terrain'
+        ? '<span class="bad">✕ sortie vers une pente trop forte ou l’eau : aucun convoyeur n’y tient</span>'
+        : s.blockedBy
+          ? `<span class="bad">✕ sortie bloquée par : ${BUILDINGS[s.blockedBy].name}</span>`
+          : '';
   return [ok, steal, bad].filter(Boolean).join(' · ');
+}
+
+/** Slope of a gradient in cm per 2 m cell, in whole degrees. */
+function degrees(cmPerCell: number): number {
+  return Math.round((Math.atan(cmPerCell / 200) * 180) / Math.PI);
+}
+
+/** Centimeters as « 1,2 m ». */
+function meters(cm: number): string {
+  return `${(cm / 100).toFixed(1).replace('.', ',')} m`;
+}
+
+/**
+ * Earthworks of a placeable padded building, from 25 cm: « fondation +0,4 m » where its pad stands above
+ * the ground, « déblai 0,6 m » where it is dug in.
+ */
+export function describeFill(check: BuildCheck | null): string {
+  if (!check?.ok) return '';
+  const parts: string[] = [];
+  if ((check.fill ?? 0) >= 25) parts.push(`fondation +${meters(check.fill!)}`);
+  if ((check.cut ?? 0) >= 25) parts.push(`déblai ${meters(check.cut!)}`);
+  return parts.join(' · ');
 }
 
 export function describeError(check: BuildCheck): string {
@@ -96,6 +126,25 @@ export function describeError(check: BuildCheck): string {
       return 'La foreuse doit être posée sur un gisement';
     case 'notBuildable':
       return 'Non constructible';
+    case 'water':
+      return 'Dans l’eau : impossible de construire ici';
+    case 'steep': {
+      const R = TERRAIN_RULES;
+      switch (check.detail) {
+        case 'belt':
+          return `Trop en pente pour un convoyeur : ${degrees(check.grad ?? 0)}° (${degrees(R.BELT_GRAD)}° au plus)`;
+        case 'twist':
+          return 'Sol trop tordu pour un convoyeur';
+        case 'relief':
+          return `Trop de dénivelé sous le bâtiment : ${meters(check.relief ?? 0)} (${meters(R.PAD_RELIEF)} au plus)`;
+        case 'cut':
+          return `Trop de terre à creuser ou remblayer : ${meters(check.cutFill ?? 0)} (${meters(R.PAD_CUT_FILL)} au plus)`;
+        case 'door':
+          return 'Devant la porte, le sol est trop en pente pour sortir en voiture';
+        default:
+          return `Terrain trop en pente : ${degrees(check.grad ?? 0)}° (${degrees(R.PAD_GRAD)}° au plus sous un bâtiment)`;
+      }
+    }
     case 'cost': {
       const parts = Object.entries(check.missing ?? {}).map(([i, n]) => countLabel(i as ItemId, n ?? 0));
       return `Il manque ${parts.join(', ')}`;
@@ -333,7 +382,7 @@ export class BuildController {
     // port only); when every output faces a building or the map edge, a red cross over its output face.
     // A splitter outputs through all its ports: none is hidden for another.
     const outLinked = !!links[0]!.out && !BUILDINGS[type].multiOut;
-    let blocked: BuildingType | 'edge' | null = null;
+    let blocked: BuildingType | 'edge' | 'terrain' | null = null;
     const faces: [number, number][] = [];
     if (!links[0]!.out) {
       const fronts = ports.filter((p) => p.dir === 'out').map((p) => {
@@ -341,9 +390,12 @@ export class BuildController {
         faces.push([(w.cx + 0.5 + DX[w.side] * 0.3) * FACTORY_CELL, (w.cz + 0.5 + DZ[w.side] * 0.3) * FACTORY_CELL]);
         const nx = w.cx + DX[w.side];
         const nz = w.cz + DZ[w.side];
-        return this.sim.inBounds(nx, nz) ? (this.sim.at(nx, nz)?.type ?? 'free') : 'edge';
+        if (!this.sim.inBounds(nx, nz)) return 'edge';
+        return this.sim.at(nx, nz)?.type ?? (this.sim.beltFitsBeside(nx, nz, plan[0]!, this.lastCheck?.py) ? 'free' : 'terrain');
       });
-      if (fronts.length && !fronts.includes('free')) blocked = (fronts.find((f) => f !== 'edge') as BuildingType | undefined) ?? 'edge';
+      if (fronts.length && !fronts.includes('free')) {
+        blocked = (fronts.find((f) => f !== 'edge' && f !== 'terrain') as BuildingType | undefined) ?? (fronts.includes('terrain') ? 'terrain' : 'edge');
+      }
     }
     this.ghostPorts.forEach((marker, i) => {
       const p = ports[i]!;
@@ -351,7 +403,9 @@ export class BuildController {
       // Blocked outputs: their markers would sit inside the blocking building, the cross shows instead
       // (a splitter: each unlinked output facing a building).
       const w = this.sim.portWorld(plan[0]!, p.cell, p.side);
-      const faced = !!this.sim.at(w.cx + DX[w.side], w.cz + DZ[w.side]);
+      const fx = w.cx + DX[w.side];
+      const fz = w.cz + DZ[w.side];
+      const faced = !!this.sim.at(fx, fz) || (this.sim.inBounds(fx, fz) && !this.sim.beltFitsBeside(fx, fz, plan[0]!, this.lastCheck?.py));
       marker.visible = !(p.dir === 'out' && ((outLinked && !linked) || blocked || (!linked && faced && BUILDINGS[type].multiOut)));
       marker.setColor(linked ? 'linked' : p.dir);
     });
@@ -416,9 +470,13 @@ export class BuildController {
       }
       const p = plan[i]!;
       if (marks && i === plan.length - 1 && p.type === 'conveyor' && !l.out) {
-        const front = this.sim.at(p.x + DX[p.rot], p.z + DZ[p.rot]);
-        if (front) {
-          summary.blockedBy = front.type;
+        const fx = p.x + DX[p.rot];
+        const fz = p.z + DZ[p.rot];
+        const front = this.sim.at(fx, fz);
+        // A building that refuses its items, or ground no belt can stand on: the line can never go on.
+        const stuck = front ? front.type : this.sim.inBounds(fx, fz) && !this.sim.beltFits(fx, fz) ? 'terrain' : null;
+        if (stuck) {
+          summary.blockedBy = stuck;
           const f = 0.4 * FACTORY_CELL;
           this.deadMark.position.set((p.x + 0.5) * FACTORY_CELL + DX[p.rot] * f, POINTER_Y, (p.z + 0.5) * FACTORY_CELL + DZ[p.rot] * f);
           this.deadMark.visible = true;
@@ -760,9 +818,11 @@ export class BuildController {
     // Nothing placed: the reason the HUD gave (veto, taken cell, missing plates) rather than the last one met.
     const reason = this.lastCheck && !this.lastCheck.ok ? this.lastCheck : lastError;
     this.clearDrag();
-    const front = last && this.sim.isDeadEnd(last.id) ? this.sim.at(last.x + DX[last.rot], last.z + DZ[last.rot]) : undefined;
+    const dead = !!last && this.sim.isDeadEnd(last.id);
+    const front = dead ? this.sim.at(last!.x + DX[last!.rot], last!.z + DZ[last!.rot]) : undefined;
     const label = `${placed} convoyeur${placed > 1 ? 's' : ''} posé${placed > 1 ? 's' : ''}`;
     if (placed && front) this.onMessage?.(`${label}, mais le dernier bute contre : ${BUILDINGS[front.type].name}`, 'error');
+    else if (placed && dead) this.onMessage?.(`${label}, mais le dernier bute contre un relief`, 'error');
     else if (placed) this.onMessage?.(label, 'success');
     else if (reason) this.onMessage?.(describeError(reason), 'error');
     this.onChange?.();

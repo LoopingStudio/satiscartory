@@ -36,9 +36,15 @@ export function steals(sim: FactorySim, feeder: { id: number }): boolean {
   return !!b && !BUILDINGS[b.type].multiOut && !!sim.linkOf(feeder.id);
 }
 
-/** Runs into a building that refuses its items (front onto a machine's wall or output, head-on belt). */
+/**
+ * Runs into a building that refuses its items (front onto a machine's wall or output, head-on belt), or
+ * onto ground no belt can stand on (steep slope, water).
+ */
 function deadEnd(sim: FactorySim, x: number, z: number, rot: Rot, l: PlanLinks): boolean {
-  return !l.out && !!sim.at(x + DX[rot], z + DZ[rot]);
+  if (l.out) return false;
+  const fx = x + DX[rot];
+  const fz = z + DZ[rot];
+  return !!sim.at(fx, fz) || (sim.inBounds(fx, fz) && !sim.beltFits(fx, fz));
 }
 
 /** Rotation distance between two rotations (0..2). */
@@ -97,7 +103,7 @@ function portCells(sim: FactorySim, b: Building, dir: 'in' | 'out'): [number, nu
       for (let s = 0; s < 4; s++) {
         const nx = cx + DX[s];
         const nz = cz + DZ[s];
-        if (sim.inBounds(nx, nz) && !sim.at(nx, nz)) cells.push([nx, nz]);
+        if (freeCell(sim, nx, nz)) cells.push([nx, nz]);
       }
     }
     return cells;
@@ -251,9 +257,9 @@ function lPath(a: readonly [number, number], b: readonly [number, number], xFirs
   return cells;
 }
 
-/** Can a conveyor stand there (on the map, nothing built)? */
+/** Can a conveyor stand there (on the map, nothing built, ground not too steep, dry)? */
 function freeCell(sim: FactorySim, x: number, z: number): boolean {
-  return sim.inBounds(x, z) && !sim.at(x, z);
+  return sim.inBounds(x, z) && !sim.at(x, z) && sim.beltFits(x, z);
 }
 
 /**

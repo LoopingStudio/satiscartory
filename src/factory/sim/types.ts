@@ -2,6 +2,7 @@ import type { BuildingType, Side } from '../../data/buildings';
 import type { Inventory, ItemId } from '../../data/items';
 import type { ResourceId } from '../../data/factoryMap';
 import type { Rot } from './dirs';
+import type { TerrainId } from '../../data/factoryTerrain';
 
 export interface BeltItem {
   item: ItemId;
@@ -22,6 +23,11 @@ interface Base {
   rot: Rot;
   /** Placed without paying (dev layouts): dismantling refunds no cost. */
   free?: true;
+  /**
+   * Pad height (cm) of a padded building on a relief map: its footprint's ground is leveled to it.
+   * Absent on flat maps and on belt pieces.
+   */
+  py?: number;
 }
 
 export interface ConveyorB extends Base {
@@ -117,14 +123,19 @@ export interface PortInfo {
   state: 'linked' | 'blocked' | 'unused' | 'free';
   /** Building in front of the port, if any. */
   neighbor: number | null;
+  /** Blocked without a building in front: the map edge, or ground no belt can stand on (slope, water). */
+  blockedBy?: 'edge' | 'terrain';
 }
 
 export interface FactorySave {
   /**
    * 1: machines 1×2, items along their length. 2: machines 2×1, items across.
-   * 3: 128×128 map (older saves are shifted by LEGACY_MAP_OFFSET). Migrated on load.
+   * 3: 128×128 map (older saves are shifted by LEGACY_MAP_OFFSET). 4: relief, `py` (cm) of the padded
+   * buildings. Migrated on load.
    */
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
+  /** Relief the factory was built on (absent: the default map's). */
+  terrain?: TerrainId;
   tick: number;
   nextId: number;
   storage: Inventory;
@@ -133,7 +144,7 @@ export interface FactorySave {
   buildings: Building[];
 }
 
-export type PlaceError = 'outOfBounds' | 'occupied' | 'needsNode' | 'cost' | 'notBuildable';
+export type PlaceError = 'outOfBounds' | 'occupied' | 'needsNode' | 'cost' | 'notBuildable' | 'water' | 'steep';
 
 export interface PlaceCheck {
   ok: boolean;
@@ -143,6 +154,22 @@ export interface PlaceCheck {
   missing?: Inventory;
   /** For drills: which resource the drill would mine. */
   resource?: ResourceId | null;
+  /** Relief map, padded building: its pad height (cm). */
+  py?: number;
+  /** Relief map: steepest footprint cell, in cm per 2 m cell (natural ground under a pad, current one under a belt). */
+  grad?: number;
+  /** Relief map, padded building: highest minus lowest natural corner (cm). */
+  relief?: number;
+  /** Relief map, padded building: deepest fill under the pad (pad − lowest corner) and cut (highest corner − pad), cm. */
+  fill?: number;
+  cut?: number;
+  /** The larger of the two (cm). */
+  cutFill?: number;
+  /**
+   * Why 'steep': a cell too steep under a pad (slope), too much relief under it (relief), too much to dig or
+   * fill (cut), the ground in front of a garage door (door); a belt's cell too steep (belt) or twisted (twist).
+   */
+  detail?: 'slope' | 'relief' | 'cut' | 'door' | 'belt' | 'twist';
 }
 
 export type BuildingTypeOf<T extends BuildingType> = Extract<Building, { type: T }>;

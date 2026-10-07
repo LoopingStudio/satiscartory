@@ -1,12 +1,12 @@
 import { BELT, DRILL, MACHINE, NODE, START_STORAGE } from '../../data/balance';
-import { BUILDINGS, isBelt, type BuildingType, type Side } from '../../data/buildings';
+import { BUILDINGS, GARAGE_DOOR_SIDE, isBelt, isPadded, type BuildingType, type Side } from '../../data/buildings';
 import { FACTORY_MAP, LEGACY_MAP_OFFSET, RESOURCES, type ResourceId, type ResourceNode } from '../../data/factoryMap';
 import { FACTORY_GRID_H, FACTORY_GRID_W } from '../../config/constants';
 import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
-import { FACTORY_TERRAIN_DEFAULT, type TerrainId } from '../../data/factoryTerrain';
-import { Terrain } from './terrain';
+import { FACTORY_TERRAIN_DEFAULT, TERRAIN_RULES, type TerrainId } from '../../data/factoryTerrain';
+import { Terrain, isTerrainId, type Pad, type PadSource } from './terrain';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
 import { isMachine, isNode, isProducer, type NodeB, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
 
@@ -15,6 +15,16 @@ export interface SimEvents extends Record<string, unknown> {
   removed: Building;
   /** Links between buildings changed (conveyor shapes may change). */
   topology: undefined;
+  /** The ground changed (a padded building placed or removed): corners [i0, i1] × [j0, j1]. */
+  terrain: TerrainRect;
+}
+
+/** Inclusive rectangle of lattice corners (grid coordinates). */
+export interface TerrainRect {
+  i0: number;
+  j0: number;
+  i1: number;
+  j1: number;
 }
 
 export interface FactorySimOptions {
@@ -41,7 +51,7 @@ const RESOURCE_IDS = Object.keys(RESOURCES) as ResourceId[];
  * Deterministic, grid-based factory simulation. Pure TypeScript: integers only,
  * iteration in id order, no wall-clock. Runs at FACTORY_HZ ticks per second.
  */
-export class FactorySim {
+export class FactorySim implements PadSource {
   readonly width: number;
   readonly height: number;
   /** Building id per cell (0 = empty). */
@@ -76,6 +86,10 @@ export class FactorySim {
   private topoDirty = true;
   /** Transient (within one tick): items inserted onto belts that must not move until the next tick. */
   private fresh = new Set<BeltItem>();
+  /** Footprint (corner rectangle) and pad height of every padded building. */
+  private readonly pads = new Map<number, Pad>();
+  /** Set by fromSave on a relief map: padded buildings given a pad height, and those standing in the lake. */
+  migration: { padded: number; inWater: number } | null = null;
 
   constructor(opts: FactorySimOptions = {}) {
     this.width = opts.width ?? FACTORY_GRID_W;
@@ -123,6 +137,103 @@ export class FactorySim {
     if (!this.inBounds(x, z)) return null;
     const v = this.nodeGrid[this.idx(x, z)]!;
     return v ? RESOURCE_IDS[v - 1]! : null;
+  }
+
+  // ---------------------------------------------------------------- relief
+
+  padIdAt(cx: number, cz: number): number {
+    if (!this.inBounds(cx, cz)) return 0;
+    const id = this.grid[this.idx(cx, cz)]!;
+    return id && this.pads.has(id) ? id : 0;
+  }
+
+  pad(id: number): Pad | undefined {
+    return this.pads.get(id);
+  }
+
+  /** A belt piece can stand on cell (x, z): on the map, dry, not too steep. */
+  beltFits(x: number, z: number): boolean {
+    return this.terrain.beltFits(x, z);
+  }
+
+  /** Same, with a planned padded building's banks (its py from check()): what a ghost's ports would face. */
+  beltFitsBeside(x: number, z: number, plan: Placement | null, py: number | undefined): boolean {
+    if (!plan || py === undefined || !isPadded(plan.type)) return this.beltFits(x, z);
+    return this.terrain.beltFitsWith(x, z, this, { ...this.padRect(plan.type, plan.x, plan.z, plan.rot), py });
+  }
+
+  /** Corner rectangle of a footprint. */
+  private padRect(type: BuildingType, x: number, z: number, rot: Rot): { x0: number; z0: number; x1: number; z1: number } {
+    const [w, h] = BUILDINGS[type].footprint;
+    const [rw, rh] = rotatedSize(w, h, rot);
+    return { x0: x, z0: z, x1: x + rw, z1: z + rh };
+  }
+
+  /** Pad heights of the padded buildings beside a footprint (sharing an edge with it), in id order. */
+  private neighborPads(cells: [number, number][]): number[] {
+    const own = new Set(cells.map(([cx, cz]) => this.idx(cx, cz)));
+    const ids = new Set<number>();
+    for (const [cx, cz] of cells) {
+      for (let s = 0; s < 4; s++) {
+        const nx = cx + DX[s];
+        const nz = cz + DZ[s];
+        if (!this.inBounds(nx, nz) || own.has(this.idx(nx, nz))) continue;
+        const id = this.padIdAt(nx, nz);
+        if (id) ids.add(id);
+      }
+    }
+    return [...ids].sort((a, b) => a - b).map((id) => this.pads.get(id)!.py);
+  }
+
+  /**
+   * Ground under a planned padded building: its pad height and how much it asks of the natural ground
+   * (steepest cell, relief, cut or fill), all in cm.
+   */
+  padPlan(type: BuildingType, x: number, z: number, rot: Rot): { py: number; grad: number; relief: number; fill: number; cut: number; cutFill: number } {
+    const t = this.terrain;
+    const r = this.padRect(type, x, z, rot);
+    const cells = this.cellsFor(type, x, z, rot);
+    const py = t.padRule(r.x0, r.z0, r.x1, r.z1, this.neighborPads(cells));
+    const st = t.padStats(r.x0, r.z0, r.x1, r.z1);
+    let grad = 0;
+    const g = { gx: 0, gz: 0, twist: 0 };
+    for (const [cx, cz] of cells) {
+      t.cellGrad(cx, cz, g, true);
+      grad = Math.max(grad, Math.abs(g.gx), Math.abs(g.gz));
+    }
+    const fill = Math.max(0, py - st.min);
+    const cut = Math.max(0, st.max - py);
+    return { py, grad, relief: st.max - st.min, fill, cut, cutFill: Math.max(fill, cut) };
+  }
+
+  /**
+   * Cells in front of a planned garage's door that a car drives out on (on the map, free), whose ground
+   * (with the planned pad's banks) rises or falls more than DOOR_RISE across the cell.
+   */
+  private doorTooSteep(x: number, z: number, rot: Rot, py: number): boolean {
+    const t = this.terrain;
+    const cells = this.cellsFor('garage', x, z, rot);
+    const pad: Pad = { ...this.padRect('garage', x, z, rot), py };
+    const side = rotateSide(GARAGE_DOOR_SIDE, rot);
+    const inside = new Set(cells.map(([cx, cz]) => `${cx},${cz}`));
+    for (const [cx, cz] of cells) {
+      const fx = cx + DX[side];
+      const fz = cz + DZ[side];
+      if (inside.has(`${fx},${fz}`) || !this.inBounds(fx, fz) || this.grid[this.idx(fx, fz)]) continue;
+      // Near and far edges of the front cell, across the door.
+      const [n0, n1, f0, f1] = EDGES[side]!.map(([dx, dz]) => t.effWith(fx + dx, fz + dz, this, pad));
+      if (Math.abs((f0! + f1!) / 2 - (n0! + n1!) / 2) > TERRAIN_RULES.DOOR_RISE) return true;
+    }
+    return false;
+  }
+
+  /** Re-levels the ground around a pad (placed or removed): the corners that changed, or null on a flat map. */
+  private reshape(p: Pad): TerrainRect | null {
+    if (this.terrain.flat) return null;
+    const K = TERRAIN_RULES.BANK_STEPS;
+    const rect = { i0: p.x0 - K, j0: p.z0 - K, i1: p.x1 + K, j1: p.z1 + K };
+    this.terrain.recompute(rect.i0, rect.j0, rect.i1, rect.j1, this);
+    return rect;
   }
 
   /** World cells covered by a building of this type at (x, z, rot). */
@@ -297,19 +408,45 @@ export class FactorySim {
     for (const [cx, cz] of cells) {
       if (this.grid[this.idx(cx, cz)]) return { ok: false, error: 'occupied', cells };
     }
+    // Relief (never bypassed, not even by `force`).
+    const t = this.terrain;
+    let py: number | undefined;
+    let fill: number | undefined;
+    let grad: number | undefined;
+    let relief: number | undefined;
+    let cut: number | undefined;
+    if (!t.flat) {
+      if (cells.some(([cx, cz]) => t.isWetCell(cx, cz))) return { ok: false, error: 'water', cells };
+      if (isBelt(type)) {
+        const g = { gx: 0, gz: 0, twist: 0 };
+        grad = 0;
+        for (const [cx, cz] of cells) grad = Math.max(grad, Math.abs(t.cellGrad(cx, cz, g).gx), Math.abs(g.gz));
+        if (cells.some(([cx, cz]) => !t.beltFits(cx, cz))) return { ok: false, error: 'steep', detail: grad > TERRAIN_RULES.BELT_GRAD ? 'belt' : 'twist', cells, grad };
+      } else {
+        const plan = this.padPlan(type, x, z, rot);
+        ({ py, grad, relief, fill, cut } = plan);
+        const { cutFill } = plan;
+        const R = TERRAIN_RULES;
+        const bad = (detail: 'slope' | 'relief' | 'cut' | 'door'): PlaceCheck => ({ ok: false, error: 'steep', detail, cells, py, grad, relief, fill, cut, cutFill });
+        if (plan.grad > R.PAD_GRAD) return bad('slope');
+        if (plan.relief > R.PAD_RELIEF) return bad('relief');
+        if (plan.cutFill > R.PAD_CUT_FILL) return bad('cut');
+        if (type === 'garage' && this.doorTooSteep(x, z, rot, plan.py)) return bad('door');
+      }
+    }
     let resource: ResourceId | null = null;
     if (def.needsNode) {
       for (const [cx, cz] of cells) {
         resource = this.resourceAt(cx, cz);
         if (resource) break;
       }
-      if (!resource) return { ok: false, error: 'needsNode', cells, resource: null };
+      if (!resource) return { ok: false, error: 'needsNode', cells, resource: null, py, grad, relief, fill, cut };
     }
     if (!opts.free) {
       const missing = this.missingIn(opts.wallet ?? this.hub, def.cost);
-      if (missing) return { ok: false, error: 'cost', cells, missing, resource };
+      if (missing) return { ok: false, error: 'cost', cells, missing, resource, py, grad, relief, fill, cut };
     }
-    return { ok: true, cells, resource };
+    return { ok: true, cells, resource, py, grad, relief, fill, cut };
   }
 
   place(
@@ -328,8 +465,10 @@ export class FactorySim {
     const id = this.nextId++;
     const b = this.makeBuilding(type, id, x, z, rot, check.resource ?? null);
     if (opts.free) b.free = true;
-    this.insert(b);
+    if (check.py !== undefined) b.py = check.py;
+    const rect = this.insert(b);
     this.events.emit('placed', b);
+    if (rect) this.events.emit('terrain', rect);
     return { ok: true, building: b };
   }
 
@@ -357,10 +496,15 @@ export class FactorySim {
     return type === 'splitter' ? BUILDINGS.splitter.ports.filter((p) => p.dir === 'out').map(() => null) : [];
   }
 
-  private insert(b: Building): void {
+  /** Puts a building on the grid; a padded one levels the ground (unless `silent`: loading). */
+  private insert(b: Building, silent = false): TerrainRect | null {
     this.buildings.set(b.id, b);
     for (const [cx, cz] of this.cellsFor(b.type, b.x, b.z, b.rot)) this.grid[this.idx(cx, cz)] = b.id;
     this.topoDirty = true;
+    if (!isPadded(b.type)) return null;
+    const pad = { ...this.padRect(b.type, b.x, b.z, b.rot), py: b.py ?? 0 };
+    this.pads.set(b.id, pad);
+    return silent ? null : this.reshape(pad);
   }
 
   /** Dismantles a building, refunding its cost and any items it holds (to `sink` first, overflow to the hub). */
@@ -369,11 +513,15 @@ export class FactorySim {
     if (!b || !BUILDINGS[b.type].buildable) return false;
     for (const [cx, cz] of this.cellsFor(b.type, b.x, b.z, b.rot)) this.grid[this.idx(cx, cz)] = 0;
     this.buildings.delete(id);
+    const pad = this.pads.get(id);
+    this.pads.delete(id);
+    const rect = pad ? this.reshape(pad) : null;
     // Buildings placed for free (dev layouts) refund nothing for their cost.
     if (!b.free) for (const [item, n] of Object.entries(BUILDINGS[b.type].cost) as [ItemId, number][]) this.refund(item, n, sink);
     this.refundContents(b, sink);
     this.topoDirty = true;
     this.events.emit('removed', b);
+    if (rect) this.events.emit('terrain', rect);
     return true;
   }
 
@@ -589,8 +737,10 @@ export class FactorySim {
       // A building outputs through one port only (the first that links): with an output linked, its other
       // outputs are unused even with nothing in front (a belt there would get nothing, or steal the output).
       // A splitter uses them all.
-      const state = linked ? 'linked' : !this.inBounds(nx, nz) || neighbor ? 'blocked' : p.dir === 'out' && link && !multi ? 'unused' : 'free';
-      return { cx: w.cx, cz: w.cz, side: w.side, dir: p.dir, state, neighbor: neighbor?.id ?? null };
+      // No belt can stand in front (map edge, steep slope, water): blocked too.
+      const blockedBy = neighbor ? undefined : !this.inBounds(nx, nz) ? 'edge' : !this.beltFits(nx, nz) ? 'terrain' : undefined;
+      const state = linked ? 'linked' : neighbor || blockedBy ? 'blocked' : p.dir === 'out' && link && !multi ? 'unused' : 'free';
+      return { cx: w.cx, cz: w.cz, side: w.side, dir: p.dir, state, neighbor: neighbor?.id ?? null, ...(blockedBy && !linked ? { blockedBy } : {}) };
     });
   }
 
@@ -602,12 +752,15 @@ export class FactorySim {
 
   /**
    * A conveyor whose front runs into a building that refuses its items (a machine's wall or output,
-   * a belt coming head-on…): items pile up at its end forever. A front onto empty ground is not one.
+   * a belt coming head-on…), or onto ground no belt can stand on (steep slope, water): items pile up at
+   * its end forever. A front onto empty ground (a line in progress) or off the map is not one.
    */
   isDeadEnd(id: number): boolean {
     const c = this.buildings.get(id);
     if (!c || c.type !== 'conveyor' || this.linkOf(id)) return false;
-    return !!this.at(c.x + DX[c.rot], c.z + DZ[c.rot]);
+    const fx = c.x + DX[c.rot];
+    const fz = c.z + DZ[c.rot];
+    return !!this.at(fx, fz) || (this.inBounds(fx, fz) && !this.beltFits(fx, fz));
   }
 
   /**
@@ -865,8 +1018,12 @@ export class FactorySim {
 
   serialize(): FactorySave {
     const buildings = [...this.buildings.values()].sort((a, b) => a.id - b.id);
+    // The relief id is written once the real map has relief (or for a relief game): a flat save from
+    // before then lands on the default map's relief when loaded.
+    const terrain = this.terrain.id !== 'flat' || FACTORY_TERRAIN_DEFAULT !== 'flat' ? this.terrain.id : undefined;
     return structuredCloneJSON({
-      version: 3,
+      version: 4,
+      terrain,
       tick: this.tickCount,
       nextId: this.nextId,
       storage: this.storage,
@@ -876,8 +1033,15 @@ export class FactorySim {
     });
   }
 
-  static fromSave(save: FactorySave, opts: Omit<FactorySimOptions, 'hub' | 'storage'> = { nodes: FACTORY_MAP.nodes }): FactorySim {
-    const sim = new FactorySim({ ...opts, hub: null });
+  /**
+   * Rebuilds a sim from a save. Relief: `opts.terrain`, else the save's, else the default map's. Padded
+   * buildings without a pad height (saves from before the relief) get one, those standing in the lake on
+   * fill above the water: no building is ever lost to the relief.
+   */
+  static fromSave(save: FactorySave, opts: Omit<FactorySimOptions, 'hub' | 'storage'> = {}): FactorySim {
+    const terrain = opts.terrain ?? (isTerrainId(save.terrain) ? save.terrain : FACTORY_TERRAIN_DEFAULT);
+    const sim = new FactorySim({ nodes: FACTORY_MAP.nodes, ...opts, terrain, hub: null });
+    const migration = { padded: 0, inWater: 0 };
     const data = structuredCloneJSON(save);
     sim.tickCount = data.tick;
     sim.nextId = data.nextId;
@@ -925,7 +1089,22 @@ export class FactorySim {
           }
         }
       }
-      sim.insert(b);
+      if (sim.terrain.flat || !isPadded(b.type)) delete b.py;
+      else if (!Number.isInteger(b.py) || b.py! < -3000 || b.py! > 10000) {
+        const r = sim.padRect(b.type, b.x, b.z, b.rot);
+        b.py = sim.terrain.padRule(r.x0, r.z0, r.x1, r.z1, sim.neighborPads(cells));
+        migration.padded++;
+        const lake = sim.terrain.lake;
+        if (lake && cells.some(([cx, cz]) => sim.terrain.isWetCell(cx, cz))) {
+          b.py = Math.max(b.py, lake.level + 2 * TERRAIN_RULES.WATER_FILL);
+          migration.inWater++;
+        }
+      }
+      sim.insert(b, true);
+    }
+    if (!sim.terrain.flat) {
+      sim.terrain.recomputeAll(sim);
+      sim.migration = migration;
     }
     return sim;
   }
@@ -941,6 +1120,14 @@ export class FactorySim {
     return (h1 >>> 0).toString(16);
   }
 }
+
+/** Per side the door faces: corner offsets of the near edge (2), then the far edge (2), of the cell in front. */
+const EDGES: Record<number, [number, number][]> = {
+  0: [[0, 0], [1, 0], [0, 1], [1, 1]],
+  1: [[0, 0], [0, 1], [1, 0], [1, 1]],
+  2: [[0, 1], [1, 1], [0, 0], [1, 0]],
+  3: [[1, 0], [1, 1], [0, 0], [0, 1]],
+};
 
 /** Cyclic merge order of a conveyor's input sides (back, right, left). */
 const MERGE_ORDER = [2, 1, 3];
