@@ -92,6 +92,20 @@ describe('placement on the relief', () => {
     expect(rise.check('smelter', 15, 11, 0, { free: true }).ok).toBe(true);
   });
 
+  it('measures a door apron under belts (cars cross them), not under a building planned on it', () => {
+    // 20° rising from the door: belts fit on the apron (under 21.8°), a car could not get out.
+    const wall = fixture((_gi, gj) => Math.max(0, gj - 10) * tan(20));
+    for (let x = 5; x <= 7; x++) expect(wall.place('conveyor', x, 10, 1, { free: true }).ok).toBe(true);
+    expect(wall.check('garage', 5, 6, 0, { free: true })).toMatchObject({ ok: false, error: 'steep', detail: 'door' });
+    // A garage built on another garage's apron covers it: accepted in either order.
+    const a = fixture((_gi, gj) => 20 * gj);
+    expect(a.place('garage', 5, 6, 0, { free: true }).ok).toBe(true);
+    expect(a.check('garage', 5, 10, 0, { free: true }).ok).toBe(true);
+    const b = fixture((_gi, gj) => 20 * gj);
+    expect(b.place('garage', 5, 10, 0, { free: true }).ok).toBe(true);
+    expect(b.check('garage', 5, 6, 0, { free: true }).ok).toBe(true);
+  });
+
   it('snaps a row of machines along a slope into terraces', () => {
     const sim = ramp(6); // 21 cm per cell
     const pys: number[] = [];

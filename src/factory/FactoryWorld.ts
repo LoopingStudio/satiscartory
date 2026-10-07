@@ -47,12 +47,12 @@ export class FactoryWorld {
   private decor: DecorLayout | null = null;
   private readonly decorColliders = new Map<number, RAPIER.Collider>();
   private readonly decorHandles = new Set<number>();
-  /** Decor colliders to re-enable once nothing stands in them (a building was dismantled over the player). */
+  /** Decor colliders to enable once nothing stands in them (loaded, or a building dismantled, over the player or a car). */
   private readonly decorPending = new Set<number>();
   /** The last flush rebuilt something (ground, belts): things standing there may need lifting. */
   rebuilt = false;
-  /** Does this collider overlap the player? Set by the factory (never re-enable a trunk inside the player). */
-  overlapsPlayer: ((c: RAPIER.Collider) => boolean) | null = null;
+  /** Does something stand in this collider (the player, a car)? Set by the factory: no trunk ever comes back inside them. */
+  blocksDecor: ((c: RAPIER.Collider) => boolean) | null = null;
   private unsub: (() => void)[] = [];
 
   constructor(private readonly sim: FactorySim) {
@@ -88,7 +88,9 @@ export class FactoryWorld {
           ? RAPIER.ColliderDesc.ball(0.75 * it.scale).setTranslation(it.x, y + 0.15 * it.scale, it.z)
           : RAPIER.ColliderDesc.cylinder(1.5, (it.kind === 'oak' ? 0.35 : it.kind === 'pine' ? 0.28 : 0.2) * it.scale).setTranslation(it.x, y + 1.5, it.z);
         const c = this.physics.world.createCollider(desc.setFriction(0.8));
-        c.setEnabled(!isCleared(this.decor!, i, sim.grid));
+        // Enabled by the first flush, once the factory knows where the player and the cars stand.
+        c.setEnabled(false);
+        if (!isCleared(this.decor!, i, sim.grid)) this.decorPending.add(i);
         this.decorColliders.set(i, c);
         this.decorHandles.add(c.handle);
       });
@@ -130,10 +132,10 @@ export class FactoryWorld {
       area = [d.i0 * FACTORY_CELL, d.j0 * FACTORY_CELL, d.i1 * FACTORY_CELL, d.j1 * FACTORY_CELL];
       this.rebuilt = true;
     }
-    // Decor back where nothing stands any more (not inside the player), and on the changed ground.
+    // Decor back where nothing stands any more (not inside the player or a car), and on the changed ground.
     for (const i of [...this.decorPending]) {
       const c = this.decorColliders.get(i)!;
-      if (this.overlapsPlayer?.(c)) continue;
+      if (this.blocksDecor?.(c)) continue;
       c.setEnabled(true);
       this.decorPending.delete(i);
     }

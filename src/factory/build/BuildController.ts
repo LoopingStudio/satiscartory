@@ -104,14 +104,20 @@ export function describeLinks(s: LinkSummary | null): string {
   return [ok, steal, bad].filter(Boolean).join(' · ');
 }
 
-/** Slope of a gradient in cm per 2 m cell, in whole degrees. */
-function degrees(cmPerCell: number): number {
-  return Math.round((Math.atan(cmPerCell / 200) * 180) / Math.PI);
+/**
+ * Slope of a gradient in cm per 2 m cell, to the tenth of a degree (« 21,8° », « 14° »). `up` rounds a
+ * measured value up: a refused one never prints as its limit (« 21,9° (21,8° au plus) »).
+ */
+function degrees(cmPerCell: number, up = false): string {
+  const d = ((Math.atan(cmPerCell / 200) * 180) / Math.PI) * 10;
+  const tenths = up ? Math.ceil(d - 1e-9) : Math.round(d);
+  return `${(tenths / 10).toFixed(1).replace('.', ',').replace(/,0$/, '')}°`;
 }
 
-/** Centimeters as « 1,2 m ». */
-function meters(cm: number): string {
-  return `${(cm / 100).toFixed(1).replace('.', ',')} m`;
+/** Centimeters as « 1,2 m » (`up`: rounded up, for a measured value refused over a limit). */
+function meters(cm: number, up = false): string {
+  const tenths = up ? Math.ceil(cm / 10 - 1e-9) : Math.round(cm / 10);
+  return `${(tenths / 10).toFixed(1).replace('.', ',')} m`;
 }
 
 /**
@@ -144,19 +150,19 @@ export function describeError(check: BuildCheck): string {
       const R = TERRAIN_RULES;
       switch (check.detail) {
         case 'belt':
-          return `Trop en pente pour un convoyeur : ${degrees(check.grad ?? 0)}° (${degrees(R.BELT_GRAD)}° au plus)`;
+          return `Trop en pente pour un convoyeur : ${degrees(check.grad ?? 0, true)} (${degrees(R.BELT_GRAD)} au plus)`;
         case 'twist':
           return 'Sol trop tordu pour un convoyeur';
         case 'relief':
-          return `Trop de dénivelé sous le bâtiment : ${meters(check.relief ?? 0)} (${meters(R.PAD_RELIEF)} au plus)`;
+          return `Trop de dénivelé sous le bâtiment : ${meters(check.relief ?? 0, true)} (${meters(R.PAD_RELIEF)} au plus)`;
         case 'cut':
-          return `Trop de terre à creuser ou remblayer : ${meters(check.cutFill ?? 0)} (${meters(R.PAD_CUT_FILL)} au plus)`;
+          return `Trop de terre à creuser ou remblayer : ${meters(check.cutFill ?? 0, true)} (${meters(R.PAD_CUT_FILL)} au plus)`;
         case 'door':
           return 'Devant la porte, le sol est trop en pente pour sortir en voiture';
         case 'neighbor':
           return 'Ses talus rendraient trop pentu un convoyeur ou l’entrée d’un garage à côté';
         default:
-          return `Terrain trop en pente : ${degrees(check.grad ?? 0)}° (${degrees(R.PAD_GRAD)}° au plus sous un bâtiment)`;
+          return `Terrain trop en pente : ${degrees(check.grad ?? 0, true)} (${degrees(R.PAD_GRAD)} au plus sous un bâtiment)`;
       }
     }
     case 'cost': {

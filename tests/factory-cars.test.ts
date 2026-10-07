@@ -588,6 +588,87 @@ describe('FactoryCars on the relief', () => {
     expect(Math.abs(spot!.position.y - t.heightAt(spot!.position.x, spot!.position.z))).toBeLessThan(0.15);
   });
 
+  it('a parked car follows the ground down when the pad beside it goes', () => {
+    const state = reliefState(rampX(13));
+    const t = state.sim.terrain;
+    const f = setup(state);
+    const r = state.sim.place('garage', 30, 30, 0, { free: true });
+    expect(r.ok).toBe(true);
+    f.cars.onTerrain(f.fw.flush()!);
+    // On the garage's downhill (fill) bank.
+    const x = 57.4;
+    const z = 64;
+    const before = t.heightAt(x, z);
+    state.cars = [carAt('s', SPORT, { x, y: before, z, yaw: 0 })];
+    f.cars.sync();
+    if (r.ok) state.sim.remove(r.building.id);
+    f.cars.onTerrain(f.fw.flush()!);
+    const after = t.heightAt(x, z);
+    expect(before - after).toBeGreaterThan(0.3);
+    const body = (f.cars as unknown as { entries: Map<string, { body: RAPIER.RigidBody }> }).entries.get('s')!.body;
+    expect(Math.abs(body.translation().y - after)).toBeLessThan(0.15);
+    expect(upYOfQuat(body.rotation())).toBeLessThan(0.995); // still tilted to the slope
+    expect(f.car('s').pose!.y).toBeCloseTo(body.translation().y, 3);
+  });
+
+  it('a car parked under the ground (an old save) stands on it', () => {
+    const state = reliefState(rampX(13));
+    const t = state.sim.terrain;
+    state.cars = [carAt('s', SPORT, { x: 70, y: 0, z: 64, yaw: 0 })];
+    const f = setup(state);
+    const body = (f.cars as unknown as { entries: Map<string, { body: RAPIER.RigidBody }> }).entries.get('s')!.body;
+    expect(t.heightAt(70, 64)).toBeGreaterThan(2);
+    expect(Math.abs(body.translation().y - t.heightAt(70, 64))).toBeLessThan(0.15);
+  });
+
+  it('no getting out in deep water: the car would drown again on every re-entry', () => {
+    // A pond east of x = 34 cells, deepening to 2 m, water level -40 cm: 0.7 m deep at x ≈ 74.6 m.
+    const state = reliefState((gi) => (gi > 40 ? -200 : gi > 34 ? -200 * ((gi - 34) / 6) : 0), -40);
+    const t = state.sim.terrain;
+    const x = 74.6;
+    state.cars = [carAt('s', SPORT, { x, y: t.heightAt(x, 64), z: 64, yaw: 0 })];
+    const f = setup(state);
+    expect(t.waterDepthAt(x, 64)).toBeGreaterThan(FACTORY_CAR.EXIT_WATER);
+    f.cars.enter('s');
+    f.run(0.8);
+    expect(f.cars.exitBlocker()).toBe('water');
+    expect(f.cars.exit()).toBeNull();
+  });
+
+  it('a dismantle never brings a trunk back inside a parked car', () => {
+    const state = new GameState(FactorySim.newGame({ terrain: 'vallonne-1' }));
+    const f = setup(state);
+    f.fw.blocksDecor = (c) => f.cars.overlaps(c);
+    f.fw.flush();
+    const world = f.fw as unknown as { decor: { items: { kind: string; x: number; z: number; solid: boolean }[] }; decorColliders: Map<number, RAPIER.Collider> };
+    // A tree under a placeable smelter.
+    let found: { i: number; cx: number; cz: number } | null = null;
+    world.decor.items.forEach((it, i) => {
+      if (found || !it.solid || it.kind === 'rock') return;
+      const cx = Math.floor(it.x / 2);
+      const cz = Math.floor(it.z / 2);
+      if (state.sim.check('smelter', cx, cz, 0, { free: true }).ok) found = { i, cx, cz };
+    });
+    expect(found).not.toBeNull();
+    const { i, cx, cz } = found!;
+    const trunk = world.decorColliders.get(i)!;
+    const it = world.decor.items[i]!;
+    const r = state.sim.place('smelter', cx, cz, 0, { free: true });
+    expect(trunk.isEnabled()).toBe(false);
+    // A car parked where the trunk stood (beside the smelter, say), then the smelter goes.
+    state.cars = [carAt('s', SPORT, { x: it.x, y: state.sim.terrain.heightAt(it.x, it.z), z: it.z, yaw: 0 })];
+    f.cars.sync();
+    if (r.ok) state.sim.remove(r.building.id);
+    f.cars.onTerrain(f.fw.flush()!);
+    f.fw.flush();
+    expect(trunk.isEnabled()).toBe(false);
+    // The car leaves: the trunk is back.
+    state.cars = [];
+    f.cars.sync();
+    f.fw.flush();
+    expect(trunk.isEnabled()).toBe(true);
+  });
+
   it('in the lake, the water slows the car, then puts it back on dry ground with a message', () => {
     // A pond 2 m deep east of x = 40 cells, water level -40 cm.
     const state = reliefState((gi) => (gi > 40 ? -200 : gi > 34 ? -200 * ((gi - 34) / 6) : 0), -40);

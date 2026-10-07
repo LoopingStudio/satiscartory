@@ -176,9 +176,9 @@ La carte de l'usine est vallonnée : un plateau plat autour du hangar et des pre
 
 - **Poser un bâtiment aplanit le sol** : foreuse, machines, garage reposent sur une dalle de béton à la hauteur moyenne du terrain, entourée d'un talus en terre. Une dalle voisine à 40 cm près donne la même hauteur (une rangée de machines sur une pente fait des terrasses). Le fantôme montre la dalle et l'indication du bas le terrassement (« fondation +0,4 m · déblai 0,5 m »). Le démontage rend le sol d'origine.
 - **Limites** : rien dans l'eau ; sous un bâtiment, 14° au plus et 1,5 m de dénivelé (« Terrain trop en pente : 17° (14° au plus sous un bâtiment) ») ; devant la porte d'un garage, une pente qu'une voiture peut descendre.
-- **Les convoyeurs suivent le sol** sans le modifier : ils montent et descendent jusqu'à 22°, et les objets suivent la pente. Une case trop raide ou dans l'eau compte comme un obstacle : le tracé en L la contourne, et une sortie qui y donne est signalée bloquée.
+- **Les convoyeurs suivent le sol** sans le modifier : ils montent et descendent jusqu'à 21,8°, et les objets suivent la pente. Une case trop raide ou dans l'eau compte comme un obstacle : le tracé en L la contourne, et une sortie qui y donne est signalée bloquée.
 - **Arbres et rochers** : on bute contre les troncs et les gros rochers. Construire dessus les fait disparaître ; ils reviennent quand on démonte.
-- **Voitures** : elles se garent et repartent inclinées sur la pente et tiennent à l'arrêt ; une voiture tombée dans le lac revient au sec. Au-delà de 25°, on ne peut pas descendre.
+- **Voitures** : elles se garent et repartent inclinées sur la pente et tiennent à l'arrêt ; une voiture tombée dans le lac revient au sec. On ne descend pas au-delà de 25° de pente, ni dans plus de 50 cm d'eau.
 - Une ancienne sauvegarde (construite à plat) garde tous ses bâtiments : ils sont posés sur des fondations, et un message l'explique au premier chargement.
 
 ## Garage et voitures

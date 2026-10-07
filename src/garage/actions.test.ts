@@ -36,7 +36,24 @@ describe('garage actions', () => {
     expect(s.objectives.assembled).toBe(true);
   });
 
-  it('refuses an occupied bay or missing parts without paying or numbering anything', () => {
+  it('on the relief, the car stands on its garage’s pad, even from a spot without its height', () => {
+    const s = stocked();
+    // A garage off the plateau that the relief raises by 1 m or more.
+    let placed: { id: number; x: number; z: number; py: number } | null = null;
+    for (let z = 4; z < 60 && !placed; z += 2) {
+      for (let x = 4; x < 60 && !placed; x += 2) {
+        const c = s.sim.check('garage', x, z, 0, { free: true });
+        if (!c.ok || (c.py ?? 0) < 100) continue;
+        const r = s.sim.place('garage', x, z, 0, { free: true });
+        if (r.ok) placed = { id: r.building.id, x, z, py: r.building.py! };
+      }
+    }
+    expect(placed).not.toBeNull();
+    const car = assembleCar(s, 'kart', KART, { id: placed!.id, x: placed!.x, z: placed!.z, rot: 0 })!;
+    expect(car.pose!.y).toBeCloseTo(placed!.py / 100, 9);
+  });
+
+    it('refuses an occupied bay or missing parts without paying or numbering anything', () => {
     const s = stocked();
     assembleCar(s, 'kart', KART, g1);
     const before = partStock(s);

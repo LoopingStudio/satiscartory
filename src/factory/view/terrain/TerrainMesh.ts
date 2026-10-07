@@ -28,6 +28,54 @@ function axis(cells: number, margin: number): { coords: Float64Array; first: num
   return { coords: Float64Array.from([...before, ...inner, ...after]), first: before.length };
 }
 
+const axes = new Map<string, ReturnType<typeof axis>>();
+function axisCached(cells: number, margin: number): ReturnType<typeof axis> {
+  const key = `${cells}|${margin}`;
+  let a = axes.get(key);
+  if (!a) axes.set(key, (a = axis(cells, margin)));
+  return a;
+}
+
+/** Index of the last coordinate ≤ v (clamped to a whole quad). */
+function quadOf(coords: Float64Array, v: number): number {
+  let lo = 0;
+  let hi = coords.length - 2;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (coords[mid]! <= v) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * Natural ground (m) at (x, z) as the mesh draws it: between its far-band corners too, where the height
+ * function itself can rise metres above the flat triangles (ridge crests). Scenery past the lattice stands
+ * on this, not on Terrain.farHeight.
+ */
+export function drawnHeight(t: Terrain, x: number, z: number): number {
+  const ax = axisCached(t.width, t.margin);
+  const az = axisCached(t.height, t.margin);
+  const i = quadOf(ax.coords, x);
+  const j = quadOf(az.coords, z);
+  const corner = (ii: number, jj: number) => {
+    const a = ii - ax.first;
+    const b = jj - az.first;
+    return a >= 0 && b >= 0 && a < t.nx && b < t.nz ? t.base[a + b * t.nx]! / 100 : t.farHeight(ax.coords[ii]!, az.coords[jj]!);
+  };
+  const x0 = ax.coords[i]!;
+  const z0 = az.coords[j]!;
+  const fx = Math.min(1, Math.max(0, (x - x0) / (ax.coords[i + 1]! - x0)));
+  const fz = Math.min(1, Math.max(0, (z - z0) / (az.coords[j + 1]! - z0)));
+  // Same split as buildIndex: (x0, z0)-(x1, z0)-(x0, z1), then (x1, z1)-(x0, z1)-(x1, z0).
+  if (fx + fz <= 1) {
+    const h00 = corner(i, j);
+    return h00 + fx * (corner(i + 1, j) - h00) + fz * (corner(i, j + 1) - h00);
+  }
+  const h11 = corner(i + 1, j + 1);
+  return h11 + (1 - fx) * (corner(i, j + 1) - h11) + (1 - fz) * (corner(i + 1, j) - h11);
+}
+
 interface Static {
   index: THREE.BufferAttribute;
   colors: THREE.BufferAttribute;
@@ -62,8 +110,8 @@ export class TerrainMesh {
   private readonly fz: number;
 
   constructor(private readonly terrain: Terrain) {
-    const ax = axis(terrain.width, terrain.margin);
-    const az = axis(terrain.height, terrain.margin);
+    const ax = axisCached(terrain.width, terrain.margin);
+    const az = axisCached(terrain.height, terrain.margin);
     this.rowLength = ax.coords.length;
     this.fx = ax.first;
     this.fz = az.first;
@@ -97,7 +145,7 @@ export class TerrainMesh {
 }
 
 /** Geometry of the terrain grid (exported for the mesh/physics parity test). */
-export function buildTerrainGeometry(t: Terrain, ax = axis(t.width, t.margin), az = axis(t.height, t.margin)): THREE.BufferGeometry {
+export function buildTerrainGeometry(t: Terrain, ax = axisCached(t.width, t.margin), az = axisCached(t.height, t.margin)): THREE.BufferGeometry {
   const xs = ax.coords;
   const zs = az.coords;
   const nx = xs.length;

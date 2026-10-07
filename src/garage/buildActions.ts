@@ -23,7 +23,8 @@ function rollOut(state: GameState, build: CarBuild, garage: GarageSpot): CarInst
   state.carCounter++;
   applyChange(state.wallet(), {}, leftovers(build));
   state.builds = state.builds.filter((b) => b !== build);
-  car.pose = bayPose(garage);
+  // On the garage's pad (the sim's, should the spot not carry it).
+  car.pose = bayPose({ ...garage, py: garage.py ?? state.sim.buildings.get(garage.id)?.py });
   state.cars.push(car);
   state.selectedCarId = car.id;
   state.objectives.assembled = true;

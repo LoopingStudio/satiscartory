@@ -1,4 +1,5 @@
 import { FactorySim } from '../factory/sim/FactorySim';
+import { isTerrainId } from '../factory/sim/terrain';
 import type { FactorySave } from '../factory/sim/types';
 import { sanitizePose, type CarInstance } from '../garage/assembly';
 import { parkUnplaced, type BayBlocker } from '../garage/parking';
@@ -138,19 +139,23 @@ export class GameState {
     s.cars = Array.isArray(data.cars)
       ? data.cars.filter((c) => c && typeof c.id === 'string' && typeof c.blueprint === 'string').map((c) => ({ ...c, parts: c.parts ?? {}, pose: sanitizePose(c.pose) }))
       : [];
-    // On the relief (a save made before it, say), a car left in the lake, on a steep slope or off the map
-    // waits for a garage bay instead (« À ranger »); a player deep in the lake starts at the spawn.
+    // On the relief, a car off the map or in the lake waits for a garage bay instead (« À ranger »); a
+    // player deep in the lake starts at the spawn. A save made before the relief (built flat: no relief id)
+    // also sends a car on a steep slope to a bay, and puts the others on the ground (they stood at 0 m:
+    // on a hill, or in a garage now on its pad); a relief save keeps where the player left its cars.
     const relief = s.sim.terrain;
     if (!relief.flat) {
       const t = relief;
+      const builtFlat = !isTerrainId(data.factory.terrain);
       const g = { gx: 0, gz: 0, twist: 0 };
       for (const c of s.cars) {
         const p = c.pose;
         if (!p) continue;
         const cx = Math.floor(p.x / FACTORY_CELL);
         const cz = Math.floor(p.z / FACTORY_CELL);
-        const steep = s.sim.inBounds(cx, cz) && Math.max(Math.abs(t.cellGrad(cx, cz, g).gx), Math.abs(g.gz)) > TERRAIN_RULES.BELT_GRAD;
+        const steep = builtFlat && s.sim.inBounds(cx, cz) && Math.max(Math.abs(t.cellGrad(cx, cz, g).gx), Math.abs(g.gz)) > TERRAIN_RULES.BELT_GRAD;
         if (!s.sim.inBounds(cx, cz) || steep || t.waterDepthAt(p.x, p.z) > 0.5) c.pose = null;
+        else if (builtFlat) c.pose = { ...p, y: t.heightAt(p.x, p.z) };
       }
       if (s.player) {
         const edge = 20;

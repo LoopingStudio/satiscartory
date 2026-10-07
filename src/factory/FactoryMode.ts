@@ -197,7 +197,9 @@ export class FactoryMode implements Mode {
     // The camera looks through trees and rocks (no pumping in a forest), never under the ground.
     // (Over the lake, its surface: the camera never goes under the water, which is not drawn from below.)
     this.orbit = new OrbitCamera(this.camera, this.world.physics, this.player.collider, terrain.flat ? {} : { groundAt: (x, z) => terrain.heightAt(x, z) + terrain.waterDepthAt(x, z), filter: (c) => !this.world.isDecor(c) });
-    this.world.overlapsPlayer = (c) => this.player.collider.isEnabled() && c.intersectsShape(this.player.collider.shape, this.player.collider.translation(), this.player.collider.rotation());
+    // A trunk or a rock comes back (dismantle) only once neither the player nor a car stands in it.
+    this.world.blocksDecor = (c) =>
+      (this.player.collider.isEnabled() && c.intersectsShape(this.player.collider.shape, this.player.collider.translation(), this.player.collider.rotation())) || this.cars.overlaps(c);
     // New game: spawn south of the hub looking toward it (+Z).
     this.orbit.yaw = this.state.player ? this.state.player.yaw : 0;
     this.faceYaw = this.orbit.yaw;
@@ -500,7 +502,7 @@ export class FactoryMode implements Mode {
   private exitCar(): boolean {
     const blocker = this.cars.exitBlocker();
     if (blocker) {
-      toast(blocker === 'tilt' ? 'Trop en pente pour descendre' : 'Ralentis pour descendre', 'info', 1200);
+      toast(blocker === 'tilt' ? 'Trop en pente pour descendre' : blocker === 'water' ? 'Sors de l’eau pour descendre' : 'Ralentis pour descendre', 'info', 1200);
       return false;
     }
     const spot = this.cars.exit(this.player.collider);
@@ -1060,7 +1062,7 @@ export class FactoryMode implements Mode {
     else if (this.driving) {
       const car = this.state.cars.find((c) => c.id === this.cars.drivingId);
       const blocker = this.cars.exitBlocker();
-      const exit = !blocker ? `${k('interact')} descendre` : `<span class="muted">${blocker === 'tilt' ? 'trop en pente pour descendre' : 'ralentis pour descendre'}</span>`;
+      const exit = !blocker ? `${k('interact')} descendre` : `<span class="muted">${blocker === 'tilt' ? 'trop en pente pour descendre' : blocker === 'water' ? 'sors de l’eau pour descendre' : 'ralentis pour descendre'}</span>`;
       html = `<b>${car?.name ?? 'Voiture'}</b> · ${Math.round(this.cars.speedKmh())} km/h · ${exit} · ${k('retry')} courir · ${k('respawn')} replacer`;
     } else if (t.kind === 'build') {
       const check = this.build.lastCheck;

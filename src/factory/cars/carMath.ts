@@ -37,6 +37,8 @@ export const FACTORY_CAR = {
   WET_DEPTH: 0.15,
   DROWN_DEPTH: 0.9,
   DROWN_S: 1.5,
+  /** No getting out over deeper water (m): the car would stay parked there (same limit as loading a save). */
+  EXIT_WATER: 0.5,
   /** Horizontal drag in the water (1/s): about 8 m/s top speed. */
   WATER_DRAG: 1.5,
 } as const;

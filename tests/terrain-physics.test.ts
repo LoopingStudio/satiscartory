@@ -7,7 +7,7 @@ import { Terrain } from '../src/factory/sim/terrain';
 import { CharacterController } from '../src/player/CharacterController';
 import { GRAVITY_FACTORY, PHYS_DT } from '../src/config/constants';
 import { mulberry32 } from '../src/core/rng';
-import { buildTerrainGeometry } from '../src/factory/view/terrain/TerrainMesh';
+import { buildTerrainGeometry, drawnHeight } from '../src/factory/view/terrain/TerrainMesh';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -41,6 +41,27 @@ describe('terrain heightfield', () => {
       expect(groundY(fw, x, z), `${x},${z}`).toBeCloseTo(sim.terrain.heightAt(x, z), 3);
     }
     fw.dispose();
+  });
+
+  it('past the lattice, drawnHeight is the far bands as the mesh draws them (where the far pines stand)', () => {
+    const sim = FactorySim.newGame({ terrain: 'vallonne-1' });
+    const mesh = new THREE.Mesh(buildTerrainGeometry(sim.terrain), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    mesh.updateMatrixWorld();
+    const ray = new THREE.Raycaster();
+    const rng = mulberry32(13);
+    for (let k = 0; k < 120; k++) {
+      // A ring 0 to 220 m past the lattice (-32 .. 288 m).
+      const a = rng() * Math.PI * 2;
+      const r = 160 * Math.SQRT2 + rng() * 220;
+      const x = 128 + Math.max(-380, Math.min(380, Math.cos(a) * r));
+      const z = 128 + Math.max(-380, Math.min(380, Math.sin(a) * r));
+      ray.set(new THREE.Vector3(x, 500, z), new THREE.Vector3(0, -1, 0));
+      const hit = ray.intersectObject(mesh)[0];
+      expect(hit, `${x},${z}`).toBeDefined();
+      expect(drawnHeight(sim.terrain, x, z), `${x},${z}`).toBeCloseTo(hit!.point.y, 2);
+    }
+    // Inside the lattice, the natural ground.
+    expect(drawnHeight(sim.terrain, 40.5, 77.25)).toBeCloseTo(sim.terrain.heightAt(40.5, 77.25), 4);
   });
 
   it('the rendered mesh is the same surface (same corners, same triangle split)', () => {
@@ -188,6 +209,9 @@ describe('scenery (physics)', () => {
     expect(found).not.toBeNull();
     const { i, cx, cz } = found!;
     const trunk = world.decorColliders.get(i)!;
+    // Trunks are enabled by the first flush (once the factory knows where the player and the cars stand).
+    expect(trunk.isEnabled()).toBe(false);
+    fw.flush();
     expect(trunk.isEnabled()).toBe(true);
     const r = sim.place('smelter', cx, cz, 0, { free: true });
     expect(r.ok).toBe(true);

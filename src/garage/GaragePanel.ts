@@ -84,7 +84,8 @@ export class GaragePanel {
   /** Opens on the car standing in the bay, else on a new-car draft (the one whose parts are in stock first). */
   open(garage: GarageSpot): void {
     this.close();
-    this.spot = { id: garage.id, x: garage.x, z: garage.z, rot: garage.rot };
+    // With its pad height: the bay, the draft ghost and the camera stand on the pad on the relief.
+    this.spot = { id: garage.id, x: garage.x, z: garage.z, rot: garage.rot, ...(garage.py !== undefined ? { py: garage.py } : {}) };
     this.view = this.defaultView();
     this.root = el('div', { class: 'garage-panel', 'data-pad-scope': '' }, this.left, this.right);
     this.layer.appendChild(this.root);

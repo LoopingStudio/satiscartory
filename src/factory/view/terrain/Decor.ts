@@ -3,6 +3,7 @@ import { FACTORY_CELL } from '../../../config/constants';
 import { isCleared, type DecorKind, type DecorLayout } from '../../sim/decor';
 import type { FactorySim } from '../../sim/FactorySim';
 import { decorGeometry, decorMaterial } from './lowpoly';
+import { drawnHeight } from './TerrainMesh';
 
 const KINDS: DecorKind[] = ['pine', 'oak', 'birch', 'rock', 'pebble', 'farPine'];
 /** Kinds that cast shadows (the far pines and pebbles do not). */
@@ -76,7 +77,8 @@ export class Decor {
     }
     const t = this.sim.terrain;
     const inLattice = it.x >= -t.margin * FACTORY_CELL && it.z >= -t.margin * FACTORY_CELL && it.x <= (t.width + t.margin) * FACTORY_CELL && it.z <= (t.height + t.margin) * FACTORY_CELL;
-    const ground = inLattice ? t.heightAt(it.x, it.z) : t.farHeight(it.x, it.z);
+    // Past the lattice, on the ground as drawn (the far bands' flat triangles, not the height function).
+    const ground = inLattice ? t.heightAt(it.x, it.z) : drawnHeight(t, it.x, it.z);
     this.p.set(it.x, ground - SINK[it.kind] * it.scale, it.z);
     this.q.setFromAxisAngle(this.up, it.yaw);
     this.s.setScalar(it.scale);

@@ -79,6 +79,8 @@ interface CarEntry {
   collider: RAPIER.Collider | null;
   /** Dynamic car while driven. */
   vehicle: Vehicle | null;
+  /** Parked on the ground (tilted to it), not level on something else: it follows the ground when it changes. */
+  grounded?: boolean;
 }
 
 /** Lift (m) of a car body above its floor when it turns dynamic (getting in) and on a reset. */
@@ -112,6 +114,8 @@ export class FactoryCars {
   /** Seconds the driven car has been under deep water. */
   private drownTime = 0;
   private readonly fit: TerrainFit = { y: 0, q: { x: 0, y: 0, z: 0, w: 1 } };
+  /** The last standing() fitted the car to the ground. */
+  private onGround = false;
   private readonly pos = new THREE.Vector3();
   private readonly quat = new THREE.Quaternion();
   private readonly vel = new THREE.Vector3();
@@ -202,14 +206,19 @@ export class FactoryCars {
 
   /**
    * How a car stands at `pose`: level at its height, or, on the relief when it stands on the ground (not on
-   * something else), tilted to the slope at the ground's height. In `this.fit`.
+   * something else above it), tilted to the slope at the ground's height. A pose under the ground (a save
+   * from before the relief, say) stands on it too. In `this.fit`; `this.onGround` tells which.
    */
   private standing(pose: CarPose, box: CarBox): TerrainFit {
     const f = this.fit;
     const g = this.opts.ground;
+    this.onGround = false;
     if (!g.flat) {
       terrainFit(pose, box, (x, z) => g.heightAt(x, z), f);
-      if (Math.abs(pose.y - f.y) < 0.3) return f;
+      if (pose.y - f.y < 0.3) {
+        this.onGround = true;
+        return f;
+      }
     }
     f.y = pose.y;
     const h = pose.yaw / 2;
@@ -235,6 +244,7 @@ export class FactoryCars {
       e.body,
     );
     this.parkedHandles.add(e.collider.handle);
+    e.grounded = this.onGround;
     e.placed = { ...pose };
     e.model.root.position.set(pose.x, fit.y, pose.z);
     e.model.root.quaternion.copy(q);
@@ -346,13 +356,17 @@ export class FactoryCars {
     return this.exitBlocker() === null;
   }
 
-  /** Why the driver cannot get out now: too fast, or the car leans too much (a steep slope); null if they can. */
-  exitBlocker(): 'speed' | 'tilt' | 'driving' | null {
+  /**
+   * Why the driver cannot get out now: too fast, the car leans too much (a steep slope), or it stands in
+   * deep water (parked there, it would drown again on every re-entry); null if they can.
+   */
+  exitBlocker(): 'speed' | 'tilt' | 'water' | 'driving' | null {
     const v = this.driving?.vehicle;
     if (!v) return 'driving';
     const lv = v.body.linvel();
     if (Math.hypot(lv.x, lv.y, lv.z) >= FACTORY_CAR.EXIT_SPEED) return 'speed';
-    return upYOfQuat(v.curQuat) < FACTORY_CAR.EXIT_UP ? 'tilt' : null;
+    if (upYOfQuat(v.curQuat) < FACTORY_CAR.EXIT_UP) return 'tilt';
+    return this.opts.ground.waterDepthAt(v.curPos.x, v.curPos.z) > FACTORY_CAR.EXIT_WATER ? 'water' : null;
   }
 
   /**
@@ -459,6 +473,17 @@ export class FactoryCars {
     return true;
   }
 
+  /** Collider `c` touches a car (parked, under construction or driven): a tree trunk stays out of it. */
+  overlaps(c: RAPIER.Collider): boolean {
+    if (this.physics.disposed) return false;
+    for (const e of this.entries.values()) {
+      // Tested one by one: a car parked since the last step is not in the query tree yet.
+      const col = e.vehicle?.collider ?? e.collider;
+      if (col && c.intersectsShape(col.shape, col.translation(), col.rotation())) return true;
+    }
+    return false;
+  }
+
   /** Puts the driven car back on its last safe pose (respawn key, falls, flips), tilted to the ground there. */
   resetToLastSafe(): void {
     const e = this.driving;
@@ -476,8 +501,9 @@ export class FactoryCars {
   }
 
   /**
-   * The ground changed over [x0, z0, x1, z1] (m): parked cars there stand again on it (refitted, lifted if
-   * it rose under them), the driven car is lifted out if the ground now crosses it.
+   * The ground changed over [x0, z0, x1, z1] (m): parked cars there stand again on it (a car on the ground
+   * follows it up or down, refitted; one on something else is lifted only if the ground rose over it), the
+   * driven car is lifted out if the ground now crosses it.
    */
   onTerrain(area: [number, number, number, number]): void {
     if (this.physics.disposed) return;
@@ -487,7 +513,7 @@ export class FactoryCars {
       if (e.vehicle) continue;
       const p = e.placed;
       if (p.x < x0 - 6 || p.x > x1 + 6 || p.z < z0 - 6 || p.z > z1 + 6) continue;
-      const y = Math.max(p.y, g.heightAt(p.x, p.z));
+      const y = e.grounded ? terrainFit(p, e.box, (x, z) => g.heightAt(x, z), this.fit).y : Math.max(p.y, g.heightAt(p.x, p.z));
       const pose = { ...p, y };
       this.unpark(e);
       this.park(e, pose);

@@ -217,8 +217,9 @@ export class FactorySim implements PadSource {
   }
 
   /**
-   * Steepest rise or fall (cm) across a free cell in front of a garage's door (a car drives out on those),
-   * with `extra` placed too: the garage itself when planned, or a building planned beside it.
+   * Steepest rise or fall (cm) across a cell in front of a garage's door that a car drives out on (free, or
+   * under a belt: cars cross belt lines), with `extra` placed too: the garage itself when planned, or a
+   * building planned beside it (a cell it covers is no longer driven on, as once it stands there).
    */
   private doorRise(x: number, z: number, rot: Rot, extra: Pad | null): number {
     const t = this.terrain;
@@ -229,7 +230,9 @@ export class FactorySim implements PadSource {
     for (const [cx, cz] of cells) {
       const fx = cx + DX[side];
       const fz = cz + DZ[side];
-      if (inside.has(`${fx},${fz}`) || !this.inBounds(fx, fz) || this.grid[this.idx(fx, fz)]) continue;
+      if (inside.has(`${fx},${fz}`) || !this.inBounds(fx, fz)) continue;
+      const occ = this.at(fx, fz);
+      if ((occ && !isBelt(occ.type)) || (extra && fx >= extra.x0 && fx < extra.x1 && fz >= extra.z0 && fz < extra.z1)) continue;
       // Near and far edges of the front cell, across the door.
       const [n0, n1, f0, f1] = EDGES[side]!.map(([dx, dz]) => t.effWith(fx + dx, fz + dz, this, extra));
       worst = Math.max(worst, Math.abs((f0! + f1!) / 2 - (n0! + n1!) / 2));

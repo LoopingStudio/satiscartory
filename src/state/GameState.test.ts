@@ -3,6 +3,9 @@ import { GameState } from './GameState';
 import { FACTORY_CELL } from '../config/constants';
 import { LEGACY_MAP_OFFSET } from '../data/factoryMap';
 import { TIERS } from '../data/tiers';
+import { TERRAIN_RULES } from '../data/factoryTerrain';
+import { FactorySim } from '../factory/sim/FactorySim';
+import { bayPose } from '../garage/parking';
 
 describe('GameState migrations', () => {
   it('moves the player with the factory when loading a save from the 64×64 map', () => {
@@ -134,5 +137,64 @@ describe('GameState on the relief', () => {
     expect(s.cars.find((c) => c.id === 'wet')!.pose).toBeNull();
     expect(s.cars.find((c) => c.id === 'dry')!.pose).toEqual({ x: 127, y: 0, z: 110, yaw: 0 });
     expect(s.player).toBeNull();
+  });
+
+  it('a save from before the relief: its cars stand on the ground, on a hill or on their garage’s new pad', () => {
+    const relief = new GameState().sim;
+    const t = relief.terrain;
+    // A garage spot off the plateau that the relief raises by 1 m or more.
+    let spot: { x: number; z: number } | null = null;
+    for (let z = 4; z < 60 && !spot; z += 2) {
+      for (let x = 4; x < 60 && !spot; x += 2) {
+        const r = relief.check('garage', x, z, 0, { free: true });
+        if (r.ok && (r.py ?? 0) >= 100) spot = { x, z };
+      }
+    }
+    expect(spot).not.toBeNull();
+    // A gentle hillside 3 m up, away from that garage.
+    const g = { gx: 0, gz: 0, twist: 0 };
+    let hill: { x: number; z: number } | null = null;
+    for (let cz = 70; cz < 124 && !hill; cz++) {
+      for (let cx = 4; cx < 124 && !hill; cx++) {
+        const x = (cx + 0.5) * FACTORY_CELL;
+        const z = (cz + 0.5) * FACTORY_CELL;
+        if (t.heightAt(x, z) > 3 && Math.max(Math.abs(t.cellGrad(cx, cz, g).gx), Math.abs(g.gz)) < 40 && !t.isWetCell(cx, cz)) hill = { x, z };
+      }
+    }
+    expect(hill).not.toBeNull();
+    const flat = new GameState(FactorySim.newGame({ terrain: 'flat' }));
+    expect(flat.sim.place('garage', spot!.x, spot!.z, 0, { free: true }).ok).toBe(true);
+    flat.cars = [
+      { id: 'bay', name: 'Bay', blueprint: 'kart', parts: {}, pose: bayPose({ x: spot!.x, z: spot!.z, rot: 0 }) },
+      { id: 'hill', name: 'Hill', blueprint: 'kart', parts: {}, pose: { x: hill!.x, y: 0, z: hill!.z, yaw: 0 } },
+    ];
+    const data = flat.serialize();
+    data.factory.version = 3;
+    delete data.factory.terrain;
+    const s = GameState.fromSave(data);
+    const garage = [...s.sim.buildings.values()].find((b) => b.type === 'garage')!;
+    expect(garage.py).toBeGreaterThanOrEqual(100);
+    expect(s.cars.find((c) => c.id === 'bay')!.pose!.y).toBeCloseTo(garage.py! / 100, 6);
+    expect(s.cars.find((c) => c.id === 'hill')!.pose!.y).toBeCloseTo(s.sim.terrain.heightAt(hill!.x, hill!.z), 6);
+  });
+
+  it('a relief save keeps its cars where they were left, even on a slope too steep for a belt', () => {
+    const s0 = new GameState();
+    const t = s0.sim.terrain;
+    const g = { gx: 0, gz: 0, twist: 0 };
+    let cell: [number, number] | null = null;
+    for (let cz = 4; cz < 124 && !cell; cz++) {
+      for (let cx = 4; cx < 124 && !cell; cx++) {
+        const m = Math.max(Math.abs(t.cellGrad(cx, cz, g).gx), Math.abs(g.gz));
+        if (m > TERRAIN_RULES.BELT_GRAD && m <= 92 && !t.isWetCell(cx, cz)) cell = [cx, cz];
+      }
+    }
+    expect(cell).not.toBeNull();
+    const x = (cell![0] + 0.5) * FACTORY_CELL;
+    const z = (cell![1] + 0.5) * FACTORY_CELL;
+    const pose = { x, y: t.heightAt(x, z), z, yaw: 0 };
+    s0.cars = [{ id: 'c', name: 'C', blueprint: 'kart', parts: {}, pose }];
+    const s = GameState.fromSave(JSON.parse(JSON.stringify(s0.serialize())));
+    expect(s.cars[0]!.pose).toEqual(pose);
   });
 });
