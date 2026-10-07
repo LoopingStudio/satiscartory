@@ -14,6 +14,11 @@ export class PlayerAvatar {
   private squash = 0;
   private yaw = 0;
   private lean = 0;
+  private readonly blob: THREE.Mesh;
+  private readonly flat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+  private readonly tilt = new THREE.Quaternion();
+  private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly n = new THREE.Vector3();
 
   constructor(assets: AssetLoader) {
     this.model = assets.instantiate('factory-kit/oopi');
@@ -38,11 +43,32 @@ export class PlayerAvatar {
     blob.position.y = 0.03;
     blob.name = 'blob';
     this.root.add(blob);
+    this.blob = blob;
   }
 
-  /** Faces toward `targetYaw` smoothly. */
-  update(dt: number, pos: THREE.Vector3, speed: number, grounded: boolean, targetYaw: number, landed: number): void {
+  dispose(): void {
+    this.root.removeFromParent();
+    this.blob.geometry.dispose();
+    (this.blob.material as THREE.Material).dispose();
+  }
+
+  /**
+   * Faces toward `targetYaw` smoothly. `ground` (height and slope dh/dx, dh/dz of the terrain under the
+   * feet): on a slope the capsule's feet float a little (more on steeper slopes), the model and its blob
+   * shadow are put back on the ground.
+   */
+  update(dt: number, pos: THREE.Vector3, speed: number, grounded: boolean, targetYaw: number, landed: number, ground: { y: number; sx: number; sz: number } | null = null): void {
     this.root.position.copy(pos);
+    const gap = ground ? pos.y - ground.y : Infinity;
+    if (ground && grounded && gap > -0.05 && gap < 0.3) {
+      this.root.position.y = pos.y - Math.min(Math.max(gap, 0), 0.25);
+      this.blob.position.y = ground.y - this.root.position.y + 0.03;
+      this.n.set(-ground.sx, 1, -ground.sz).normalize();
+      this.blob.quaternion.copy(this.tilt.setFromUnitVectors(this.up, this.n)).multiply(this.flat);
+    } else {
+      this.blob.position.y = 0.03;
+      this.blob.quaternion.copy(this.flat);
+    }
     // shortest-angle smoothing
     let d = targetYaw - this.yaw;
     d = Math.atan2(Math.sin(d), Math.cos(d));

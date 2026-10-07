@@ -30,6 +30,16 @@ export class PhysicsWorld {
     return this.world.createCollider(desc);
   }
 
+  /**
+   * Static heightfield of nrows × ncols cells over `size` (x, z), centered on `center`. Heights are
+   * column-major: heights[iz + ix·(nrows + 1)], rows along z. No FIX_INTERNAL_EDGES by default: with it, the
+   * character controller leaves the ground walking downhill along a grid line (measured).
+   */
+  addHeightfield(nrows: number, ncols: number, heights: Float32Array, size: { x: number; z: number }, center: { x: number; y: number; z: number }, flags = 0): RAPIER.Collider {
+    const desc = RAPIER.ColliderDesc.heightfield(nrows, ncols, heights, { x: size.x, y: 1, z: size.z }, flags).setTranslation(center.x, center.y, center.z);
+    return this.world.createCollider(desc);
+  }
+
   setDebug(scene: THREE.Scene, enabled: boolean): void {
     if (enabled && !this.debugLines) {
       this.debugLines = new THREE.LineSegments(

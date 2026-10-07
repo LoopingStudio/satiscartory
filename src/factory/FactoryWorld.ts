@@ -8,30 +8,64 @@ import { HUB_BENCH } from './view/hubBench';
 import { GARAGE_CLUTTER, GARAGE_LINTEL, GARAGE_WALLS, rotateBox } from './view/garageLayout';
 import { rotateLocal } from './view/beltPath';
 import type { FactorySim } from './sim/FactorySim';
+import type { Terrain } from './sim/terrain';
 import type { Building } from './sim/types';
 
 /** Collider heights per building type (meters). Conveyors are low enough to step onto. */
 const HEIGHTS = { conveyor: 0.8, splitter: 0.8, merger: 0.8, drill: 3.6, smelter: 2.1, press: 2.1, assembler: 2.1 } as const;
 
-/** Rapier world of the factory: ground + one static collider set per building, kept in sync with the sim. */
+/**
+ * Rapier world of the factory: the ground (a flat slab, or the relief's heightfield) + one static
+ * collider set per building, kept in sync with the sim.
+ */
 export class FactoryWorld {
   readonly physics = new PhysicsWorld(GRAVITY_FACTORY);
   private colliders = new Map<number, RAPIER.Collider[]>();
   private byHandle = new Map<number, number>();
   readonly ground: RAPIER.Collider;
+  readonly terrain: Terrain;
+  /** Heights of the heightfield, column-major (refilled where the relief changes). */
+  private heights: Float32Array | null = null;
   private unsub: (() => void)[] = [];
 
   constructor(sim: FactorySim) {
     const w = sim.width * FACTORY_CELL;
     const h = sim.height * FACTORY_CELL;
-    this.ground = this.physics.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(w * 2, 0.5, h * 2).setTranslation(w / 2, -0.5, h / 2).setFriction(1),
-    );
+    this.terrain = sim.terrain;
+    if (sim.terrain.flat) {
+      this.ground = this.physics.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(w * 2, 0.5, h * 2).setTranslation(w / 2, -0.5, h / 2).setFriction(1),
+      );
+    } else {
+      // Created before any building collider and before the mode's first step, so the first aim ray sees it.
+      const t = sim.terrain;
+      this.heights = new Float32Array(t.nx * t.nz);
+      this.fillHeights(0, 0, t.nx - 1, t.nz - 1);
+      this.ground = this.physics.addHeightfield(t.nz - 1, t.nx - 1, this.heights, { x: (t.nx - 1) * FACTORY_CELL, z: (t.nz - 1) * FACTORY_CELL }, { x: w / 2, y: 0, z: h / 2 });
+      this.ground.setFriction(1);
+    }
     for (const b of sim.buildings.values()) this.add(b);
     this.unsub.push(
       sim.events.on('placed', (b) => this.add(b)),
       sim.events.on('removed', (b) => this.remove(b.id)),
     );
+  }
+
+  /** The collider is the ground (the slab or the heightfield). */
+  isGround(c: RAPIER.Collider): boolean {
+    return c.handle === this.ground.handle;
+  }
+
+  /** Ground height (m) under (x, z). */
+  heightAt(x: number, z: number): number {
+    return this.terrain.heightAt(x, z);
+  }
+
+  /** Copies the effective ground of lattice corners [i0, i1] × [j0, j1] (array indices) into the heightfield data. */
+  private fillHeights(i0: number, j0: number, i1: number, j1: number): void {
+    const t = this.terrain;
+    const h = this.heights!;
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) h[j + i * t.nz] = t.eff[i + j * t.nx]! / 100;
   }
 
   /** Building id owning a collider, or null for the ground / unknown. */

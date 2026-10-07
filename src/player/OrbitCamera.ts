@@ -2,6 +2,13 @@ import * as THREE from 'three';
 import { RAPIER, type PhysicsWorld } from '../core/physics/PhysicsWorld';
 import { PLAYER } from '../data/player';
 
+export interface OrbitOptions {
+  /** Ground height under (x, z): the camera stays above it. */
+  groundAt?: (x: number, z: number) => number;
+  /** Colliders the pull-in ray may hit (default: all but the excluded one). */
+  filter?: (c: RAPIER.Collider) => boolean;
+}
+
 /** Third-person over-the-shoulder camera with collision pull-in. */
 export class OrbitCamera {
   yaw = 0;
@@ -14,8 +21,19 @@ export class OrbitCamera {
   private readonly dir = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
   private readonly desired = new THREE.Vector3();
+  private readonly shoulder = new THREE.Vector3();
+  private readonly origin = new THREE.Vector3();
+  private readonly back = new THREE.Vector3();
+  private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+  /** Smoothed height of the pivot (steps and slope breaks would bob the view); NaN = snap. */
+  private pivotY = NaN;
 
-  constructor(readonly camera: THREE.PerspectiveCamera, private readonly physics: PhysicsWorld, private readonly exclude: RAPIER.Collider) {}
+  constructor(
+    readonly camera: THREE.PerspectiveCamera,
+    private readonly physics: PhysicsWorld,
+    private readonly exclude: RAPIER.Collider,
+    private readonly opts: OrbitOptions = {},
+  ) {}
 
   rotate(dx: number, dy: number): void {
     this.yaw -= dx * this.sensitivity;
@@ -45,27 +63,39 @@ export class OrbitCamera {
     return out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
   }
 
+  /** Next update puts the pivot right on the target (after a teleport). */
+  snap(): void {
+    this.pivotY = NaN;
+  }
+
   update(target: THREE.Vector3, dt: number): void {
-    this.pivot.set(target.x, target.y + PLAYER.CAMERA_HEIGHT, target.z);
+    const y = target.y + PLAYER.CAMERA_HEIGHT;
+    if (!Number.isFinite(this.pivotY) || Math.abs(y - this.pivotY) > 2) this.pivotY = y;
+    else this.pivotY += (y - this.pivotY) * (1 - Math.exp(-dt * 12));
+    this.pivot.set(target.x, this.pivotY, target.z);
     // Camera looks along dir; it sits behind the pivot.
     const cp = Math.cos(this.pitch);
     this.dir.set(Math.sin(this.yaw) * cp, Math.sin(this.pitch), Math.cos(this.yaw) * cp);
     this.right.set(-Math.cos(this.yaw), 0, Math.sin(this.yaw));
-    const shoulder = this.right.clone().multiplyScalar(PLAYER.CAMERA_SHOULDER);
-    const origin = this.pivot.clone().add(shoulder);
+    this.shoulder.copy(this.right).multiplyScalar(PLAYER.CAMERA_SHOULDER);
+    this.origin.copy(this.pivot).add(this.shoulder);
 
     // Collision: cast from the pivot toward the camera position.
     let dist = this.distance;
-    const back = this.dir.clone().negate();
-    const ray = new RAPIER.Ray(origin, back);
-    const hit = this.physics.world.castRay(ray, dist + 0.3, true, undefined, undefined, this.exclude);
+    this.back.copy(this.dir).negate();
+    this.ray.origin = this.origin;
+    this.ray.dir = this.back;
+    const hit = this.physics.world.castRay(this.ray, dist + 0.3, true, undefined, undefined, this.exclude, undefined, this.opts.filter);
     if (hit) dist = Math.max(0.6, hit.timeOfImpact - 0.3);
     // Pull in fast, ease out slowly.
     const k = dist < this.currentDist ? 1 : 1 - Math.exp(-dt * 4);
     this.currentDist += (dist - this.currentDist) * k;
 
-    this.desired.copy(origin).addScaledVector(back, this.currentDist);
+    this.desired.copy(this.origin).addScaledVector(this.back, this.currentDist);
+    // Never under the ground (grazing views of a slope slip past the thin ray).
+    const g = this.opts.groundAt;
+    if (g) this.desired.y = Math.max(this.desired.y, g(this.desired.x, this.desired.z) + 0.35);
     this.camera.position.copy(this.desired);
-    this.camera.lookAt(origin.addScaledVector(this.dir, 10));
+    this.camera.lookAt(this.origin.addScaledVector(this.dir, 10));
   }
 }

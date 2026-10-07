@@ -14,6 +14,9 @@ import { beltLocal, rotateLocal } from './beltPath';
 import type { ModelKey } from '../../core/assets/manifest.gen';
 import { DX, DZ } from '../sim/dirs';
 import { PAD_Y, POINTER_Y, PORT_COLORS, crossGeometry, padGeometry, padMaterial, pointerGeometry, pointerMaterial, portPose } from './portMarkers';
+import { TerrainMesh } from './terrain/TerrainMesh';
+import { Water } from './terrain/Water';
+import { SkyDome } from './terrain/SkyDome';
 
 const BELT_TOP = 0.4 * FACTORY_MODEL_SCALE;
 const SHAPE_MODELS: Record<ConveyorShape, ModelKey> = {
@@ -45,6 +48,12 @@ export class FactoryView {
   private markersDirty = true;
   /** A build tool is active: every free port shows, pulsing (otherwise only the unconnected sides). */
   private portEmphasis = false;
+  /** Relief map only: the ground mesh, the lake and the sky. */
+  private terrainMesh: TerrainMesh | null = null;
+  private water: Water | null = null;
+  private sky: SkyDome | null = null;
+  /** Geometries and materials made for this view (the cached kit ones are not among them). */
+  private readonly owned: { dispose(): void }[] = [];
 
   constructor(private readonly assets: AssetLoader, private readonly sim: FactorySim) {
     this.root.name = 'factory';
@@ -73,49 +82,68 @@ export class FactoryView {
     );
   }
 
+  private own<T extends { dispose(): void }>(o: T): T {
+    this.owned.push(o);
+    return o;
+  }
+
   private buildGround(): void {
     const { width, height } = this.sim;
-    // Floor: the kit's floor tile is a flat quad of one solid color, so a single quad
-    // stretched over the whole grid looks the same as one tile per cell (16k instances
-    // on the 128×128 map cost ~40% of the frame).
-    const floorGeo = this.assets.mergedGeometry('factory-kit/floor').clone();
-    floorGeo.scale(width * FACTORY_CELL, 1, height * FACTORY_CELL);
-    const floor = new THREE.Mesh(floorGeo, this.assets.material('factory-kit'));
-    floor.position.set((width * FACTORY_CELL) / 2, 0, (height * FACTORY_CELL) / 2);
-    floor.receiveShadow = true;
-    floor.name = 'floor';
-    this.root.add(floor);
+    const terrain = this.sim.terrain;
+    if (terrain.flat) {
+      // Floor: the kit's floor tile is a flat quad of one solid color, so a single quad
+      // stretched over the whole grid looks the same as one tile per cell (16k instances
+      // on the 128×128 map cost ~40% of the frame).
+      const floorGeo = this.own(this.assets.mergedGeometry('factory-kit/floor').clone());
+      floorGeo.scale(width * FACTORY_CELL, 1, height * FACTORY_CELL);
+      const floor = new THREE.Mesh(floorGeo, this.assets.material('factory-kit'));
+      floor.position.set((width * FACTORY_CELL) / 2, 0, (height * FACTORY_CELL) / 2);
+      floor.receiveShadow = true;
+      floor.name = 'floor';
+      this.root.add(floor);
 
-    // Surroundings beyond the buildable area.
-    const outside = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x4b4f72 }));
-    outside.rotation.x = -Math.PI / 2;
-    outside.position.set((width * FACTORY_CELL) / 2, -0.05, (height * FACTORY_CELL) / 2);
-    outside.receiveShadow = true;
-    this.root.add(outside);
+      // Surroundings beyond the buildable area.
+      const outside = new THREE.Mesh(this.own(new THREE.PlaneGeometry(2000, 2000)), this.own(new THREE.MeshStandardMaterial({ color: 0x4b4f72 })));
+      outside.rotation.x = -Math.PI / 2;
+      outside.position.set((width * FACTORY_CELL) / 2, -0.05, (height * FACTORY_CELL) / 2);
+      outside.receiveShadow = true;
+      this.root.add(outside);
 
-    // Grid border.
-    const border = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(width * FACTORY_CELL, 0.01, height * FACTORY_CELL)),
-      new THREE.LineBasicMaterial({ color: 0xffb347 }),
-    );
-    border.position.set((width * FACTORY_CELL) / 2, 0.03, (height * FACTORY_CELL) / 2);
-    this.root.add(border);
+      // Grid border.
+      const border = new THREE.LineSegments(
+        this.own(new THREE.EdgesGeometry(new THREE.BoxGeometry(width * FACTORY_CELL, 0.01, height * FACTORY_CELL))),
+        this.own(new THREE.LineBasicMaterial({ color: 0xffb347 })),
+      );
+      border.position.set((width * FACTORY_CELL) / 2, 0.03, (height * FACTORY_CELL) / 2);
+      this.root.add(border);
+    } else {
+      // Relief: the ground mesh (its middle is the physics lattice), the lake, the sky.
+      this.terrainMesh = new TerrainMesh(terrain);
+      this.root.add(this.terrainMesh.mesh);
+      if (terrain.lake) {
+        this.water = new Water(terrain.lake);
+        this.root.add(this.water.mesh);
+      }
+      this.sky = new SkyDome(SUN_DIR);
+      this.root.add(this.sky.mesh);
+    }
 
-    // Resource nodes: colored patches + rocks.
+    // Resource nodes: colored patches + rocks (nodes are flat pads on the relief).
     const rng = mulberry32(42);
     const m = new THREE.Matrix4();
-    const rockGeo = new THREE.IcosahedronGeometry(0.5, 0);
+    const rockGeo = this.own(new THREE.IcosahedronGeometry(0.5, 0));
     for (const n of this.sim.nodes) {
       const def = RESOURCES[n.resource];
+      const y = terrain.heightAt((n.x + n.w / 2) * FACTORY_CELL, (n.z + n.h / 2) * FACTORY_CELL);
       const patch = new THREE.Mesh(
-        new THREE.PlaneGeometry(n.w * FACTORY_CELL - 0.2, n.h * FACTORY_CELL - 0.2),
-        new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.9 }),
+        this.own(new THREE.PlaneGeometry(n.w * FACTORY_CELL - 0.2, n.h * FACTORY_CELL - 0.2)),
+        this.own(new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.9 })),
       );
       patch.rotation.x = -Math.PI / 2;
-      patch.position.set((n.x + n.w / 2) * FACTORY_CELL, 0.02, (n.z + n.h / 2) * FACTORY_CELL);
+      patch.position.set((n.x + n.w / 2) * FACTORY_CELL, y + 0.02, (n.z + n.h / 2) * FACTORY_CELL);
       patch.receiveShadow = true;
       this.root.add(patch);
-      const rockMat = new THREE.MeshStandardMaterial({ color: def.color, flatShading: true, roughness: 0.8 });
+      const rockMat = this.own(new THREE.MeshStandardMaterial({ color: def.color, flatShading: true, roughness: 0.8 }));
       const count = n.w * n.h * 3;
       const rocks = new THREE.InstancedMesh(rockGeo, rockMat, count);
       const q = new THREE.Quaternion();
@@ -127,12 +155,13 @@ export class FactoryView {
         q.setFromEuler(e);
         const sc = 0.35 + rng() * 0.55;
         s.set(sc, sc * (0.6 + rng() * 0.5), sc);
-        p.set((n.x + rng() * n.w) * FACTORY_CELL, sc * 0.2, (n.z + rng() * n.h) * FACTORY_CELL);
+        p.set((n.x + rng() * n.w) * FACTORY_CELL, y + sc * 0.2, (n.z + rng() * n.h) * FACTORY_CELL);
         rocks.setMatrixAt(k, m.compose(p, q, s));
       }
       rocks.castShadow = true;
       rocks.receiveShadow = true;
       rocks.name = `node:${n.resource}`;
+      this.owned.push({ dispose: () => rocks.dispose() });
       this.root.add(rocks);
     }
   }
@@ -313,11 +342,16 @@ export class FactoryView {
 
   /** Burst of rock chunks in the resource color at the center of grid cell (cx, cz): one hand-mined ore. */
   mineEffect(cx: number, cz: number, resource: ResourceId): void {
-    this.bursts.burst((cx + 0.5) * FACTORY_CELL, 0.3, (cz + 0.5) * FACTORY_CELL, RESOURCES[resource].color);
+    const x = (cx + 0.5) * FACTORY_CELL;
+    const z = (cz + 0.5) * FACTORY_CELL;
+    const y = this.sim.terrain.heightAt(x, z);
+    this.bursts.burst(x, y + 0.3, z, RESOURCES[resource].color, y);
   }
 
-  update(dt: number, factoryAlpha: number): void {
+  /** @param viewer the camera position (the sky follows it). */
+  update(dt: number, factoryAlpha: number, viewer?: THREE.Vector3): void {
     this.t += dt;
+    if (viewer) this.sky?.update(viewer);
     if (this.conveyorsDirty) this.rebuildConveyors();
     if (this.markersDirty) this.rebuildMarkers();
     if (this.markers) {
@@ -379,13 +413,20 @@ export class FactoryView {
         m.dispose();
       }
     }
-    (this.root.getObjectByName('floor') as THREE.Mesh | undefined)?.geometry.dispose(); // own clone, not the cached tile
+    for (const o of this.owned) o.dispose();
+    this.terrainMesh?.dispose();
+    this.water?.dispose();
+    this.sky?.dispose();
     this.root.removeFromParent();
   }
 }
 
 type MarkerKind = 'padOut' | 'padIn' | 'arrowOut' | 'arrowIn' | 'dead';
 const MARKER_KINDS: MarkerKind[] = ['padOut', 'padIn', 'arrowOut', 'arrowIn', 'dead'];
+
+/** Toward the sun of the relief map's light rig (FactoryMode). */
+export const SUN_OFFSET = new THREE.Vector3(55, 50, 30);
+const SUN_DIR = SUN_OFFSET.clone().normalize();
 
 /** Extra yaw for the T-junction model so its stem points backward (set after visual check). */
 const JUNCTION_YAW = 0;

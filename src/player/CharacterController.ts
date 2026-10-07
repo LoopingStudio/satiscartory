@@ -9,6 +9,15 @@ export interface MoveInput {
   dirZ: number;
   sprint: boolean;
   jump: boolean;
+  /** Speed multiplier (wading); default 1. */
+  speedScale?: number;
+}
+
+/** Where a character that fell through the world comes back (default: below y = -30, straight up to y = 5). */
+export interface FallSafety {
+  minY: number;
+  /** Writes the respawn position (feet) into `out`. */
+  respawn(cur: THREE.Vector3, out: THREE.Vector3): THREE.Vector3;
 }
 
 /** Kinematic capsule driven by Rapier's KinematicCharacterController. Position = feet. */
@@ -25,8 +34,9 @@ export class CharacterController {
   /** Set on the step the character lands (for squash animation). */
   landedImpact = 0;
   private readonly halfHeight = PLAYER_HEIGHT / 2 - PLAYER_RADIUS;
+  private readonly back = new THREE.Vector3();
 
-  constructor(private readonly physics: PhysicsWorld, spawn: THREE.Vector3) {
+  constructor(private readonly physics: PhysicsWorld, spawn: THREE.Vector3, private readonly safety: FallSafety | null = null) {
     const world = physics.world;
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, spawn.y + PLAYER_HEIGHT / 2, spawn.z),
@@ -58,7 +68,7 @@ export class CharacterController {
 
   step(dt: number, input: MoveInput, gravity: number): void {
     this.prev.copy(this.cur);
-    const speed = input.sprint ? PLAYER.SPRINT_SPEED : PLAYER.WALK_SPEED;
+    const speed = (input.sprint ? PLAYER.SPRINT_SPEED : PLAYER.WALK_SPEED) * (input.speedScale ?? 1);
     if (this.grounded && input.jump) this.vy = PLAYER.JUMP_SPEED;
     this.vy += gravity * dt;
     if (this.vy < -40) this.vy = -40;
@@ -79,7 +89,9 @@ export class CharacterController {
     this.speed = Math.hypot(mv.x, mv.z) / dt;
     this.cur.set(t.x + mv.x, t.y + mv.y - PLAYER_HEIGHT / 2, t.z + mv.z);
     // Safety net: never fall out of the world.
-    if (this.cur.y < -30) this.teleport(new THREE.Vector3(this.cur.x, 5, this.cur.z));
+    if (this.safety) {
+      if (this.cur.y < this.safety.minY) this.teleport(this.safety.respawn(this.cur, this.back));
+    } else if (this.cur.y < -30) this.teleport(this.back.set(this.cur.x, 5, this.cur.z));
   }
 
   dispose(): void {

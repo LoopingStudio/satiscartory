@@ -8,6 +8,8 @@ const GRAVITY = 14;
 interface Chunk {
   x: number;
   y: number;
+  /** Ground height it bounces on. */
+  floor: number;
   z: number;
   vx: number;
   vy: number;
@@ -44,14 +46,17 @@ export class MineBursts {
     this.mesh.count = 0;
     this.mesh.visible = false;
     for (let i = 0; i < CAP; i++) {
-      this.chunks.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 1, life: 0, size: 0, spinX: 0, spinY: 0, color: new THREE.Color() });
+      this.chunks.push({ x: 0, y: 0, floor: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 1, life: 0, size: 0, spinX: 0, spinY: 0, color: new THREE.Color() });
       this.mesh.setColorAt(i, this.chunks[i]!.color);
     }
     parent.add(this.mesh);
   }
 
-  /** Spawns one burst at (x, y, z) in the given color (chunks get small shade variations). */
-  burst(x: number, y: number, z: number, color: number): void {
+  /**
+   * Spawns one burst at (x, y, z) in the given color (chunks get small shade variations); its chunks
+   * bounce on the ground at `floor`.
+   */
+  burst(x: number, y: number, z: number, color: number, floor = 0): void {
     for (let n = 0; n < PER_BURST; n++) {
       const c = this.chunks[this.next]!;
       this.next = (this.next + 1) % CAP;
@@ -59,6 +64,7 @@ export class MineBursts {
       const speed = 1.2 + Math.random() * 1.6;
       c.x = x + Math.cos(a) * 0.25;
       c.y = y;
+      c.floor = floor;
       c.z = z + Math.sin(a) * 0.25;
       c.vx = Math.cos(a) * speed;
       c.vz = Math.sin(a) * speed;
@@ -83,9 +89,9 @@ export class MineBursts {
       c.x += c.vx * dt;
       c.y += c.vy * dt;
       c.z += c.vz * dt;
-      if (c.y < c.size && c.vy < 0) {
+      if (c.y < c.floor + c.size && c.vy < 0) {
         // Bounce on the ground, losing most of the energy.
-        c.y = c.size;
+        c.y = c.floor + c.size;
         c.vy *= -0.35;
         c.vx *= 0.6;
         c.vz *= 0.6;

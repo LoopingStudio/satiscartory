@@ -70,20 +70,32 @@ export interface LightRig {
   dispose(): void;
 }
 
+export interface LightRigOptions {
+  shadowSize?: number;
+  /** Background and fog color. */
+  sky?: number;
+  /** Hemisphere light: sky and ground bounce colors, intensity. */
+  hemiSky?: number;
+  ground?: number;
+  hemiIntensity?: number;
+  sunColor?: number;
+  sunIntensity?: number;
+  /** Sun position relative to the followed point. */
+  sunOffset?: THREE.Vector3;
+  fog?: [number, number];
+}
+
 /** Sky color, fog, hemisphere + shadow-casting sun. */
-export function addLightRig(
-  scene: THREE.Scene,
-  opts: { shadowSize?: number; sky?: number; ground?: number; fog?: [number, number] } = {},
-): LightRig {
+export function addLightRig(scene: THREE.Scene, opts: LightRigOptions = {}): LightRig {
   const sky = opts.sky ?? 0x9fb4e8;
   scene.background = new THREE.Color(sky);
   if (opts.fog) scene.fog = new THREE.Fog(sky, opts.fog[0], opts.fog[1]);
 
-  const hemi = new THREE.HemisphereLight(0xdfe6ff, opts.ground ?? 0x4a4e66, 1.6);
+  const hemi = new THREE.HemisphereLight(opts.hemiSky ?? 0xdfe6ff, opts.ground ?? 0x4a4e66, opts.hemiIntensity ?? 1.6);
   scene.add(hemi);
 
-  const sun = new THREE.DirectionalLight(0xfff2dd, 2.2);
-  const offset = new THREE.Vector3(30, 60, 20);
+  const sun = new THREE.DirectionalLight(opts.sunColor ?? 0xfff2dd, opts.sunIntensity ?? 2.2);
+  const offset = opts.sunOffset?.clone() ?? new THREE.Vector3(30, 60, 20);
   sun.position.copy(offset);
   sun.castShadow = true;
   const size = opts.shadowSize ?? 40;
@@ -104,11 +116,12 @@ export function addLightRig(
     sun,
     hemi,
     follow(target: THREE.Vector3) {
-      // Snap to shadow texels to avoid shimmering.
+      // Snap to shadow texels to avoid shimmering (height too: walking up and down hills).
       const x = Math.round(target.x / texel) * texel;
+      const y = Math.round(target.y / texel) * texel;
       const z = Math.round(target.z / texel) * texel;
-      sun.target.position.set(x, target.y, z);
-      sun.position.set(x + offset.x, target.y + offset.y, z + offset.z);
+      sun.target.position.set(x, y, z);
+      sun.position.set(x + offset.x, y + offset.y, z + offset.z);
     },
     dispose() {
       scene.remove(hemi, sun, sun.target);

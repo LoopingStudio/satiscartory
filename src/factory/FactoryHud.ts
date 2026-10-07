@@ -73,6 +73,9 @@ export interface HudCallbacks {
   setCrafting(active: boolean): void;
   resume(): void;
   menu(): void;
+  /** Back to the spawn by the hub (on foot): stuck or lost on the relief. */
+  home(): void;
+  canGoHome(): boolean;
   settings(): void;
   closePanel(): void;
 }
@@ -258,6 +261,7 @@ export class FactoryHud {
         ].join(''))),
         el('div', { class: 'row', style: 'margin-top:12px' },
           el('button', { class: 'primary', onclick: () => this.cb.resume(), 'data-pad-btn': 'b start' }, paused ? 'Reprendre' : 'Jouer'),
+          paused && this.cb.canGoHome() ? el('button', { onclick: () => this.cb.home(), title: 'Coincé ou perdu : retour au point de départ, devant le hangar' }, 'Revenir au hangar') : null,
           el('button', { onclick: () => this.cb.settings() }, 'Réglages'),
           el('button', { onclick: () => this.cb.menu() }, 'Menu principal'),
         ),

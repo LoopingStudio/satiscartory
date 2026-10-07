@@ -24,6 +24,8 @@ export interface Aim {
   point: THREE.Vector3 | null;
   cell: [number, number] | null;
   buildingId: number | null;
+  /** The ground aimed at, within reach, is past the edge of the grid. */
+  outside: boolean;
 }
 
 const ghostOk = new THREE.MeshStandardMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.55, emissive: 0x1d6b3f, depthWrite: false });
@@ -107,7 +109,7 @@ export function describeError(check: BuildCheck): string {
 export class BuildController {
   tool: Tool = { kind: 'none' };
   rot: Rot = 0;
-  aim: Aim = { point: null, cell: null, buildingId: null };
+  aim: Aim = { point: null, cell: null, buildingId: null, outside: false };
   /** Player position at the last aim update (hand-mining reach). */
   private playerPos = new THREE.Vector3();
   /** The last aim ray hit the ground itself (not a car or a building): hand mining only then. */
@@ -216,30 +218,31 @@ export class BuildController {
   }
 
   /**
-   * Aim from a world-space ray. In build mode the ray targets the ground plane
-   * (so you can build behind machines); otherwise it hits the first collider
-   * (to pick buildings for dismantling/interaction). Hollow buildings (garage) have no
-   * floor collider: a ray reaching the ground inside their footprint picks them.
+   * Aim from a world-space ray. In build mode the ray only sees the ground (so you can build behind
+   * machines, while hills still block it); otherwise it hits the first collider (to pick buildings for
+   * dismantling/interaction). Hollow buildings (garage) have no floor collider: a ray reaching the ground
+   * inside their footprint picks them.
    */
   updateAim(origin: THREE.Vector3, dir: THREE.Vector3, player: THREE.Vector3, exclude: RAPIER.Collider): void {
     this.aim.point = null;
     this.aim.cell = null;
     this.aim.buildingId = null;
+    this.aim.outside = false;
     this.aimGround = false;
     this.playerPos.copy(player);
     let p: THREE.Vector3 | null = null;
     let ground = false;
-    if (this.tool.kind === 'build') {
-      if (dir.y < -1e-4) p = origin.clone().addScaledVector(dir, -origin.y / dir.y);
-    } else {
-      this.ray.origin = { x: origin.x, y: origin.y, z: origin.z };
-      this.ray.dir = { x: dir.x, y: dir.y, z: dir.z };
-      const hit = this.world.physics.world.castRay(this.ray, 120, true, undefined, undefined, exclude);
-      if (hit) {
-        p = origin.clone().addScaledVector(dir, hit.timeOfImpact);
-        this.aim.buildingId = this.world.buildingOf(hit.collider);
-        ground = hit.collider.handle === this.world.ground.handle;
-      }
+    this.ray.origin = { x: origin.x, y: origin.y, z: origin.z };
+    this.ray.dir = { x: dir.x, y: dir.y, z: dir.z };
+    const world = this.world.physics.world;
+    const hit =
+      this.tool.kind === 'build'
+        ? world.castRay(this.ray, 120, true, undefined, undefined, exclude, undefined, (c) => this.world.isGround(c))
+        : world.castRay(this.ray, 120, true, undefined, undefined, exclude);
+    if (hit) {
+      p = origin.clone().addScaledVector(dir, hit.timeOfImpact);
+      if (this.tool.kind !== 'build') this.aim.buildingId = this.world.buildingOf(hit.collider);
+      ground = this.world.isGround(hit.collider);
     }
     if (!p) return;
     const flat = Math.hypot(p.x - player.x, p.z - player.z);
@@ -254,6 +257,7 @@ export class BuildController {
     const cx = Math.floor(q.x / FACTORY_CELL);
     const cz = Math.floor(q.z / FACTORY_CELL);
     this.aim.cell = this.sim.inBounds(cx, cz) ? [cx, cz] : null;
+    this.aim.outside = !this.aim.cell;
     if (this.aim.buildingId === null && this.aim.cell) {
       const b = this.sim.at(cx, cz);
       if (b && (this.tool.kind === 'build' || (ground && BUILDINGS[b.type].hollow))) this.aim.buildingId = b.id;
@@ -287,7 +291,8 @@ export class BuildController {
     const cell = this.aim.cell;
     if (!cell) {
       if (this.ghost) this.ghost.visible = false;
-      this.lastCheck = null;
+      // Ground within reach past the edge of the grid: say why nothing shows.
+      this.lastCheck = this.aim.outside ? { ok: false, error: 'outOfBounds', cells: [] } : null;
       return;
     }
     if (!this.ghost || this.ghostType !== type) this.makeGhost(type);
@@ -592,7 +597,9 @@ export class BuildController {
     const mine = this.mineTarget();
     if (mine) {
       // Flat highlight of the resource cell that E would mine.
-      this.highlight.position.set((mine.cell[0] + 0.5) * FACTORY_CELL, 0.2, (mine.cell[1] + 0.5) * FACTORY_CELL);
+      const mx = (mine.cell[0] + 0.5) * FACTORY_CELL;
+      const mz = (mine.cell[1] + 0.5) * FACTORY_CELL;
+      this.highlight.position.set(mx, this.sim.terrain.heightAt(mx, mz) + 0.2, mz);
       this.highlight.scale.set(FACTORY_CELL, 0.4, FACTORY_CELL);
       this.highlight.material = hoverMat;
       this.highlight.visible = true;
@@ -667,10 +674,11 @@ export class BuildController {
     if (this.tool.kind !== 'none' || !this.aimGround || this.aim.buildingId !== null || !cell || this.sim.at(cell[0], cell[1])) return null;
     const resource = this.sim.resourceAt(cell[0], cell[1]);
     if (!resource) return null;
-    // Distance to the nearest point of the cell.
+    // Distance to the nearest point of the cell (on its ground: from up a hill, a node below is out of reach).
     const nx = Math.max(cell[0] * FACTORY_CELL, Math.min(this.playerPos.x, (cell[0] + 1) * FACTORY_CELL));
     const nz = Math.max(cell[1] * FACTORY_CELL, Math.min(this.playerPos.z, (cell[1] + 1) * FACTORY_CELL));
-    return Math.hypot(nx - this.playerPos.x, nz - this.playerPos.z) <= HAND.MINE_REACH ? { cell, resource } : null;
+    const dy = this.playerPos.y - this.sim.terrain.heightAt(nx, nz);
+    return Math.hypot(nx - this.playerPos.x, dy, nz - this.playerPos.z) <= HAND.MINE_REACH ? { cell, resource } : null;
   }
 
   /** Hides the hover / dismantle / mine-cell highlights (controls taken away: driving, garage panel). */
@@ -811,6 +819,7 @@ export class BuildController {
       this.lineMesh.dispose();
     }
     this.highlight.removeFromParent();
+    this.highlight.geometry.dispose();
     this.outline.removeFromParent();
     this.outlineEdges.geometry.dispose();
     this.outlineFloor.geometry.dispose();

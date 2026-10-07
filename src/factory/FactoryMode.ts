@@ -4,7 +4,8 @@ import type { Mode } from '../core/ModeManager';
 import { addLightRig, type LightRig } from '../core/Renderer';
 import { GameState } from '../state/GameState';
 import { isTerrainId } from './sim/terrain';
-import { FactoryView } from './view/FactoryView';
+import { FactoryView, SUN_OFFSET } from './view/FactoryView';
+import { SKY } from './view/terrain/SkyDome';
 import { FactoryWorld } from './FactoryWorld';
 import { BUILD_ORDER, FactoryHud } from './FactoryHud';
 import { BuildController, describeError, describeLinks, type Tool } from './build/BuildController';
@@ -44,6 +45,8 @@ export interface FactoryModeParams {
   terrain?: string;
 }
 
+/** The player walks at most this far (m) past the edge of the grid. */
+const MAP_EDGE = 20;
 const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4', 'hotbar5', 'hotbar6', 'hotbar7', 'hotbar8'];
 /** The Escape keydown and the pointer-lock change arrive in either order: treat them as one press. */
 const ESC_GRACE_MS = 400;
@@ -83,6 +86,7 @@ export class FactoryMode implements Mode {
   private hudTimer = 0;
   private unsub: (() => void)[] = [];
   private readonly renderPos = new THREE.Vector3();
+  private readonly tmpV = new THREE.Vector3();
   private readonly fwd = new THREE.Vector3();
   private readonly raycaster = new THREE.Raycaster();
   private faceYaw = 0;
@@ -106,6 +110,12 @@ export class FactoryMode implements Mode {
   private eLatch = false;
   /** E held on a belt: seconds held and the line it picks up when HAND.BELT_LINE_SECONDS is reached. */
   private beltHold: { t: number; ids: Set<number>; taken: ItemCounts } | null = null;
+  /** Last grounded positions (one every 0.25 s, ring of 4): where a fall through the relief comes back. */
+  private readonly lastGround: (THREE.Vector3 | null)[] = [null, null, null, null];
+  private lastGroundAt = 0;
+  private lastGroundT = 0;
+  /** Terrain slope under the player (avatar feet). */
+  private readonly slope = { x: 0, z: 0 };
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(62, 0.1, 1500);
@@ -114,7 +124,7 @@ export class FactoryMode implements Mode {
   }
 
   enter(params?: FactoryModeParams): void {
-    const terrain = import.meta.env.DEV && isTerrainId(params?.terrain) ? params.terrain : null;
+    const devTerrain = import.meta.env.DEV && isTerrainId(params?.terrain) ? params.terrain : null;
     if (params?.layout === 'stress') {
       this.sim = new FactorySim({ hub: null, width: 64, height: 64 });
       spawnStressLoops(this.sim);
@@ -124,9 +134,9 @@ export class FactoryMode implements Mode {
       this.state.player = null;
       this.state.cars = [];
       this.state.builds = [];
-    } else if (terrain) {
+    } else if (devTerrain) {
       const settings = this.state.settings;
-      this.state.replaceWith(new GameState(FactorySim.newGame({ terrain })));
+      this.state.replaceWith(new GameState(FactorySim.newGame({ terrain: devTerrain })));
       this.state.settings = settings;
       this.state.ephemeral = true;
       this.state.tier = TIERS.length;
@@ -140,18 +150,33 @@ export class FactoryMode implements Mode {
         this.state.tier = TIERS.length;
       }
     }
-    this.rig = addLightRig(this.scene, { shadowSize: 45, fog: [90, 320] });
+    this.rig = addLightRig(
+      this.scene,
+      this.sim.terrain.flat
+        ? { shadowSize: 45, fog: [90, 320] }
+        : // Relief: green ground bounce, warmer sun, fog melting the far hills into the horizon.
+          { shadowSize: 50, sky: SKY.horizon, hemiSky: 0xdbe9ff, ground: 0x5b6b3c, hemiIntensity: 0.95, sunColor: 0xfff1d6, sunIntensity: 2.9, sunOffset: SUN_OFFSET, fog: [140, 620] },
+    );
     this.view = new FactoryView(this.game.assets, this.sim);
     this.scene.add(this.view.root);
     this.world = new FactoryWorld(this.sim);
 
     // A saved position inside a building (e.g. where the hub's bench now stands) falls back to the spawn.
+    // On the relief, never under the ground (the heightfield has one side: a capsule below falls through).
+    const terrain = this.sim.terrain;
     const saved = this.state.player;
     const inside = saved ? this.sim.at(Math.floor(saved.x / FACTORY_CELL), Math.floor(saved.z / FACTORY_CELL)) : undefined;
-    const spawn = saved && (!inside || isBelt(inside.type) || BUILDINGS[inside.type].hollow)
-      ? new THREE.Vector3(saved.x, saved.y, saved.z)
-      : new THREE.Vector3(FACTORY_MAP.spawn.x * FACTORY_CELL, 0.1, FACTORY_MAP.spawn.z * FACTORY_CELL);
-    this.player = new CharacterController(this.world.physics, spawn);
+    let spawn: THREE.Vector3;
+    if (saved && (!inside || isBelt(inside.type) || BUILDINGS[inside.type].hollow)) {
+      const x = this.clampToMap(saved.x, this.sim.width);
+      const z = this.clampToMap(saved.z, this.sim.height);
+      spawn = new THREE.Vector3(x, Math.max(saved.y, terrain.heightAt(x, z) + 0.05), z);
+    } else spawn = this.spawnPoint(new THREE.Vector3());
+    this.player = new CharacterController(
+      this.world.physics,
+      spawn,
+      terrain.flat ? null : { minY: terrain.minY - 10, respawn: (_cur, out) => this.safeSpot(out) },
+    );
     // Cars: old saves' cars without a place park in free garage bays.
     this.state.parkCars();
     this.cars = new FactoryCars(this.game.assets, this.world.physics, this.scene, this.state, {
@@ -164,7 +189,7 @@ export class FactoryMode implements Mode {
     });
     this.avatar = new PlayerAvatar(this.game.assets);
     this.scene.add(this.avatar.root);
-    this.orbit = new OrbitCamera(this.camera, this.world.physics, this.player.collider);
+    this.orbit = new OrbitCamera(this.camera, this.world.physics, this.player.collider, terrain.flat ? {} : { groundAt: (x, z) => terrain.heightAt(x, z) });
     // New game: spawn south of the hub looking toward it (+Z).
     this.orbit.yaw = this.state.player ? this.state.player.yaw : 0;
     this.faceYaw = this.orbit.yaw;
@@ -241,6 +266,8 @@ export class FactoryMode implements Mode {
       setCrafting: (active) => this.view.setCrafting(active),
       resume: () => this.resume(),
       menu: () => void this.game.switchMode('menu'),
+      home: () => this.goHome(),
+      canGoHome: () => !this.driving,
       settings: () => openSettings(this.game, this.state, () => this.applySettings()),
       closePanel: () => this.closePanel(),
     });
@@ -367,7 +394,37 @@ export class FactoryMode implements Mode {
     this.player.cur.copy(pos);
     this.player.prev.copy(pos);
     this.orbit.yaw = yaw;
+    this.orbit.snap();
     this.faceYaw = yaw;
+  }
+
+  /** New game's spawn, south of the hub, on the ground. */
+  private spawnPoint(out: THREE.Vector3): THREE.Vector3 {
+    const x = FACTORY_MAP.spawn.x * FACTORY_CELL;
+    const z = FACTORY_MAP.spawn.z * FACTORY_CELL;
+    return out.set(x, this.sim.terrain.heightAt(x, z) + 0.1, z);
+  }
+
+  /** Keeps a coordinate within MAP_EDGE m of the grid (m). */
+  private clampToMap(v: number, cells: number): number {
+    return Math.max(-MAP_EDGE, Math.min(cells * FACTORY_CELL + MAP_EDGE, v));
+  }
+
+  /** Where a player who fell through the relief comes back: a recent grounded spot, else the spawn. */
+  private safeSpot(out: THREE.Vector3): THREE.Vector3 {
+    const p = this.lastGround[this.lastGroundAt % this.lastGround.length];
+    if (!p) return this.spawnPoint(out).setY(this.sim.terrain.heightAt(out.x, out.z) + 0.5);
+    return out.set(p.x, Math.max(p.y, this.sim.terrain.heightAt(p.x, p.z)) + 0.5, p.z);
+  }
+
+  /** Pause menu « Revenir au hangar »: back to the spawn (stuck between a slope and a wall, lost on a hill). */
+  private goHome(): void {
+    if (this.driving) return;
+    const p = this.spawnPoint(new THREE.Vector3());
+    this.teleportPlayer(p, 0);
+    this.lastGround.fill(null);
+    this.state.player = { x: p.x, y: p.y, z: p.z, yaw: 0 };
+    void this.resume();
   }
 
   private enterCar(id: string): void {
@@ -586,8 +643,28 @@ export class FactoryMode implements Mode {
       sprint = input.isDown('sprint') || this.padSprint;
       jump = input.consume('jump');
     }
-    this.player.step(dt, { dirX, dirZ, sprint, jump }, GRAVITY_FACTORY);
+    // Map edge: no walking further out than MAP_EDGE m past the grid (the cliffs stop the player first).
+    const p = this.player.cur;
+    const hi = (n: number) => n * FACTORY_CELL + MAP_EDGE;
+    if ((p.x <= -MAP_EDGE && dirX < 0) || (p.x >= hi(this.sim.width) && dirX > 0)) dirX = 0;
+    if ((p.z <= -MAP_EDGE && dirZ < 0) || (p.z >= hi(this.sim.height) && dirZ > 0)) dirZ = 0;
+    const terrain = this.sim.terrain;
+    if (p.x < -MAP_EDGE - 1 || p.z < -MAP_EDGE - 1 || p.x > hi(this.sim.width) + 1 || p.z > hi(this.sim.height) + 1) {
+      const x = this.clampToMap(p.x, this.sim.width);
+      const z = this.clampToMap(p.z, this.sim.height);
+      this.player.teleport(this.tmpV.set(x, Math.max(p.y, terrain.heightAt(x, z) + 0.05), z));
+    }
+    // Wading in the lake.
+    const speedScale = terrain.waterDepthAt(p.x, p.z) > 0.25 ? 0.6 : 1;
+    this.player.step(dt, { dirX, dirZ, sprint, jump, speedScale }, GRAVITY_FACTORY);
     this.world.physics.step(dt);
+    // A grounded spot every 0.25 s, for the fall safety.
+    this.lastGroundT += dt;
+    if (this.player.grounded && this.lastGroundT >= 0.25) {
+      this.lastGroundT = 0;
+      const slot = (this.lastGroundAt = (this.lastGroundAt + 1) % this.lastGround.length);
+      (this.lastGround[slot] ??= new THREE.Vector3()).copy(this.player.cur);
+    }
   }
 
   update(dt: number, alpha: number): void {
@@ -638,7 +715,11 @@ export class FactoryMode implements Mode {
       const d = this.player.cur.clone().sub(this.player.prev);
       if (d.lengthSq() > 1e-6) this.faceYaw = Math.atan2(d.x, d.z);
     }
-    this.avatar.update(dt, this.renderPos, this.player.speed, this.player.grounded, this.faceYaw, this.player.landedImpact);
+    const terrain = this.sim.terrain;
+    const ground = terrain.flat
+      ? null
+      : (terrain.slopeAt(this.renderPos.x, this.renderPos.z, this.slope), { y: terrain.heightAt(this.renderPos.x, this.renderPos.z), sx: this.slope.x, sz: this.slope.z });
+    this.avatar.update(dt, this.renderPos, this.player.speed, this.player.grounded, this.faceYaw, this.player.landedImpact, ground);
     this.player.landedImpact = 0;
 
     // Aim: screen center when locked, cursor in free mode (none while the garage camera frames the bay).
@@ -672,7 +753,7 @@ export class FactoryMode implements Mode {
 
     this.rig.follow(this.renderPos);
     this.view.setPortEmphasis(this.build.tool.kind === 'build' && !this.garagePanel.isOpen);
-    this.view.update(dt, this.game.loop.factoryAlpha);
+    this.view.update(dt, this.game.loop.factoryAlpha, this.camera.position);
     this.tickHud(dt);
     this.state.player = { x: this.player.cur.x, y: this.player.cur.y, z: this.player.cur.z, yaw: this.orbit.yaw };
   }
@@ -696,7 +777,7 @@ export class FactoryMode implements Mode {
     this.hud.setCrosshair(false);
     this.updateHint();
     this.rig.follow(this.renderPos);
-    this.view.update(dt, this.game.loop.factoryAlpha);
+    this.view.update(dt, this.game.loop.factoryAlpha, this.camera.position);
     this.tickHud(dt);
     // state.player keeps the spot where the player got in (a reload never spawns inside the car).
   }
@@ -970,11 +1051,14 @@ export class FactoryMode implements Mode {
     };
   }
 
-  /** Dev helper: point the camera so that the screen center aims at a world cell. */
+  /** Dev helper: point the camera so that the screen center aims at a world cell (its ground). */
   debugLookAtCell(x: number, z: number): void {
-    const target = new THREE.Vector3((x + 0.5) * FACTORY_CELL, 0, (z + 0.5) * FACTORY_CELL);
+    const tx = (x + 0.5) * FACTORY_CELL;
+    const tz = (z + 0.5) * FACTORY_CELL;
+    const target = new THREE.Vector3(tx, this.sim.terrain.heightAt(tx, tz), tz);
     const p = this.player.cur;
     this.orbit.yaw = Math.atan2(target.x - p.x, target.z - p.z);
+    this.orbit.pitch = Math.max(-1.35, Math.min(0.9, Math.atan2(target.y - (p.y + PLAYER.CAMERA_HEIGHT), Math.hypot(target.x - p.x, target.z - p.z))));
   }
 
   exit(): void {
@@ -988,6 +1072,7 @@ export class FactoryMode implements Mode {
     // Cars hold Rapier bodies: free them before the world.
     this.cars.dispose();
     this.player.dispose();
+    this.avatar.dispose();
     this.world.dispose();
     this.view.dispose();
     this.rig.dispose();
