@@ -3,14 +3,20 @@ import type { GameState } from '../../state/GameState';
 import { SaveManager } from '../../state/SaveManager';
 import { el } from '../dom';
 import { html, padGlyph } from '../padHints';
+import { GRASS_QUALITIES, type GrassQuality } from '../../data/factoryTerrain';
+
+const GRASS_LABELS: Record<GrassQuality, string> = { off: 'Désactivée', low: 'Basse', medium: 'Moyenne', high: 'Haute' };
 
 /** Applies settings that live outside the modes (renderer). */
 export function applySettings(game: Game, state: GameState): void {
   game.renderer.setShadows(state.settings.shadows);
 }
 
-/** Modal settings panel (sensitivity, invert Y, shadows). Calls `onClose` when dismissed. */
-export function openSettings(game: Game, state: GameState, onClose?: () => void): HTMLElement {
+/**
+ * Modal settings panel (sensitivity, invert Y, shadows, grass). Calls `onChange` right after a setting
+ * the current mode shows changes (the grass), `onClose` when dismissed.
+ */
+export function openSettings(game: Game, state: GameState, onClose?: () => void, onChange?: () => void): HTMLElement {
   const s = state.settings;
   const slider = (value: number, set: (v: number) => void) => {
     const input = el('input', { type: 'range', min: 0.3, max: 3, step: 0.05, value }) as HTMLInputElement;
@@ -29,12 +35,16 @@ export function openSettings(game: Game, state: GameState, onClose?: () => void)
   invert.checked = s.invertY;
   const shadows = el('input', { type: 'checkbox' }) as HTMLInputElement;
   shadows.checked = s.shadows;
+  const grass = el('select', { title: 'Herbe animée sur la carte de l’usine : moins dense pour gagner des images par seconde' }) as HTMLSelectElement;
+  for (const q of GRASS_QUALITIES) grass.appendChild(el('option', { value: q }, GRASS_LABELS[q]));
+  grass.value = s.grass;
   const panel = el('div', { class: 'panel center modal settings-panel', 'data-pad-scope': '' },
     el('h2', {}, 'Réglages'),
     el('label', { class: 'row setting' }, el('span', {}, 'Sensibilité de la souris'), el('span', { class: 'spacer' }), sens, sensVal),
     el('label', { class: 'row setting' }, el('span', {}, 'Sensibilité de la manette'), el('span', { class: 'spacer' }), padSens, padSensVal),
     el('label', { class: 'row setting' }, el('span', {}, 'Inverser l’axe vertical'), el('span', { class: 'spacer' }), invert),
     el('label', { class: 'row setting' }, el('span', {}, 'Ombres'), el('span', { class: 'spacer' }), shadows),
+    el('label', { class: 'row setting' }, el('span', {}, 'Herbe'), el('span', { class: 'spacer' }), grass),
     el('div', { class: 'muted small' }, 'Les touches suivent la position physique : ZQSD sur un clavier AZERTY, WASD en QWERTY. La manette (Xbox, PlayStation…) se branche à tout moment.'),
     el('div', { class: 'row', style: 'margin-top:12px' },
       // Pad: how to change a value.
@@ -47,6 +57,10 @@ export function openSettings(game: Game, state: GameState, onClose?: () => void)
   shadows.addEventListener('change', () => {
     s.shadows = shadows.checked;
     applySettings(game, state);
+  });
+  grass.addEventListener('change', () => {
+    if ((GRASS_QUALITIES as readonly string[]).includes(grass.value)) s.grass = grass.value as GrassQuality;
+    onChange?.();
   });
   const layer = el('div', { class: 'ui-layer settings-layer' }, panel);
   const close = () => {

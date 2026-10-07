@@ -10,6 +10,10 @@ export type TerrainId = 'flat' | 'vallonne-1';
 
 export const TERRAIN_IDS: readonly TerrainId[] = ['flat', 'vallonne-1'];
 
+/** « Herbe » setting: density of the animated grass on the relief map. */
+export type GrassQuality = 'off' | 'low' | 'medium' | 'high';
+export const GRASS_QUALITIES: readonly GrassQuality[] = ['off', 'low', 'medium', 'high'];
+
 /** Terrain of a new game, and of a save that names none. */
 export const FACTORY_TERRAIN_DEFAULT: TerrainId = 'vallonne-1';
 

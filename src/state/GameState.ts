@@ -8,7 +8,7 @@ import { Inventory, Wallet, type Stack } from './Inventory';
 import { LEGACY_MAP_OFFSET } from '../data/factoryMap';
 import { FACTORY_CELL } from '../config/constants';
 import { TIERS, isUnlocked } from '../data/tiers';
-import { TERRAIN_RULES } from '../data/factoryTerrain';
+import { GRASS_QUALITIES, TERRAIN_RULES, type GrassQuality } from '../data/factoryTerrain';
 import type { BuildingType } from '../data/buildings';
 import type { Inventory as ItemCounts } from '../data/items';
 
@@ -18,9 +18,11 @@ export interface Settings {
   padSensitivity: number;
   invertY: boolean;
   shadows: boolean;
+  /** « Herbe »: density of the animated grass on the relief map. */
+  grass: GrassQuality;
 }
 
-export const DEFAULT_SETTINGS: Settings = { mouseSensitivity: 1, padSensitivity: 1, invertY: false, shadows: true };
+export const DEFAULT_SETTINGS: Settings = { mouseSensitivity: 1, padSensitivity: 1, invertY: false, shadows: true, grass: 'medium' };
 
 export interface PlayerSave {
   x: number;
@@ -173,6 +175,7 @@ export class GameState {
     s.selectedCarId = sel === undefined ? (s.cars[0]?.id ?? null) : sel !== null && !s.cars.some((c) => c.id === sel) ? (s.cars[0]?.id ?? null) : sel;
     s.records = data.records ?? {};
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) };
+    if (!GRASS_QUALITIES.includes(s.settings.grass)) s.settings.grass = DEFAULT_SETTINGS.grass;
     s.objectives = data.objectives ?? {};
     s.carCounter = data.carCounter ?? s.cars.length;
     s.inventory = Inventory.fromSave(data.inventory);

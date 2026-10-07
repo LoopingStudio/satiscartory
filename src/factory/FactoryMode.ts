@@ -6,6 +6,7 @@ import { GameState } from '../state/GameState';
 import { isTerrainId } from './sim/terrain';
 import { FactoryView, SUN_OFFSET } from './view/FactoryView';
 import { SKY } from './view/terrain/SkyDome';
+import { GRASS_PUSHERS } from './view/terrain/GrassField';
 import { FactoryWorld } from './FactoryWorld';
 import { BUILD_ORDER, FactoryHud } from './FactoryHud';
 import { BuildController, describeError, describeFill, describeLinks, type Tool } from './build/BuildController';
@@ -271,7 +272,7 @@ export class FactoryMode implements Mode {
       menu: () => void this.game.switchMode('menu'),
       home: () => this.goHome(),
       canGoHome: () => !this.driving,
-      settings: () => openSettings(this.game, this.state, () => this.applySettings()),
+      settings: () => openSettings(this.game, this.state, () => this.applySettings(), () => this.applySettings()),
       closePanel: () => this.closePanel(),
     });
     this.build.onChange = () => this.hud.onToolChanged(this.build.tool);
@@ -351,6 +352,7 @@ export class FactoryMode implements Mode {
   private applySettings(): void {
     this.orbit.sensitivity = PLAYER.MOUSE_SENSITIVITY * this.state.settings.mouseSensitivity;
     this.orbit.invertY = this.state.settings.invertY;
+    this.view.setGrassQuality(this.state.settings.grass);
   }
 
   private onCanvasClick = () => {
@@ -412,6 +414,16 @@ export class FactoryMode implements Mode {
     this.orbit.snap();
     this.faceYaw = yaw;
   }
+
+  /** What pushes the grass aside: the player's feet (on foot), the driven car and the nearest parked cars. */
+  private pushers(feet: THREE.Vector3 | null): { x: number; z: number; r: number }[] {
+    const list = this.pushList;
+    list.length = 0;
+    if (feet) list.push({ x: feet.x, z: feet.z, r: 0.6 });
+    this.cars.pushers(this.camera.position, list, GRASS_PUSHERS);
+    return list;
+  }
+  private readonly pushList: { x: number; z: number; r: number }[] = [];
 
   /** New game's spawn, south of the hub, on the ground. */
   private spawnPoint(out: THREE.Vector3): THREE.Vector3 {
@@ -791,6 +803,7 @@ export class FactoryMode implements Mode {
     const building = this.build.tool.kind === 'build' && !this.garagePanel.isOpen;
     this.view.setPortEmphasis(building);
     this.view.setBuildGrid(building, this.build.aim.point);
+    this.view.setPushers(this.pushers(this.avatar.root.visible ? this.renderPos : null));
     this.view.update(dt, this.game.loop.factoryAlpha, this.camera.position);
     this.tickHud(dt);
     this.state.player = { x: this.player.cur.x, y: this.player.cur.y, z: this.player.cur.z, yaw: this.orbit.yaw };
@@ -815,6 +828,7 @@ export class FactoryMode implements Mode {
     this.hud.setCrosshair(false);
     this.updateHint();
     this.view.setBuildGrid(false, null);
+    this.view.setPushers(this.pushers(null));
     this.rig.follow(this.renderPos);
     this.view.update(dt, this.game.loop.factoryAlpha, this.camera.position);
     this.tickHud(dt);

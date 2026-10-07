@@ -20,6 +20,8 @@ import { SkyDome } from './terrain/SkyDome';
 import { TerrainTextures } from './terrain/terrainTextures';
 import { groundUniforms } from './terrain/groundMaterial';
 import { Foundations } from './Foundations';
+import { GRASS_PUSHERS, GrassField, grassUniforms } from './terrain/GrassField';
+import type { GrassQuality } from '../../data/factoryTerrain';
 import { deckPitch, deckShear } from './terrain/deck';
 import { deckY, type DeckPlane } from '../sim/terrain';
 import type { TerrainRect } from '../sim/FactorySim';
@@ -63,6 +65,7 @@ export class FactoryView {
   /** Relief map: per-cell data for the shaders, foundations under pads and belts, belt decks per cell (c, sx, sz). */
   private textures: TerrainTextures | null = null;
   private foundations: Foundations | null = null;
+  private grass: GrassField | null = null;
   private foundationsDirty = true;
   private decks: Float32Array | null = null;
   /** Ground changed (corners) since the last frame. */
@@ -89,6 +92,14 @@ export class FactoryView {
       this.foundations = new Foundations(sim);
       this.root.add(this.foundations.mesh);
       this.decks = new Float32Array(sim.width * sim.height * 3);
+      this.grass = new GrassField();
+      grassUniforms.uHeights.value = this.textures.heights;
+      grassUniforms.uCells.value = this.textures.cells;
+      grassUniforms.uLattice.value.set(t.margin, t.nx - 1, t.nz - 1);
+      grassUniforms.uWater.value = t.lake ? t.lake.level / 100 : -1e9;
+      grassUniforms.uFlatten.value.set(0, 0, 10, 0);
+      for (const p of grassUniforms.uPush.value) p.set(0, 0, 0);
+      this.root.add(this.grass.root);
     }
     for (const b of sim.buildings.values()) this.addVisual(b);
     const cellsOf = (b: Building) => this.sim.cellsFor(b.type, b.x, b.z, b.rot);
@@ -448,6 +459,25 @@ export class FactoryView {
     if (point) groundUniforms.uGrid.value.set(point.x, point.z, 12, this.gridAlpha);
   }
 
+  /** « Herbe » setting (relief map only). */
+  setGrassQuality(q: GrassQuality): void {
+    this.grass?.setQuality(q);
+  }
+
+  /**
+   * What pushes the grass aside this frame: (x, z, radius) each, at most GRASS_PUSHERS (the player's feet,
+   * the cars).
+   */
+  setPushers(list: readonly { x: number; z: number; r: number }[]): void {
+    if (!this.grass) return;
+    const u = grassUniforms.uPush.value;
+    for (let k = 0; k < GRASS_PUSHERS; k++) {
+      const p = list[k];
+      if (p) u[k]!.set(p.x, p.z, p.r);
+      else u[k]!.set(0, 0, 0);
+    }
+  }
+
   /** The ground changed: mesh, textures, decks (belts, splitters, mergers) and foundations follow. */
   private applyTerrain(): void {
     const r = this.terrainDirty;
@@ -477,6 +507,11 @@ export class FactoryView {
       }
       this.gridAlpha = Math.max(0, Math.min(1, this.gridAlpha + (this.gridOn ? dt : -dt) / 0.15));
       groundUniforms.uGrid.value.w = this.gridAlpha;
+      // Grass: wind time, the camera it wraps around, shortened around the aim while building.
+      grassUniforms.uTime.value = this.t;
+      if (viewer) grassUniforms.uCam.value.set(viewer.x, viewer.z);
+      const g = groundUniforms.uGrid.value;
+      grassUniforms.uFlatten.value.set(g.x, g.y, 10, this.gridAlpha);
     }
     if (this.conveyorsDirty) this.rebuildConveyors();
     if (this.markersDirty) this.rebuildMarkers();
@@ -551,6 +586,8 @@ export class FactoryView {
     for (const o of this.owned) o.dispose();
     this.textures?.dispose();
     this.foundations?.dispose();
+    this.grass?.dispose();
+    if (grassUniforms.uCells.value === this.textures?.cells) grassUniforms.uCells.value = grassUniforms.uHeights.value = null;
     if (groundUniforms.uCells.value === this.textures?.cells) groundUniforms.uCells.value = null;
     this.terrainMesh?.dispose();
     this.water?.dispose();

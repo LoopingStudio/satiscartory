@@ -105,3 +105,34 @@ describe('GameState tiers', () => {
     expect(s.sim.storage).toEqual(hub);
   });
 });
+
+describe('GameState on the relief', () => {
+  it('the « Herbe » setting defaults to medium and falls back to it when invalid', () => {
+    const data = new GameState().serialize();
+    data.settings = { ...data.settings };
+    delete (data.settings as Record<string, unknown>).grass;
+    expect(GameState.fromSave(data).settings.grass).toBe('medium');
+    expect(GameState.fromSave({ ...data, settings: { ...data.settings, grass: 'ultra' as never } }).settings.grass).toBe('medium');
+    expect(GameState.fromSave({ ...data, settings: { ...data.settings, grass: 'off' } }).settings.grass).toBe('off');
+  });
+
+  it('a save from before the relief: a car left in the lake waits for a bay, a player deep in it starts at the spawn', () => {
+    const data = new GameState().serialize();
+    data.factory.version = 3;
+    delete data.factory.terrain;
+    const s0 = new GameState();
+    const lake = s0.sim.terrain.lake!;
+    const x = lake.x * FACTORY_CELL;
+    const z = lake.z * FACTORY_CELL;
+    data.cars = [
+      { id: 'wet', name: 'Wet', blueprint: 'kart', parts: {}, pose: { x, y: 0, z, yaw: 0 } },
+      { id: 'dry', name: 'Dry', blueprint: 'kart', parts: {}, pose: { x: 127, y: 0, z: 110, yaw: 0 } },
+    ];
+    data.player = { x, y: 0.1, z, yaw: 0 };
+    const s = GameState.fromSave(data);
+    expect(s.sim.terrain.id).toBe('vallonne-1');
+    expect(s.cars.find((c) => c.id === 'wet')!.pose).toBeNull();
+    expect(s.cars.find((c) => c.id === 'dry')!.pose).toEqual({ x: 127, y: 0, z: 110, yaw: 0 });
+    expect(s.player).toBeNull();
+  });
+});

@@ -503,6 +503,24 @@ export class FactoryCars {
     }
   }
 
+  /**
+   * Adds what the cars push aside in the grass to `out` (x, z, radius), up to `max` entries in all: the
+   * driven car, then the parked ones nearest to `from`.
+   */
+  pushers(from: THREE.Vector3, out: { x: number; z: number; r: number }[], max: number): void {
+    if (this.driving && out.length < max) out.push({ x: this.pos.x, z: this.pos.z, r: 2.2 });
+    const parked: { x: number; z: number; d: number }[] = [];
+    for (const e of this.entries.values()) {
+      if (e.vehicle) continue;
+      parked.push({ x: e.placed.x, z: e.placed.z, d: (e.placed.x - from.x) ** 2 + (e.placed.z - from.z) ** 2 });
+    }
+    parked.sort((a, b) => a.d - b.d);
+    for (const p of parked) {
+      if (out.length >= max) break;
+      out.push({ x: p.x, z: p.z, r: 2 });
+    }
+  }
+
   /** Speed of the driven car (km/h, 0 on foot). */
   speedKmh(): number {
     const v = this.driving?.vehicle;
