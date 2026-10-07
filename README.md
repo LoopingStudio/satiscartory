@@ -49,7 +49,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | E près d'une voiture garée | Monter, à 3,2 m au plus (un bâtiment visé passe avant ; voir ci-dessous) |
 | Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
 | A | Menu de construction : bâtiments par catégorie, miniature, coût (j'ai / il faut) et palier ; clic pour placer |
-| Échap | Fermer l'outil actif (construction, démontage) ; sans outil, pause |
+| Échap | Fermer l'outil actif (construction, démontage) ; sans outil, pause (« Revenir au hangar » y ramène le joueur, perdu dans les collines ou coincé) |
 
 ### Voiture dans l'usine
 
@@ -170,6 +170,17 @@ Chaque machine montre où brancher un convoyeur : devant chaque **sortie**, une 
 - Le panneau d'une foreuse ou d'une machine (E) dit si son entrée et sa sortie sont reliées.
 - **Ramasser sur un convoyeur** : E prend les objets de la case visée ; maintenir E (0,5 s) prend ceux de toute la ligne, en surbrillance pendant qu'on vise. Ça marche aussi sur un répartiteur ou un fusionneur, et la ligne les traverse. Pratique pour vider une ligne bouchée ou se servir au passage.
 
+## Relief
+
+La carte de l'usine est vallonnée : un plateau plat autour du hangar et des premiers gisements, des collines de 4 à 8 m, quelques crêtes trop raides, un lac, des forêts, et une falaise puis des montagnes tout autour. L'herbe ondule au vent et s'écarte au passage ; le réglage « Herbe » (Désactivée, Basse, Moyenne, Haute) règle sa densité. Avec un outil de construction en main, une grille apparaît au sol autour de la visée.
+
+- **Poser un bâtiment aplanit le sol** : foreuse, machines, garage reposent sur une dalle de béton à la hauteur moyenne du terrain, entourée d'un talus en terre. Une dalle voisine à 40 cm près donne la même hauteur (une rangée de machines sur une pente fait des terrasses). Le fantôme montre la dalle et l'indication du bas le terrassement (« fondation +0,4 m · déblai 0,5 m »). Le démontage rend le sol d'origine.
+- **Limites** : rien dans l'eau ; sous un bâtiment, 14° au plus et 1,5 m de dénivelé (« Terrain trop en pente : 17° (14° au plus sous un bâtiment) ») ; devant la porte d'un garage, une pente qu'une voiture peut descendre.
+- **Les convoyeurs suivent le sol** sans le modifier : ils montent et descendent jusqu'à 22°, et les objets suivent la pente. Une case trop raide ou dans l'eau compte comme un obstacle : le tracé en L la contourne, et une sortie qui y donne est signalée bloquée.
+- **Arbres et rochers** : on bute contre les troncs et les gros rochers. Construire dessus les fait disparaître ; ils reviennent quand on démonte.
+- **Voitures** : elles se garent et repartent inclinées sur la pente et tiennent à l'arrêt ; une voiture tombée dans le lac revient au sec. Au-delà de 25°, on ne peut pas descendre.
+- Une ancienne sauvegarde (construite à plat) garde tous ses bâtiments : ils sont posés sur des fondations, et un message l'explique au premier chargement.
+
 ## Garage et voitures
 
 Le garage est un bâtiment de l’usine (touche 6, palier 5 ; 40 plaques, 24 tiges, 80 boulons). Il occupe 3×4 cases et abrite **une** place de voiture : des murs sur trois côtés, toute la face avant ouverte en porte, que marque une flèche bleue sur le fantôme. Il n’y a plus de touche G ni d’écran Garage à part.
@@ -186,7 +197,7 @@ Le garage est un bâtiment de l’usine (touche 6, palier 5 ; 40 plaques, 24 tig
 src/
   core/        boucle à pas fixe (physique 60 Hz, usine 20 Hz), rendu, entrées (clavier, souris, manette), assets GLTF, Rapier
   data/        données de jeu : objets, recettes, bâtiments, paliers, carte, voitures, pièces, circuits, équilibrage
-  factory/     sim/ (pure, déterministe, testée), view/ (instancing), build/ (construction), cars/ (voitures garées et conduites), FactoryMode
+  factory/     sim/ (pure, déterministe, testée ; relief et décor compris), view/ (instancing ; terrain/ : sol, herbe, décor, lac, ciel), build/ (construction), cars/ (voitures garées et conduites), FactoryMode
   player/      contrôleur de personnage, caméra orbitale, avatar
   car/         stats et réglages (purs), modèle 3D
   vehicle/     raycast vehicle Rapier, caméra de poursuite, entrées
@@ -208,7 +219,8 @@ Le plan de référence est dans `docs/PLAN.md`, les décisions dans `docs/DECISI
 |---|---|
 | `?mode=gallery` | Tous les modèles, contrôle des échelles, test Rapier |
 | `?mode=factory&layout=demo` | Usine de démonstration (foreuses → fonderies → constructeurs : plaques, tiges, boulons, pneus) |
-| `?mode=factory&layout=stress` | 2 100 objets sur les convoyeurs |
+| `?mode=factory&layout=stress` | 2 100 objets sur les convoyeurs (grille plate de 64×64) |
+| `?mode=factory&terrain=vallonne-1\|flat` | Partie neuve sur ce relief, jamais sauvegardée (la vraie partie n'est pas touchée) : tous les paliers et 1 000 de chaque objet au hangar. Avec `&layout=demo`, l'usine de démonstration y est posée |
 | `?mode=race&track=oval\|hill\|test\|drag\|pad&car=loaner\|kart\|kartr\|sport\|sportr` | Course directe |
 | `?tune=1` ou F3 | Debug physique et panneau de réglages du véhicule |
-| `window.T` | Automatisation par événements réels (`T.autopilot`, `T.drag`, `T.aimCell`…) et manette virtuelle servie par `navigator.getGamepads()` (`T.pad.press('a')`, `T.pad.tilt('left', 0, -1, 500)`, `T.pad.trigger('right', 1)`, `T.padFocus()`) |
+| `window.T` | Automatisation par événements réels (`T.autopilot`, `T.drag`, `T.aimCell`, `T.terrain.heightAt`, `T.aimInfo()`…) et manette virtuelle servie par `navigator.getGamepads()` (`T.pad.press('a')`, `T.pad.tilt('left', 0, -1, 500)`, `T.pad.trigger('right', 1)`, `T.padFocus()`) |
