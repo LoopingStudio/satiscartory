@@ -37,7 +37,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | ZQSD | Se déplacer |
 | Maj | Courir |
 | Espace | Sauter |
-| 1 à 6 | Convoyeur, foreuse, fonderie, constructeur, assembleuse, garage (une fois leur palier débloqué) |
+| 1 à 6 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage (une fois leur palier débloqué) |
 | R | Tourner (sur le fantôme d'un garage, une flèche bleue marque la porte) |
 | Clic gauche | Poser (maintenu : tracer des convoyeurs) |
 | F | Démonter |
@@ -47,7 +47,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | E sur un garage | Panneau du garage : assembler une voiture dans sa place, changer ses pièces, la démonter, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
 | E près d'une voiture garée | Monter, à 3,2 m au plus (un bâtiment visé passe avant ; voir ci-dessous) |
 | Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
-| A | Menu de construction |
+| A | Menu de construction : bâtiments par catégorie, miniature, coût (j'ai / il faut) et palier ; clic pour placer |
 | Échap | Fermer l'outil actif (construction, démontage) ; sans outil, pause |
 
 ### Voiture dans l'usine

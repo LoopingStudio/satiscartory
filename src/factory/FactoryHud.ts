@@ -3,7 +3,7 @@ import { ITEMS, ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId 
 import { recipesFor, RECIPES_BY_ID, type Recipe } from '../data/recipes';
 import { DRILL, MACHINE } from '../data/balance';
 import { RESOURCES } from '../data/factoryMap';
-import { clear, createLayer, el } from '../ui/dom';
+import { append, clear, createLayer, el } from '../ui/dom';
 import type { FactorySim } from './sim/FactorySim';
 import { isMachine, type DrillB, type MachineB } from './sim/types';
 import type { Tool } from './build/BuildController';
@@ -11,6 +11,22 @@ import type { Inventory, Stack, Wallet } from '../state/Inventory';
 import type { ItemIcons } from '../core/assets/IconRenderer';
 import { INVENTORY } from '../data/inventory';
 import { TIERS, tierOf } from '../data/tiers';
+import { FACTORY_CELL } from '../config/constants';
+
+/** Build menu sections, in BUILD_MENU order (the 1-6 shortcuts follow BUILD_MENU). */
+const BUILD_CATEGORIES: { name: string; types: BuildingType[] }[] = [
+  { name: 'Logistique', types: ['conveyor'] },
+  { name: 'Extraction', types: ['drill'] },
+  { name: 'Production', types: ['smelter', 'press', 'assembler'] },
+  { name: 'Véhicules', types: ['garage'] },
+];
+
+/** What a building is for, in the build menu's detail pane (machines also list their recipes). */
+const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
+  conveyor: 'Transporte les objets à 2 m/s. Clic gauche maintenu : tracer une ligne.',
+  drill: 'À poser sur un gisement : minerai de fer ou latex selon la roche.',
+  garage: 'Une place pour une voiture : assemblage, pièces, départ des courses. Porte à l’avant.',
+};
 
 const STATUS_LABEL = { working: 'En production', idle: 'En attente d’entrées', blocked: 'Sortie pleine', noRecipe: 'Aucune recette' } as const;
 
@@ -71,11 +87,14 @@ interface Drag {
 export class FactoryHud {
   readonly layer = createLayer('factory-hud');
   private storage = el('div', { class: 'panel top-right storage-panel' });
-  private hotbar = el('div', { class: 'hotbar' });
   private bagBar = el('div', { class: 'bag-bar' });
   private hint = el('div', { class: 'hint' });
-  /** Bottom of the screen: hint, build bar, then the backpack's first row. */
-  private bottom = el('div', { class: 'bottom-stack' }, this.hint, this.hotbar, this.bagBar);
+  /** Bottom of the screen: hint, then the backpack's first row (buildings are picked in the build menu). */
+  private bottom = el('div', { class: 'bottom-stack' }, this.hint, this.bagBar);
+  /** Active build tool (highlighted in the build menu). */
+  private tool: Tool = { kind: 'none' };
+  /** Building shown in the build menu's detail pane (hovered card). */
+  private buildFocus: BuildingType | null = null;
   private crosshair = el('div', { class: 'crosshair' });
   private overlay = el('div', { class: 'overlay center' });
   private panel: HTMLElement | null = null;
@@ -100,11 +119,12 @@ export class FactoryHud {
     private readonly inventory: Inventory,
     private readonly wallet: Wallet,
     private readonly icons: ItemIcons | null,
+    /** Building thumbnails for the build menu (null entries: text fallback). */
+    private readonly buildingIcon: (type: BuildingType) => string | null,
     private readonly cb: HudCallbacks,
   ) {
     this.layer.append(this.storage, this.bottom, this.crosshair, this.overlay, this.objectives);
     this.objectives.style.display = 'none';
-    this.buildHotbar({ kind: 'none' });
   }
 
   get panelOpen(): boolean {
@@ -132,38 +152,17 @@ export class FactoryHud {
     );
   }
 
-  // ------------------------------------------------------------------ hotbar / hints / storage
+  // ------------------------------------------------------------------ tool / hints / storage
 
-  buildHotbar(tool: Tool): void {
-    clear(this.hotbar);
-    BUILD_MENU.forEach((type, i) => {
-      const def = BUILDINGS[type];
-      const active = tool.kind === 'build' && tool.type === type;
-      const locked = !this.cb.isUnlocked(type);
-      const affordable = this.wallet.missingFor(def.cost) === null;
-      this.hotbar.appendChild(
-        el(
-          'button',
-          {
-            class: `slot${active ? ' active' : ''}${locked ? ' locked' : affordable ? '' : ' poor'}`,
-            onclick: () => this.cb.selectTool(active ? { kind: 'none' } : { kind: 'build', type }),
-            title: locked ? `${def.description} Débloqué au palier ${tierOf(type)} (hangar).` : def.description,
-          },
-          el('span', { class: 'slot-top' }, el('kbd', {}, String(i + 1)), el('span', { class: 'slot-name' }, def.name)),
-          locked ? el('span', { class: 'slot-cost' }, `Palier ${tierOf(type)}`) : this.costIcons(def.cost),
-        ),
-      );
-    });
-    const dis = tool.kind === 'dismantle';
-    this.hotbar.appendChild(
-      el('button', { class: `slot${dis ? ' active danger-slot' : ''}`, onclick: () => this.cb.selectTool(dis ? { kind: 'none' } : { kind: 'dismantle' }) },
-        el('span', { class: 'slot-top' }, el('kbd', {}, 'F'), el('span', { class: 'slot-name' }, 'Démonter')), el('span', { class: 'slot-cost' }, 'remboursé')),
-    );
+  /** The active tool changed (the build menu marks it). */
+  onToolChanged(tool: Tool): void {
+    this.tool = tool;
+    if (this.panelKind === 'build') this.refreshPanel(true);
   }
 
-  /** Compact cost for the build bar: icon + quantity per item (red when short), full text in the tooltip. */
+  /** Compact cost: icon + quantity per item (red when short), full text in the tooltip. */
   private costIcons(cost: ItemCounts): HTMLElement {
-    const row = el('span', { class: 'slot-cost cost-icons', title: costText(cost) });
+    const row = el('span', { class: 'cost-icons', title: costText(cost) });
     for (const [item, n] of Object.entries(cost) as [ItemId, number][]) {
       const short = this.wallet.count(item) < n;
       row.append(el('span', { class: `cost-item${short ? ' bad' : ''}` }, this.icon(item, 'item-icon micro'), `${n}`));
@@ -232,7 +231,7 @@ export class FactoryHud {
         el('p', { class: 'muted' }, 'Clique pour prendre le contrôle de la caméra.'),
         el('div', { class: 'controls-help' },
           el('div', {}, el('kbd', {}, 'Z Q S D'), ' se déplacer · ', el('kbd', {}, 'Maj'), ' courir · ', el('kbd', {}, 'Espace'), ' sauter'),
-          el('div', {}, el('kbd', {}, '1-6'), ' construire · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter · ', el('kbd', {}, 'A'), ' menu de construction'),
+          el('div', {}, el('kbd', {}, 'A'), ' menu de construction (raccourcis ', el('kbd', {}, '1-6'), ') · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter'),
           el('div', {}, el('kbd', {}, 'E'), ' maintenu sur un gisement : miner · ', el('kbd', {}, 'E'), ' utiliser une machine / le hangar (établi, paliers)'),
           el('div', {}, el('kbd', {}, 'E'), ' près d’une voiture : monter / descendre · ', el('kbd', {}, 'Tab'), ' sac · ', el('kbd', {}, 'Échap'), ' pause'),
         ),
@@ -278,7 +277,8 @@ export class FactoryHud {
   }
 
   openBuildMenu(): void {
-    this.openPanel('build', null);
+    this.buildFocus = null;
+    this.openPanel('build', null, 'build-panel');
   }
 
   openMachine(id: number): void {
@@ -318,6 +318,11 @@ export class FactoryHud {
   }
 
   private contentKey(): string {
+    if (this.panelKind === 'build') {
+      // Only the counts of items used by building costs (the hub changes all the time with production).
+      const used = [...new Set(BUILD_MENU.flatMap((t) => Object.keys(BUILDINGS[t].cost) as ItemId[]))];
+      return `build|${used.map((i) => this.wallet.count(i)).join(',')}|${this.cb.tier()}|${JSON.stringify(this.tool)}`;
+    }
     const bag = this.inventory.slots.map((s) => (s ? `${s.item}${s.count}` : '-')).join(',');
     const hub = ITEM_IDS.map((i) => this.sim.count(i)).join(',');
     const b = this.panelTarget !== null ? this.sim.buildings.get(this.panelTarget) : undefined;
@@ -326,23 +331,92 @@ export class FactoryHud {
     return `${this.panelKind}|${bag}|${hub}|${bkey}|${this.cb.nearHub()}|${this.hubTab}|${this.cb.tier()}`;
   }
 
+  /** Build menu (A): buildings by category with thumbnails and costs, details of the hovered one. */
   private renderBuild(): void {
-    const grid = el('div', { class: 'build-grid' });
-    BUILD_MENU.forEach((type: BuildingType, i) => {
-      const def = BUILDINGS[type];
-      const missing = this.wallet.missingFor(def.cost);
-      const locked = !this.cb.isUnlocked(type);
-      grid.appendChild(
-        el('button', { class: `build-card${locked ? ' locked' : ''}`, disabled: locked, onclick: () => { this.cb.selectTool({ kind: 'build', type }); this.cb.closePanel(); } },
-          el('div', { class: 'row' }, el('kbd', {}, String(i + 1)), el('b', {}, def.name)),
-          el('div', { class: 'muted small' }, def.description),
-          locked
-            ? el('div', { class: 'muted small' }, `Palier ${tierOf(type)} au hangar · coût : ${costText(def.cost)}`)
-            : el('div', { class: missing ? 'bad small' : 'good small' }, `Coût : ${costText(def.cost)}`),
-        ),
-      );
+    const firstFree = BUILD_MENU.find((t) => this.cb.isUnlocked(t)) ?? BUILD_MENU[0]!;
+    this.buildFocus ??= this.tool.kind === 'build' ? this.tool.type : firstFree;
+    const detail = el('div', { class: 'build-detail' });
+    const list = el('div', { class: 'build-list' });
+    for (const cat of BUILD_CATEGORIES) {
+      const cards = el('div', { class: 'build-cards' });
+      for (const type of cat.types) cards.appendChild(this.buildCard(type, detail));
+      list.appendChild(el('div', { class: 'build-cat' }, el('h3', {}, cat.name), cards));
+    }
+    this.renderBuildDetail(detail, this.buildFocus);
+    const dis = this.tool.kind === 'dismantle';
+    this.panel!.append(
+      ...this.header('Construire', 'Clique un bâtiment pour le placer. Les coûts sont payés avec ton sac, puis avec le hangar.'),
+      el('div', { class: 'build-menu' }, list, detail),
+      el('div', { class: 'row build-footer' },
+        el('button', { class: `small${dis ? ' danger' : ''}`, onclick: () => { this.cb.selectTool(dis ? { kind: 'none' } : { kind: 'dismantle' }); this.cb.closePanel(); } }, el('kbd', {}, 'F'), dis ? ' Arrêter de démonter' : ' Démonter (remboursé)'),
+        el('span', { class: 'spacer' }),
+        el('span', { class: 'muted small' }, 'Raccourcis : ', el('kbd', {}, '1'), ' à ', el('kbd', {}, String(BUILD_MENU.length)), ' · ', el('kbd', {}, 'R'), ' tourner'),
+      ),
+    );
+  }
+
+  private buildingThumb(type: BuildingType, cls: string): HTMLElement {
+    const url = this.buildingIcon(type);
+    return url ? el('img', { class: cls, src: url, alt: BUILDINGS[type].name, draggable: 'false' }) : el('div', { class: `${cls} thumb-text` }, BUILDINGS[type].name.slice(0, 3));
+  }
+
+  private buildCard(type: BuildingType, detail: HTMLElement): HTMLElement {
+    const def = BUILDINGS[type];
+    const locked = !this.cb.isUnlocked(type);
+    const active = this.tool.kind === 'build' && this.tool.type === type;
+    const poor = !locked && this.wallet.missingFor(def.cost) !== null;
+    const card = el('button',
+      {
+        class: `build-card${locked ? ' locked' : ''}${active ? ' active' : ''}${poor ? ' poor' : ''}${this.buildFocus === type ? ' focus' : ''}`,
+        onclick: () => {
+          if (locked) return;
+          this.cb.selectTool({ kind: 'build', type });
+          this.cb.closePanel();
+        },
+      },
+      el('kbd', { class: 'build-key' }, String(BUILD_MENU.indexOf(type) + 1)),
+      this.buildingThumb(type, 'build-thumb'),
+      el('b', { class: 'build-name' }, def.name),
+      locked ? el('span', { class: 'build-lock small' }, `🔒 Palier ${tierOf(type)}`) : this.costIcons(def.cost),
+    );
+    card.addEventListener('pointerenter', () => {
+      if (this.buildFocus === type) return;
+      this.buildFocus = type;
+      this.panel?.querySelectorAll('.build-card.focus').forEach((c) => c.classList.remove('focus'));
+      card.classList.add('focus');
+      this.renderBuildDetail(detail, type);
     });
-    this.panel!.append(...this.header('Construire', 'Les coûts sont payés avec ton sac, puis avec le hangar.'), grid);
+    return card;
+  }
+
+  private renderBuildDetail(detail: HTMLElement, type: BuildingType): void {
+    clear(detail);
+    const def = BUILDINGS[type];
+    const locked = !this.cb.isUnlocked(type);
+    const missing = this.wallet.missingFor(def.cost);
+    const [w, h] = def.footprint;
+    const makes = def.machine ? recipesFor(def.machine).map((r) => r.name).join(', ') : null;
+    const cost = el('div', { class: 'build-cost' });
+    for (const [item, n] of Object.entries(def.cost) as [ItemId, number][]) {
+      const have = this.wallet.count(item);
+      cost.appendChild(
+        el('div', { class: `row build-cost-row${have >= n ? '' : ' bad'}` },
+          this.icon(item, 'item-icon tiny'), el('span', {}, ITEMS[item].name), el('span', { class: 'spacer' }),
+          el('b', { class: 'mono' }, `${Math.min(have, n)}/${n}`)),
+      );
+    }
+    append(detail,
+      this.buildingThumb(type, 'build-detail-thumb'),
+      el('h2', {}, def.name),
+      el('div', { class: 'muted small' }, `${w} × ${h} cases (${w * FACTORY_CELL} × ${h * FACTORY_CELL} m) · touche ${BUILD_MENU.indexOf(type) + 1}`),
+      el('p', { class: 'small' }, BUILD_ROLE[type] ?? def.description),
+      makes ? el('div', { class: 'small' }, el('span', { class: 'muted' }, 'Fabrique : '), makes) : null,
+      el('h3', { style: 'margin-top:10px' }, 'Coût'),
+      cost,
+      locked
+        ? el('div', { class: 'muted small', style: 'margin-top:8px' }, `🔒 Se débloque au palier ${tierOf(type)} (${TIERS[tierOf(type) - 1]?.name ?? ''}) : E sur le hangar → Paliers.`)
+        : el('button', { class: 'primary', style: 'margin-top:10px', onclick: () => { this.cb.selectTool({ kind: 'build', type }); this.cb.closePanel(); } }, missing ? 'Placer (il manque des pièces)' : 'Placer'),
+    );
   }
 
   private renderMachine(): void {

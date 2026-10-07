@@ -157,27 +157,13 @@ kbd {
 }
 /* Full width (centered children) so the bars are not squeezed to half the screen. */
 .bottom-stack { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.panel-open .bottom-stack .hotbar, .panel-open .bottom-stack .hint { display: none; }
+.panel-open .bottom-stack .hint { display: none; }
 .bag-panel-open .bag-bar { display: none; }
-.hotbar { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; pointer-events: auto; }
-.hotbar .slot {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 100px;
-  background: var(--panel); border: 2px solid var(--panel-border); padding: 4px 9px;
-}
-.slot-top { display: flex; align-items: center; gap: 6px; }
-.hotbar .slot.locked { opacity: 0.5; border-style: dashed; }
-.cost-icons { display: flex; gap: 6px; }
+.cost-icons { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; font-weight: 700; }
 .cost-item { display: inline-flex; align-items: center; gap: 1px; }
 .item-icon.micro { width: 16px; height: 16px; }
-.hotbar .slot.locked .slot-cost { color: var(--muted); }
-.build-card.locked { opacity: 0.55; }
 .mine-bar { display: inline-block; width: 90px; height: 8px; margin-left: 6px; vertical-align: middle; background: #262842; border-radius: 4px; overflow: hidden; }
 .mine-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--gold)); }
-.hotbar .slot.active { border-color: var(--accent); background: rgba(255, 159, 28, 0.18); }
-.hotbar .slot.danger-slot { border-color: var(--bad); background: rgba(255, 93, 93, 0.18); }
-.hotbar .slot.poor .slot-cost:not(.cost-icons) { color: var(--bad); }
-.slot-name { font-size: 13px; }
-.slot-cost { font-size: 11px; color: var(--muted); font-weight: 600; }
 .hint {
   font-size: 14px; font-weight: 700; background: rgba(20, 22, 40, 0.7); border-radius: 8px; padding: 5px 12px; white-space: nowrap;
 }
@@ -188,8 +174,35 @@ kbd {
 /* Keep machine / build panels clear of the backpack bar (still visible under them). */
 .panel-open:not(.bag-panel-open) .modal { max-height: min(80vh, calc(100% - 160px)); }
 .small { font-size: 12px; }
-.build-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-.build-card { display: flex; flex-direction: column; gap: 4px; text-align: left; }
+/* Build menu (A): categories of cards on the left, details of the hovered building on the right. */
+.build-panel { width: min(880px, 96vw); }
+.build-menu { display: grid; grid-template-columns: 1fr 280px; gap: 16px; margin-top: 8px; }
+/* Categories flow side by side (one-building categories share a row). */
+.build-list { min-width: 0; display: flex; flex-wrap: wrap; gap: 12px 18px; align-content: flex-start; }
+.build-cat h3 { margin: 0 0 6px; }
+.build-cards { display: flex; gap: 8px; }
+.build-card {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; width: 128px; padding: 6px 6px 8px;
+  background: #262842; border: 2px solid var(--panel-border); border-radius: 12px; text-align: center;
+}
+.build-card:hover:not(:disabled), .build-card.focus { border-color: var(--accent-2); background: #2f3356; }
+.build-card.active { border-color: var(--accent); background: rgba(255, 159, 28, 0.16); }
+.build-card.locked { opacity: 0.55; }
+.build-card.locked .build-thumb { filter: grayscale(1); }
+.build-card .cost-icons { justify-content: center; }
+.build-key { position: absolute; left: 6px; top: 6px; }
+.build-thumb { width: 84px; height: 84px; object-fit: contain; pointer-events: none; }
+.build-name { font-size: 14px; }
+.build-lock { color: var(--muted); }
+.thumb-text { display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--muted); background: #1e2034; border-radius: 10px; }
+.build-detail { background: #262842; border: 1px solid var(--panel-border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; align-self: start; }
+.build-detail h2 { margin: 0; }
+.build-detail p { margin: 4px 0; }
+.build-detail-thumb { width: 100%; height: 150px; object-fit: contain; pointer-events: none; }
+.build-cost { display: flex; flex-direction: column; gap: 3px; }
+.build-cost-row { font-size: 13px; gap: 6px; }
+.build-cost-row.bad b { color: var(--bad); }
+.build-footer { margin-top: 12px; }
 .recipe-list { display: flex; flex-direction: column; gap: 6px; }
 .recipe { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
 .status { font-weight: 800; margin: 4px 0; }
@@ -271,8 +284,7 @@ kbd {
 .garage-left { position: absolute; left: 14px; top: 14px; bottom: 90px; width: min(300px, 36vw); overflow: auto; display: flex; flex-direction: column; gap: 5px; }
 .garage-right { position: absolute; right: 14px; top: 14px; width: min(390px, 46vw); max-height: calc(100% - 104px); overflow: auto; }
 /* The factory HUD parts that would sit under the columns (some have an inline display). */
-.driving .bottom-stack .hotbar { display: none; }
-.garage-open .bottom-stack .hotbar, .garage-open .bottom-stack .hint, .garage-open .crosshair, .garage-open .objectives, .garage-open .storage-panel { display: none !important; }
+.garage-open .bottom-stack .hint, .garage-open .crosshair, .garage-open .objectives, .garage-open .storage-panel { display: none !important; }
 .part-btn { display: inline-flex; align-items: center; gap: 4px; }
 .part-btn .item-icon.tiny { width: 18px; height: 18px; }
 .garage-confirm { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--bad); border-radius: 10px; background: rgba(255, 93, 93, 0.1); }
@@ -364,8 +376,10 @@ button.inv-slot:hover { background: #343861; border-color: var(--accent); }
   .inv-slot .item-icon, .drag-ghost .item-icon { width: 28px; height: 28px; }
   .bag-bar .inv-slot { width: 36px; height: 36px; }
   .bag-bar .item-icon { width: 28px; height: 28px; }
-  .hotbar .slot { min-width: 0; }
-  .hotbar .slot-cost { display: none; }
+  .build-menu { grid-template-columns: 1fr; }
+  .build-cards { flex-wrap: wrap; }
+  .build-card { width: 104px; }
+  .build-detail { display: none; }
 }
 @media (max-width: 420px) {
   .bag-bar-label { display: none; }

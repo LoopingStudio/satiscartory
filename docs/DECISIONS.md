@@ -177,7 +177,7 @@ Une nouvelle partie ne donne plus de stock : on part de rien, à la main, et le 
   - **Minage à la main** : maintenir E en visant une case libre d'un gisement, à 6 m au plus du point le plus proche de la case (`HAND.MINE_REACH` ; la visée à la troisième personne tombe un peu devant). Un minerai toutes les 0,75 s (`HAND.MINE_SECONDS`) va dans le sac. Les gisements sont inépuisables. Côté simulation, `FactorySim.mineAt(x, z, sink)` : rien sous un bâtiment (une foreuse couvre ses cases) ni hors gisement, et rien n'est miné si le sac est plein (« Sac plein »), donc rien ne se perd. Le minage à la main ne compte pas dans les statistiques de production (`crafted`).
   - **Établi intégré au hangar** : ce n'est pas un bâtiment, c'est l'onglet « Établi » du panneau du hangar (E → Hangar / Établi / Paliers). Il est posé sur la face sud du hangar, côté apparition du joueur. Ses recettes (`machine: 'bench'`) se fabriquent en maintenant le bouton. `Wallet.craft` prend les entrées dans le sac puis au hangar, met le résultat dans le sac (le surplus déborde au hangar), et ne fait rien s'il manque une entrée.
   - **Fer en trois étapes** : foreuse → **Fonderie** (nouveau bâtiment 2×1, même tunnel que les autres machines) → **Constructeur** (l'ancienne presse, renommée ; son id interne reste `press` pour les sauvegardes) → assembleuse. La fonderie n'a qu'une recette et démarre dessus.
-  - **Paliers au hangar** : quatre paliers payés sac d'abord, puis hangar (`GameState.unlockNextTier`) ; un cinquième, Garage, s'y ajoute avec « Garage dans l'usine ». Le palier atteint est sauvegardé (`tier`). Un bâtiment verrouillé reste dans la barre de construction et y affiche son palier.
+  - **Paliers au hangar** : quatre paliers payés sac d'abord, puis hangar (`GameState.unlockNextTier`) ; un cinquième, Garage, s'y ajoute avec « Garage dans l'usine ». Le palier atteint est sauvegardé (`tier`). Un bâtiment verrouillé reste dans le menu de construction, grisé, avec son palier.
   - **Le hangar démarre vide** (`START_STORAGE = {}`).
 - **Cadences** (1 foreuse = 1 fonderie = 1 constructeur) :
 
@@ -254,4 +254,13 @@ Le garage n'est plus une scène à part (touche G, entrée « Garage » du menu 
   - Les voitures sans place (anciennes sauvegardes, pose invalide) sont « À ranger ». À l'entrée dans l'usine et à chaque garage construit, elles prennent les places libres, garages dans l'ordre de construction (`GameState.parkCars`). Les voitures d'une ancienne sauvegarde se garent donc dès le premier garage construit, une par garage.
   - `SaveData.tierMax` enregistre le nombre de paliers de la version (absent : 4). Une sauvegarde qui avait tous les paliers de sa version reçoit ceux ajoutés depuis, donc le garage ; une sauvegarde d'avant les paliers garde tout débloqué.
 - **Objectifs** : deux étapes entre les pièces de voiture et l'assemblage, palier 5 puis « Construis un garage » (porte vers un espace libre pour sortir en voiture). Toutes deux sont validées dès qu'une voiture existe, donc une sauvegarde qui a déjà une voiture ne les rejoue pas.
-- **Barre de construction** : avec six bâtiments, les coûts deviennent compacts, une icône et une quantité par objet (en rouge s'il en manque), avec le texte complet en infobulle.
+- **Barre de construction** (remplacée ensuite, voir « Menu de construction ») : avec six bâtiments, les coûts deviennent compacts, une icône et une quantité par objet (en rouge s'il en manque), avec le texte complet en infobulle.
+
+## Menu de construction (octobre 2026)
+
+- **Plus de barre de construction en bas de l'écran** (choix validé) : on choisit un bâtiment dans un menu, comme dans Satisfactory. Le bas de l'écran ne garde que l'indication du moment et la barre du sac.
+- **Menu (A, touche physique Q)** : les bâtiments par catégorie (Logistique, Extraction, Production, Véhicules), côte à côte. Chaque carte montre une miniature rendue une fois depuis le modèle 3D (`BuildingIcons`, comme les icônes d'objets), le nom, le raccourci et le coût en icônes (en rouge s'il en manque). Un bâtiment verrouillé est grisé avec son palier.
+- **Fiche détaillée** au survol : grande miniature, taille au sol, rôle, ce que la machine fabrique (ses recettes), coût « j'ai / il faut » et bouton « Placer », ou le palier qui le débloque.
+- **Raccourcis 1 à 6** gardés, sans barre : ils marchent en jeu et dans le menu ouvert (un bâtiment verrouillé affiche juste son palier, le menu reste ouvert). F démonte, aussi depuis le menu.
+- Le menu ne se redessine que quand les objets utilisés par les coûts, le palier ou l'outil changent (la production du hangar ne le rafraîchit pas en continu, le survol reste stable).
+

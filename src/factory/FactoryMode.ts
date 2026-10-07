@@ -32,6 +32,7 @@ import { FactoryCars } from './cars/FactoryCars';
 import { GaragePanel } from '../garage/GaragePanel';
 import { bayOccupant, bayPose, bayRect, type BayBlocker, type GarageSpot } from '../garage/parking';
 import { makeCarPreview } from '../car/CarModel';
+import { buildingIcons } from './view/BuildingIcons';
 import type { TrackSelectParams } from '../race/TrackSelectMode';
 
 export interface FactoryModeParams {
@@ -141,7 +142,8 @@ export class FactoryMode implements Mode {
     this.wallet = this.state.wallet();
     const inv = this.state.inventory;
     this.build = new BuildController(this.game.assets, this.sim, this.world, this.scene, this.wallet);
-    this.hud = new FactoryHud(this.sim, inv, this.wallet, this.game.icons, {
+    const buildingThumbs = buildingIcons(this.game.assets, BUILD_MENU);
+    this.hud = new FactoryHud(this.sim, inv, this.wallet, this.game.icons, (t) => buildingThumbs.get(t) ?? null, {
       selectTool: (t) => this.selectTool(t),
       setRecipe: (id, r) => {
         // Buffered items of the previous recipe go back to the backpack (overflow: hub).
@@ -191,7 +193,7 @@ export class FactoryMode implements Mode {
         const res = this.state.unlockNextTier();
         if (res.ok && next) {
           toast(`Palier ${this.state.tier} débloqué : ${next.unlocks.map((t) => BUILDINGS[t].name).join(', ')}`, 'success', 2600);
-          this.hud.buildHotbar(this.build.tool);
+          this.hud.onToolChanged(this.build.tool);
           this.hud.updateStorage();
         } else if (res.missing) {
           toast(`Il manque ${Object.entries(res.missing).map(([i, n]) => countLabel(i as keyof typeof ITEMS, n ?? 0)).join(', ')}`, 'error', 2200);
@@ -207,7 +209,7 @@ export class FactoryMode implements Mode {
       settings: () => openSettings(this.game, this.state, () => this.applySettings()),
       closePanel: () => this.closePanel(),
     });
-    this.build.onChange = () => this.hud.buildHotbar(this.build.tool);
+    this.build.onChange = () => this.hud.onToolChanged(this.build.tool);
     this.build.onMessage = (text, kind) => toast(text, kind, 1600);
     this.build.placementGuard = (cells, type) => this.placementBlocker(cells, type);
     this.build.dismantleGuard = (b) => (b.type === 'garage' && bayOccupant(this.state.cars, b, this.bayBlocker) ? 'Une voiture est garée dans ce garage : sors-la d’abord' : null);
@@ -237,7 +239,7 @@ export class FactoryMode implements Mode {
         if (this.build.cancel() || performance.now() - this.toolEscAt < ESC_GRACE_MS) {
           this.toolEscAt = performance.now();
           this.resumeHint = true;
-          this.hud.buildHotbar(this.build.tool);
+          this.hud.onToolChanged(this.build.tool);
           return;
         }
         this.hud.showOverlay(true, this.started);
@@ -250,7 +252,7 @@ export class FactoryMode implements Mode {
         }
         // A new garage takes the cars that have no place yet.
         if (b.type === 'garage') this.parkWaitingCars();
-        this.hud.buildHotbar(this.build.tool);
+        this.hud.onToolChanged(this.build.tool);
       }),
     );
     this.hud.showOverlay(true, false);
@@ -326,7 +328,7 @@ export class FactoryMode implements Mode {
     this.eLatch = true;
     this.build.setTool({ kind: 'none' });
     this.build.hideHighlights();
-    this.hud.buildHotbar(this.build.tool);
+    this.hud.onToolChanged(this.build.tool);
     this.avatar.root.visible = false;
     this.player.collider.setEnabled(false);
     this.hud.layer.classList.add('driving');
@@ -354,7 +356,7 @@ export class FactoryMode implements Mode {
 
   private openGarage(b: GarageSpot): void {
     this.build.setTool({ kind: 'none' });
-    this.hud.buildHotbar(this.build.tool);
+    this.hud.onToolChanged(this.build.tool);
     this.garagePanel.open({ id: b.id, x: b.x, z: b.z, rot: b.rot });
     this.game.pointer.release();
   }
@@ -429,7 +431,7 @@ export class FactoryMode implements Mode {
       return;
     }
     this.build.setTool(t);
-    this.hud.buildHotbar(this.build.tool);
+    this.hud.onToolChanged(this.build.tool);
   }
 
   private openPanel(kind: 'build' | 'machine' | 'hub' | 'inventory', id?: number): void {
@@ -543,6 +545,13 @@ export class FactoryMode implements Mode {
         this.hud.showOverlay(true, true);
       }
     } else if (this.garagePanel.isOpen && input.wasPressed('cancel')) this.closeGarage();
+    else if (this.hud.openPanelKind === 'build' && HOTKEYS.some((a) => input.wasPressed(a))) {
+      // Shortcut while the build menu is open: pick and place right away.
+      const type = BUILD_MENU[HOTKEYS.findIndex((a) => input.wasPressed(a))]!;
+      // A locked one only explains its tier (the menu stays open).
+      if (this.state.isUnlocked(type)) this.closePanel();
+      this.selectTool({ kind: 'build', type });
+    }
     else if (this.hud.panelOpen && (input.wasPressed('cancel') || (input.wasPressed('buildMenu') && this.hud.openPanelKind === 'build') || (input.wasPressed('inventory') && this.hud.openPanelKind === 'inventory'))) this.closePanel();
     this.updateMining(dt, controlling && !this.eLatch);
     this.hud.frame(dt);
@@ -591,7 +600,7 @@ export class FactoryMode implements Mode {
     this.hudTimer = 0;
     this.hud.updateStorage();
     this.hud.tick();
-    this.hud.buildHotbar(this.build.tool);
+    this.hud.onToolChanged(this.build.tool);
     this.garagePanel.refresh();
     this.cars.sync();
     this.updateObjectives();
@@ -655,7 +664,7 @@ export class FactoryMode implements Mode {
     if (input.wasPressed('rotate')) this.build.rotate(input.isKeyDown('ShiftLeft') ? -1 : 1);
     if (input.wasPressed('dismantle')) {
       this.build.toggleDismantle();
-      this.hud.buildHotbar(this.build.tool);
+      this.hud.onToolChanged(this.build.tool);
     }
     if (input.wasPressed('buildMenu')) this.openPanel('build');
     if (input.wasPressed('inventory')) this.openPanel('inventory');
@@ -673,14 +682,14 @@ export class FactoryMode implements Mode {
       // Escape closes the active tool first; only without a tool does it pause.
       if (this.build.cancel()) this.toolEscAt = performance.now();
       else if (this.freeCursor) this.hud.showOverlay(true, true), (this.started = false);
-      this.hud.buildHotbar(this.build.tool);
+      this.hud.onToolChanged(this.build.tool);
     }
     if (input.buttonWasPressed(0)) this.build.primaryDown();
     if (input.buttonWasReleased(0)) this.build.primaryUp();
     if (input.buttonWasPressed(2)) this.rmbDragged = 0;
     if (input.buttonWasReleased(2) && (this.game.pointer.locked || this.rmbDragged < 6)) {
       this.build.cancel();
-      this.hud.buildHotbar(this.build.tool);
+      this.hud.onToolChanged(this.build.tool);
     }
   }
 
@@ -714,7 +723,7 @@ export class FactoryMode implements Mode {
         html = this.mineT > 0
           ? `Minage : ${RESOURCES[mine.resource].name} <span class="mine-bar"><i style="width:${pct}%"></i></span>`
           : `<kbd>E</kbd> maintenir : miner (${RESOURCES[mine.resource].name})`;
-      } else html = '<kbd>1-6</kbd> construire · <kbd>A</kbd> menu · <kbd>F</kbd> démonter';
+      } else html = '<kbd>A</kbd> construire · <kbd>F</kbd> démonter';
     }
     this.hud.setHint(html);
   }
