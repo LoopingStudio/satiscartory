@@ -233,6 +233,7 @@ export class FactoryHud {
           el('div', {}, el('kbd', {}, 'Z Q S D'), ' se déplacer · ', el('kbd', {}, 'Maj'), ' courir · ', el('kbd', {}, 'Espace'), ' sauter'),
           el('div', {}, el('kbd', {}, 'A'), ' menu de construction (raccourcis ', el('kbd', {}, '1-6'), ') · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter'),
           el('div', {}, el('kbd', {}, 'E'), ' maintenu sur un gisement : miner · ', el('kbd', {}, 'E'), ' utiliser une machine / le hangar (établi, paliers)'),
+          el('div', {}, el('kbd', {}, 'E'), ' sur un convoyeur : prendre ses objets (maintenu : toute la ligne)'),
           el('div', {}, el('kbd', {}, 'E'), ' près d’une voiture : monter / descendre · ', el('kbd', {}, 'Tab'), ' sac · ', el('kbd', {}, 'Échap'), ' pause'),
         ),
         el('div', { class: 'row', style: 'margin-top:12px' },

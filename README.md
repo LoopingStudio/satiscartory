@@ -42,6 +42,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Clic gauche | Poser (maintenu : tracer des convoyeurs ; viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée) |
 | F | Démonter |
 | Maintenir E sur un gisement | Miner à la main : un minerai toutes les 0,75 s dans le sac (case libre, à 6 m au plus) |
+| E sur un convoyeur | Prendre les objets de cette case dans le sac ; maintenu 0,5 s : ceux de toute la ligne (les convoyeurs reliés, en amont et en aval). Ce qui ne rentre pas dans le sac reste sur le convoyeur |
 | E | Utiliser une machine ou une foreuse : recette, « Charger » (sac puis hangar), « Prendre » (production vers le sac) |
 | E sur le hangar | Onglets Hangar (échanges sac ↔ hangar), Établi (fabrication à la main) et Paliers (déblocage des bâtiments) |
 | E sur un garage | Panneau du garage : assembler une voiture dans sa place, changer ses pièces, la démonter, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
@@ -117,6 +118,7 @@ Chaque machine montre où brancher un convoyeur : devant chaque **sortie**, une 
 - Une machine ne sort que par **une** sortie à la fois : dès qu'une est reliée, l'autre n'est plus marquée.
 - **Cul-de-sac** : une croix rouge marque un convoyeur qui bute contre un bâtiment qui refuse ses objets (une sortie, un mur de machine, un convoyeur en face), et les sorties d'une machine qui donnent toutes sur un bâtiment.
 - Le panneau d'une foreuse ou d'une machine (E) dit si son entrée et sa sortie sont reliées.
+- **Ramasser sur un convoyeur** : E prend les objets de la case visée ; maintenir E (0,5 s) prend ceux de toute la ligne, en surbrillance pendant qu'on vise. Pratique pour vider une ligne bouchée ou se servir au passage.
 
 ## Garage et voitures
 

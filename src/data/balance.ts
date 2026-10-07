@@ -33,4 +33,6 @@ export const HAND = {
   MINE_SECONDS: 0.75,
   /** Max distance (m) between the player and the nearest point of the mined cell (third-person aim lands a bit ahead). */
   MINE_REACH: 6,
+  /** Seconds E is held on a belt to pick up its whole line (a press takes the aimed tile). */
+  BELT_LINE_SECONDS: 0.5,
 } as const;

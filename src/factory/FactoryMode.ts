@@ -14,7 +14,7 @@ import { FACTORY_CELL, GRAVITY_FACTORY, PLAYER_RADIUS } from '../config/constant
 import { RAPIER } from '../core/physics/PhysicsWorld';
 import { FACTORY_MAP } from '../data/factoryMap';
 import { BUILDINGS, BUILD_MENU } from '../data/buildings';
-import { ITEMS, ITEM_IDS, countLabel } from '../data/items';
+import { ITEMS, ITEM_IDS, countLabel, type ItemId } from '../data/items';
 import { RECIPES_BY_ID, recipesFor } from '../data/recipes';
 import { TIERS, tierOf } from '../data/tiers';
 import { HAND } from '../data/balance';
@@ -85,6 +85,8 @@ export class FactoryMode implements Mode {
   private previewOf: object | null = null;
   /** E pressed to get in/out of a car: ignore it (mining) until released. */
   private eLatch = false;
+  /** E held on a belt: seconds held and the line it picks up when HAND.BELT_LINE_SECONDS is reached. */
+  private beltHold: { t: number; ids: Set<number> } | null = null;
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(62, 0.1, 1500);
@@ -554,6 +556,7 @@ export class FactoryMode implements Mode {
     }
     else if (this.hud.panelOpen && (input.wasPressed('cancel') || (input.wasPressed('buildMenu') && this.hud.openPanelKind === 'build') || (input.wasPressed('inventory') && this.hud.openPanelKind === 'inventory'))) this.closePanel();
     this.updateMining(dt, controlling && !this.eLatch);
+    this.updateBeltPickup(dt, controlling && !this.eLatch);
     this.hud.frame(dt);
 
     this.hud.setCrosshair(this.game.pointer.locked && !this.uiOpen);
@@ -630,6 +633,37 @@ export class FactoryMode implements Mode {
     }
   }
 
+  /** E held on a belt (pressed on it): after HAND.BELT_LINE_SECONDS, its whole line goes into the backpack. */
+  private updateBeltPickup(dt: number, controlling: boolean): void {
+    const h = this.beltHold;
+    const aimed = this.build.beltTarget();
+    if (!h || !controlling || !this.game.input.isDown('interact') || aimed === null || !h.ids.has(aimed)) {
+      this.beltHold = null;
+      this.build.beltProgress = null;
+      return;
+    }
+    h.t += dt;
+    this.build.beltProgress = Math.min(1, h.t / HAND.BELT_LINE_SECONDS);
+    if (h.t < HAND.BELT_LINE_SECONDS) return;
+    this.beltHold = null;
+    this.build.beltProgress = null;
+    this.takeFromBelts(this.sim.beltLine(aimed));
+  }
+
+  /** Belt items into the backpack, with a message saying what was taken (or that the backpack is full). */
+  private takeFromBelts(ids: number[]): void {
+    const taken = this.sim.takeFromBelts(ids, this.state.inventory);
+    const left = ids.reduce((n, id) => {
+      const b = this.sim.buildings.get(id);
+      return n + (b?.type === 'conveyor' ? b.items.length : 0);
+    }, 0);
+    const labels = (Object.entries(taken) as [ItemId, number][]).map(([i, n]) => countLabel(i, n));
+    if (labels.length) {
+      toast(`Pris : ${labels.join(', ')}${left ? ' · sac plein, le reste reste sur le convoyeur' : ''}`, left ? 'info' : 'success', 1800);
+      this.hud.updateStorage();
+    } else if (left) toast('Sac plein : dépose des objets au hangar', 'error', 1800);
+  }
+
   private updateObjectives(): void {
     const ctx: ObjectiveContext = {
       buildings: [...this.sim.buildings.values()].map((b) => ({
@@ -673,11 +707,18 @@ export class FactoryMode implements Mode {
       // What the crosshair targets first (a car body hides the garage floor), then the nearest car.
       const id = this.build.interactTarget();
       const b = id !== null ? this.sim.buildings.get(id) : undefined;
-      const car = b || this.build.mineTarget() ? null : this.cars.carNear(this.player.cur);
+      // A belt counts when something lies on its line (an empty one lets E reach a car next to it).
+      const belt = b ? null : this.build.beltTarget();
+      const load = belt !== null ? this.build.beltLoad(belt) : null;
+      const car = b || this.build.mineTarget() || load?.line ? null : this.cars.carNear(this.player.cur);
       if (b?.type === 'hub') this.openPanel('hub');
       else if (b?.type === 'garage') this.openGarage(b);
       else if (b) this.openPanel('machine', b.id);
-      else if (car) this.enterCar(car);
+      else if (belt !== null && load?.line) {
+        // A press takes the aimed tile; holding on goes on to the whole line.
+        if (load.tile) this.takeFromBelts([belt]);
+        this.beltHold = { t: 0, ids: new Set(load.ids) };
+      } else if (car) this.enterCar(car);
     }
     if (input.wasPressed('cancel')) {
       // Escape closes the active tool first; only without a tool does it pause.
@@ -718,9 +759,18 @@ export class FactoryMode implements Mode {
       const id = this.build.interactTarget();
       const b = id !== null ? this.sim.buildings.get(id) : undefined;
       const mine = this.build.mineTarget();
-      const car = b || mine ? null : this.cars.carNear(this.player.cur);
+      const belt = b ? null : this.build.beltTarget();
+      const load = belt !== null ? this.build.beltLoad(belt) : null;
+      const car = b || mine || load?.line ? null : this.cars.carNear(this.player.cur);
       if (b) html = `<kbd>E</kbd> ${b.type === 'hub' ? 'hangar : établi, paliers, stock' : b.type === 'garage' ? 'garage : assembler, pièces, voiture de course' : `configurer : ${BUILDINGS[b.type].name}`}`;
-      else if (car) html = `<kbd>E</kbd> monter dans ${this.state.cars.find((c) => c.id === car)?.name ?? 'la voiture'}`;
+      else if (load?.line) {
+        const pct = Math.round((this.build.beltProgress ?? 0) * 100);
+        html = this.beltHold
+          ? `Ramassage de la ligne (${load.line}) <span class="mine-bar"><i style="width:${pct}%"></i></span>`
+          : load.tile
+            ? `<kbd>E</kbd> prendre (${load.tile}) · maintenir : toute la ligne (${load.line})`
+            : `<kbd>E</kbd> maintenir : prendre toute la ligne (${load.line})`;
+      } else if (car) html = `<kbd>E</kbd> monter dans ${this.state.cars.find((c) => c.id === car)?.name ?? 'la voiture'}`;
       else if (mine) {
         const pct = Math.round((this.mineT / HAND.MINE_SECONDS) * 100);
         html = this.mineT > 0

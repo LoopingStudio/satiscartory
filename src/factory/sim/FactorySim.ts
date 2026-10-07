@@ -53,6 +53,8 @@ export class FactorySim {
   crafted: Inventory = {};
   tickCount = 0;
   nextId = 1;
+  /** Bumped each time links are rebuilt (caches keyed on the topology). */
+  topologyVersion = 0;
   readonly events = new Emitter<SimEvents>();
 
   private outLinks = new Map<number, Link | null>();
@@ -199,6 +201,46 @@ export class FactorySim {
       }
     }
     return any ? missing : null;
+  }
+
+  /**
+   * Picking items off belts by hand: takes the items of the given conveyors into `sink`, front item first,
+   * tile after tile; what the sink refuses (full backpack) stays where it is on the belt. Returns what was
+   * taken. Items behind a taken one only get more room, so the belt keeps its spacing.
+   */
+  takeFromBelts(ids: readonly number[], sink: ItemSink): Inventory {
+    const taken: Inventory = {};
+    for (const id of ids) {
+      const c = this.buildings.get(id);
+      if (c?.type !== 'conveyor' || !c.items.length) continue;
+      c.items = c.items.filter((it) => {
+        if (sink.add(it.item, 1) !== 1) return true;
+        taken[it.item] = (taken[it.item] ?? 0) + 1;
+        return false;
+      });
+    }
+    return taken;
+  }
+
+  /**
+   * Conveyors connected to conveyor `id` belt to belt, downstream (its output link) and upstream (belts
+   * feeding it, through merges), in id order. Machines and the hub end it. [] if `id` is not a conveyor.
+   */
+  beltLine(id: number): number[] {
+    if (this.buildings.get(id)?.type !== 'conveyor') return [];
+    this.syncTopology();
+    const seen = new Set<number>([id]);
+    const todo = [id];
+    while (todo.length) {
+      const cur = todo.pop()!;
+      const next = [this.outLinks.get(cur)?.target, ...(this.feeders.get(cur) ?? []).map((f) => f.id)];
+      for (const n of next) {
+        if (n === undefined || seen.has(n) || this.buildings.get(n)?.type !== 'conveyor') continue;
+        seen.add(n);
+        todo.push(n);
+      }
+    }
+    return [...seen].sort((a, b) => a - b);
   }
 
   /**
@@ -404,6 +446,7 @@ export class FactorySim {
 
   private rebuildTopology(): void {
     this.topoDirty = false;
+    this.topologyVersion++;
     this.outLinks.clear();
     this.feeders.clear();
     this.inbound.clear();

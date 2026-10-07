@@ -33,6 +33,8 @@ const arrowIn = new THREE.MeshBasicMaterial({ color: PORT_COLORS.in });
 const arrowGeo = new THREE.ConeGeometry(0.28, 0.6, 12).rotateX(Math.PI / 2); // points +Z
 const highlightMat = new THREE.MeshBasicMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.35, depthWrite: false });
 const hoverMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, depthWrite: false });
+/** The rest of an aimed belt's line (what holding E picks up), brighter as the hold progresses. */
+const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.09, depthWrite: false });
 /** Hollow buildings (garage) get edges + a floor tint instead of a box that would tint the view from inside. */
 const outlineMats = {
   dismantle: { edges: new THREE.LineBasicMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.9, depthWrite: false }), floor: highlightMat },
@@ -131,6 +133,11 @@ export class BuildController {
   private shown: { x: number; z: number; rot: Rot } | null = null;
   /** Cell where R turned the single conveyor ghost by hand: no snapping there until the aim leaves it. */
   private rotOverride: string | null = null;
+  /** Progress (0..1) of holding E on a belt to pick up its whole line, null when not holding (set by FactoryMode). */
+  beltProgress: number | null = null;
+  /** Boxes over the tiles of the aimed belt's line. */
+  private lineMesh: THREE.InstancedMesh | null = null;
+  private lineCache: { id: number; version: number; ids: number[] } | null = null;
   /** Connection marks (green arrows at linked edges) and the dead-end cross. */
   private linkMarks: THREE.Mesh[] = [];
   private deadMark: THREE.Mesh;
@@ -261,6 +268,7 @@ export class BuildController {
   update(): void {
     this.highlight.visible = false;
     this.outline.visible = false;
+    if (this.lineMesh) this.lineMesh.count = 0;
     this.shown = null;
     this.lastLinks = null;
     this.hideLinks();
@@ -584,7 +592,62 @@ export class BuildController {
     }
     if (id === null) return;
     const b = this.sim.buildings.get(id);
-    if (b && b.type !== 'conveyor') this.boxAround(id, 'hover');
+    if (b?.type === 'conveyor') {
+      // A belt carrying items (on it or along its line): E picks them up.
+      const load = this.beltLoad(id);
+      if (load.line > 0) {
+        this.boxAround(id, 'hover');
+        this.showLine(load.ids);
+      }
+    } else if (b) this.boxAround(id, 'hover');
+  }
+
+  /** Conveyor aimed at without a tool (picking up items off belts). */
+  beltTarget(): number | null {
+    const id = this.aim.buildingId;
+    if (this.tool.kind !== 'none' || id === null) return null;
+    return this.sim.buildings.get(id)?.type === 'conveyor' ? id : null;
+  }
+
+  /** Items on a belt tile and on its whole line (connected belts), with the line's conveyors. */
+  beltLoad(id: number): { ids: number[]; tile: number; line: number } {
+    this.sim.syncTopology(); // a building placed or removed since the last tick bumps the version
+    const c = this.lineCache;
+    const ids = c && c.id === id && c.version === this.sim.topologyVersion ? c.ids : this.sim.beltLine(id);
+    this.lineCache = { id, version: this.sim.topologyVersion, ids };
+    let line = 0;
+    let tile = 0;
+    for (const k of ids) {
+      const b = this.sim.buildings.get(k);
+      const n = b?.type === 'conveyor' ? b.items.length : 0;
+      line += n;
+      if (k === id) tile = n;
+    }
+    return { ids, tile, line };
+  }
+
+  /** Faint boxes over a belt line, brighter while E is held on it. */
+  private showLine(ids: number[]): void {
+    let mesh = this.lineMesh;
+    if (!mesh || mesh.instanceMatrix.count < ids.length) {
+      mesh?.removeFromParent();
+      mesh?.dispose();
+      mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), lineMat, Math.max(32, 2 ** Math.ceil(Math.log2(ids.length))));
+      mesh.renderOrder = 5;
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      this.lineMesh = mesh;
+    }
+    const m = new THREE.Matrix4();
+    const s = FACTORY_CELL + 0.06;
+    ids.forEach((id, i) => {
+      const b = this.sim.buildings.get(id)!;
+      m.makeScale(s, 1.0, s).setPosition((b.x + 0.5) * FACTORY_CELL, 0.5, (b.z + 0.5) * FACTORY_CELL);
+      mesh!.setMatrixAt(i, m);
+    });
+    mesh.count = ids.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    lineMat.opacity = this.beltProgress === null ? 0.09 : 0.1 + 0.2 * this.beltProgress;
   }
 
   /**
@@ -606,6 +669,7 @@ export class BuildController {
   hideHighlights(): void {
     this.highlight.visible = false;
     this.outline.visible = false;
+    if (this.lineMesh) this.lineMesh.count = 0;
     this.hideLinks();
   }
 
@@ -734,6 +798,11 @@ export class BuildController {
     for (const m of this.linkMarks) m.removeFromParent();
     this.linkMarks = [];
     this.deadMark.removeFromParent();
+    if (this.lineMesh) {
+      this.lineMesh.removeFromParent();
+      this.lineMesh.geometry.dispose();
+      this.lineMesh.dispose();
+    }
     this.highlight.removeFromParent();
     this.outline.removeFromParent();
     this.outlineEdges.geometry.dispose();
