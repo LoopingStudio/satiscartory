@@ -41,10 +41,11 @@ export class SkyDome {
           float s = max(dot(d, uSun), 0.0);
           c += uGlow * (0.22 * pow(s, 24.0) + 0.9 * pow(s, 900.0));
           gl_FragColor = vec4(c, 1.0);
-          #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
       side: THREE.BackSide,
+      // Like the fog color (which is not tone-mapped): far hills melt into the horizon.
+      toneMapped: false,
       depthWrite: false,
       depthTest: false,
       fog: false,

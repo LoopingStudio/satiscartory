@@ -153,6 +153,8 @@ export function describeError(check: BuildCheck): string {
           return `Trop de terre à creuser ou remblayer : ${meters(check.cutFill ?? 0)} (${meters(R.PAD_CUT_FILL)} au plus)`;
         case 'door':
           return 'Devant la porte, le sol est trop en pente pour sortir en voiture';
+        case 'neighbor':
+          return 'Ses talus rendraient trop pentu un convoyeur ou l’entrée d’un garage à côté';
         default:
           return `Terrain trop en pente : ${degrees(check.grad ?? 0)}° (${degrees(R.PAD_GRAD)}° au plus sous un bâtiment)`;
       }
@@ -271,19 +273,23 @@ export class BuildController {
     return (t.effAt(cx + a, cz + b) + t.effAt(cx + c, cz + d)) / 200;
   }
 
-  /** Lays a ghost tile (a conveyor at x, z, rot, with its arrow) on the deck it would ride on. */
-  private placeTile(g: THREE.Object3D, x: number, z: number, rot: Rot): void {
+  /**
+   * Lays a ghost belt piece at x, z, rot on the deck it would ride on: a conveyor's ramp along its flow,
+   * a splitter's or merger's corner plane (`flow` false). Returns the deck height at its center.
+   */
+  private placeTile(g: THREE.Object3D, x: number, z: number, rot: Rot, flow = true): number {
     if (!this.relief) {
       g.matrixAutoUpdate = true;
       g.position.set((x + 0.5) * FACTORY_CELL, 0.02, (z + 0.5) * FACTORY_CELL);
       g.rotation.set(0, rot * (Math.PI / 2), 0);
-      return;
+      return 0;
     }
-    const deck = this.sim.terrain.deckPlane(x, z, rot, this.deck);
+    const deck = this.sim.terrain.deckPlane(x, z, flow ? rot : null, this.deck);
     g.matrixAutoUpdate = false;
     this.q.setFromAxisAngle(UP, rot * (Math.PI / 2));
     g.matrix.compose(this.v.set((x + 0.5) * FACTORY_CELL, 0.02, (z + 0.5) * FACTORY_CELL), this.q, this.one).premultiply(deckShear(deck, x, z, this.shear));
     g.matrixWorldNeedsUpdate = true;
+    return deck.c;
   }
 
   /** Puts a building ghost's port markers on the ground in front of its ports. */
@@ -435,7 +441,11 @@ export class BuildController {
     const plan: Placement[] = [{ type, x: ax, z: az, rot }];
     let base = 0;
     if (type === 'conveyor') this.placeTile(ghost, ax, az, rot);
-    else {
+    else if (isBelt(type)) {
+      // Splitter, merger: on their deck like the placed ones, no pad.
+      base = this.placeTile(ghost, ax, az, rot, false);
+      this.placeGhostPorts(plan[0]!);
+    } else {
       footprintCenter(type, ax, az, rot, ghost.position);
       // On the relief, a padded building stands on the pad it would get, its fill shown under it.
       if (this.relief) {

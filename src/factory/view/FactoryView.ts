@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { AssetLoader } from '../../core/assets/AssetLoader';
 import { BELT } from '../../data/balance';
-import { BUILDINGS } from '../../data/buildings';
+import { BUILDINGS, isBelt } from '../../data/buildings';
 import { RESOURCES, type ResourceId } from '../../data/factoryMap';
 import { FACTORY_CELL, FACTORY_MODEL_SCALE } from '../../config/constants';
 import type { FactorySim, ConveyorShape } from '../sim/FactorySim';
@@ -26,7 +26,7 @@ import { decorLayoutCached } from '../sim/decor';
 import { FACTORY_MAP } from '../../data/factoryMap';
 import { TERRAINS } from '../../data/factoryTerrain';
 import type { GrassQuality } from '../../data/factoryTerrain';
-import { deckPitch, deckShear } from './terrain/deck';
+import { deckPitch, deckShear, shearSafe } from './terrain/deck';
 import { deckY, type DeckPlane } from '../sim/terrain';
 import type { TerrainRect } from '../sim/FactorySim';
 
@@ -269,7 +269,9 @@ export class FactoryView {
         }
         const cap = Math.max(32, 2 ** Math.ceil(Math.log2(Math.max(1, list.length))));
         const key = SHAPE_MODELS[shape];
-        mesh = new THREE.InstancedMesh(this.assets.mergedGeometry(key), this.assets.material('factory-kit'), cap);
+        // On the relief the tiles are sheared onto their deck: a material that lights them right.
+        const kit = this.assets.material('factory-kit');
+        mesh = new THREE.InstancedMesh(this.assets.mergedGeometry(key), this.decks ? shearSafe(kit) : kit, cap);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         mesh.name = `conveyors:${shape}`;
@@ -345,7 +347,7 @@ export class FactoryView {
         }
         continue;
       }
-      const base = relief ? (b.py ?? 0) / 100 : 0;
+      const base = !relief ? 0 : isBelt(b.type) ? this.sim.deckOf(b, this.deck).c : (b.py ?? 0) / 100;
       const ports = this.sim.portsOf(b.id);
       const linkedOut = ports.some((p) => p.dir === 'out' && p.state === 'linked');
       const linkedIn = ports.some((p) => p.dir === 'in' && p.state === 'linked');

@@ -4,13 +4,14 @@ import { FACTORY_CELL } from '../../config/constants';
 import { rotatedSize } from '../sim/dirs';
 import { deckY, type DeckPlane } from '../sim/terrain';
 import type { FactorySim } from '../sim/FactorySim';
-import { deckShear } from './terrain/deck';
+import { deckShear, shearNormals } from './terrain/deck';
 
 /** Lavender of the kit's old floor (the pads' foundations) and the dark under the belts. */
 const PLINTH = new THREE.Color(0x61618a);
 const SKIRT = new THREE.Color(0x3b3b52);
 const unitBox = new THREE.BoxGeometry(1, 1, 1).translate(0, -0.5, 0); // top at y = 0
 const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+shearNormals(material, 'foundations-v1');
 
 /**
  * On the relief: a lavender foundation slab under each machine, drill and garage (its top 2 cm over the

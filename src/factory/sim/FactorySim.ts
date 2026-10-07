@@ -217,22 +217,59 @@ export class FactorySim implements PadSource {
   }
 
   /**
-   * Cells in front of a planned garage's door that a car drives out on (on the map, free), whose ground
-   * (with the planned pad's banks) rises or falls more than DOOR_RISE across the cell.
+   * Steepest rise or fall (cm) across a free cell in front of a garage's door (a car drives out on those),
+   * with `extra` placed too: the garage itself when planned, or a building planned beside it.
    */
-  private doorTooSteep(x: number, z: number, rot: Rot, py: number): boolean {
+  private doorRise(x: number, z: number, rot: Rot, extra: Pad | null): number {
     const t = this.terrain;
     const cells = this.cellsFor('garage', x, z, rot);
-    const pad: Pad = { ...this.padRect('garage', x, z, rot), py };
     const side = rotateSide(GARAGE_DOOR_SIDE, rot);
     const inside = new Set(cells.map(([cx, cz]) => `${cx},${cz}`));
+    let worst = 0;
     for (const [cx, cz] of cells) {
       const fx = cx + DX[side];
       const fz = cz + DZ[side];
       if (inside.has(`${fx},${fz}`) || !this.inBounds(fx, fz) || this.grid[this.idx(fx, fz)]) continue;
       // Near and far edges of the front cell, across the door.
-      const [n0, n1, f0, f1] = EDGES[side]!.map(([dx, dz]) => t.effWith(fx + dx, fz + dz, this, pad));
-      if (Math.abs((f0! + f1!) / 2 - (n0! + n1!) / 2) > TERRAIN_RULES.DOOR_RISE) return true;
+      const [n0, n1, f0, f1] = EDGES[side]!.map(([dx, dz]) => t.effWith(fx + dx, fz + dz, this, extra));
+      worst = Math.max(worst, Math.abs((f0! + f1!) / 2 - (n0! + n1!) / 2));
+    }
+    return worst;
+  }
+
+  /** A planned garage's door faces ground cars cannot drive out on. */
+  private doorTooSteep(x: number, z: number, rot: Rot, py: number): boolean {
+    return this.doorRise(x, z, rot, { ...this.padRect('garage', x, z, rot), py }) > TERRAIN_RULES.DOOR_RISE;
+  }
+
+  /**
+   * The banks of a planned padded building would push a belt beside it, or the ground in front of a
+   * garage door, past the limits they were built within: refused, so the rules hold whatever the order
+   * things were built in.
+   */
+  private harmsNeighbors(type: BuildingType, x: number, z: number, rot: Rot, py: number): boolean {
+    const t = this.terrain;
+    const pad: Pad = { ...this.padRect(type, x, z, rot), py };
+    const K = TERRAIN_RULES.BANK_STEPS;
+    const garages = new Set<GarageB>();
+    for (let cz = pad.z0 - K - 1; cz <= pad.z1 + K; cz++) {
+      for (let cx = pad.x0 - K - 1; cx <= pad.x1 + K; cx++) {
+        const b = this.at(cx, cz);
+        if (!b) continue;
+        if (isBelt(b.type) && t.beltFits(cx, cz) && !t.beltFitsWith(cx, cz, this, pad)) return true;
+        if (b.type === 'garage') garages.add(b);
+      }
+    }
+    // Door aprons reach a cell past their garage.
+    for (let cz = pad.z0 - K - 2; cz <= pad.z1 + K + 1; cz++) {
+      for (let cx = pad.x0 - K - 2; cx <= pad.x1 + K + 1; cx++) {
+        const b = this.at(cx, cz);
+        if (b?.type === 'garage') garages.add(b);
+      }
+    }
+    for (const g of garages) {
+      const R = TERRAIN_RULES.DOOR_RISE;
+      if (this.doorRise(g.x, g.z, g.rot, null) <= R && this.doorRise(g.x, g.z, g.rot, pad) > R) return true;
     }
     return false;
   }
@@ -437,11 +474,12 @@ export class FactorySim implements PadSource {
         ({ py, grad, relief, fill, cut } = plan);
         const { cutFill } = plan;
         const R = TERRAIN_RULES;
-        const bad = (detail: 'slope' | 'relief' | 'cut' | 'door'): PlaceCheck => ({ ok: false, error: 'steep', detail, cells, py, grad, relief, fill, cut, cutFill });
+        const bad = (detail: 'slope' | 'relief' | 'cut' | 'door' | 'neighbor'): PlaceCheck => ({ ok: false, error: 'steep', detail, cells, py, grad, relief, fill, cut, cutFill });
         if (plan.grad > R.PAD_GRAD) return bad('slope');
         if (plan.relief > R.PAD_RELIEF) return bad('relief');
         if (plan.cutFill > R.PAD_CUT_FILL) return bad('cut');
         if (type === 'garage' && this.doorTooSteep(x, z, rot, plan.py)) return bad('door');
+        if (this.harmsNeighbors(type, x, z, rot, plan.py)) return bad('neighbor');
       }
     }
     let resource: ResourceId | null = null;

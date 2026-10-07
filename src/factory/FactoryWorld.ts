@@ -37,6 +37,11 @@ export class FactoryWorld {
   private beltsStale = false;
   /** Deck each belt piece's collider was built on. */
   private beltDecks = new Map<number, DeckPlane>();
+  /**
+   * Belt pieces placed on the relief whose collider waits for the next flush: their deck depends on the
+   * links, rebuilt once there rather than once per tile of a drag.
+   */
+  private readonly pendingBelts = new Set<number>();
   private readonly deck: DeckPlane = { c: 0, sx: 0, sz: 0 };
   /** Relief map: the scenery (trunks and big rocks are solid) and their colliders by item. */
   private decor: DecorLayout | null = null;
@@ -44,6 +49,8 @@ export class FactoryWorld {
   private readonly decorHandles = new Set<number>();
   /** Decor colliders to re-enable once nothing stands in them (a building was dismantled over the player). */
   private readonly decorPending = new Set<number>();
+  /** The last flush rebuilt something (ground, belts): things standing there may need lifting. */
+  rebuilt = false;
   /** Does this collider overlap the player? Set by the factory (never re-enable a trunk inside the player). */
   overlapsPlayer: ((c: RAPIER.Collider) => boolean) | null = null;
   private unsub: (() => void)[] = [];
@@ -65,6 +72,12 @@ export class FactoryWorld {
       this.ground.setFriction(1);
     }
     for (const b of sim.buildings.values()) this.add(b);
+    // Belt pieces of a loaded factory: their colliders now (one topology pass), for the first queries.
+    if (this.pendingBelts.size) {
+      sim.syncTopology();
+      for (const id of this.pendingBelts) this.add(sim.buildings.get(id)!, true);
+      this.pendingBelts.clear();
+    }
     if (sim.terrain.generated && sim.terrain.id in TERRAINS) {
       const spawn = { x: FACTORY_MAP.spawn.x * FACTORY_CELL, z: FACTORY_MAP.spawn.z * FACTORY_CELL };
       this.decor = decorLayoutCached(sim.terrain, sim.nodes, spawn, TERRAINS[sim.terrain.id as keyof typeof TERRAINS].plateau);
@@ -103,6 +116,7 @@ export class FactoryWorld {
    * meters [x0, z0, x1, z1] (things standing there may now be under the ground), or null.
    */
   flush(): [number, number, number, number] | null {
+    this.rebuilt = false;
     if (this.terrain.flat) return null;
     const t = this.terrain;
     let area: [number, number, number, number] | null = null;
@@ -114,6 +128,7 @@ export class FactoryWorld {
       // One shape swap per flush; the collider (and its handle) stays.
       this.ground.setShape(new RAPIER.Heightfield(t.nz - 1, t.nx - 1, this.heights!, { x: (t.nx - 1) * FACTORY_CELL, y: 1, z: (t.nz - 1) * FACTORY_CELL }));
       area = [d.i0 * FACTORY_CELL, d.j0 * FACTORY_CELL, d.i1 * FACTORY_CELL, d.j1 * FACTORY_CELL];
+      this.rebuilt = true;
     }
     // Decor back where nothing stands any more (not inside the player), and on the changed ground.
     for (const i of [...this.decorPending]) {
@@ -131,19 +146,26 @@ export class FactoryWorld {
         c.setTranslation({ x: it.x, y: y + (it.kind === 'rock' ? 0.15 * it.scale : 1.5), z: it.z });
       }
     }
-    if (d || this.beltsStale) {
+    if (d || this.beltsStale || this.pendingBelts.size) {
       this.sim.syncTopology();
+      for (const id of this.pendingBelts) {
+        const b = this.sim.buildings.get(id);
+        if (b) this.add(b, true);
+        this.rebuilt = true;
+      }
+      this.pendingBelts.clear();
       // Links changed: any belt's shape may have; otherwise only the belts on the changed corners.
       const all = this.beltsStale;
       this.beltsStale = false;
-      for (const b of this.sim.buildings.values()) {
+      for (const b of all || d ? this.sim.buildings.values() : []) {
         if (!isBelt(b.type)) continue;
         if (!all && d && (b.x + 1 < d.i0 || b.x > d.i1 || b.z + 1 < d.j0 || b.z > d.j1)) continue;
         const was = this.beltDecks.get(b.id);
         const now = this.sim.deckOf(b, this.deck);
         if (was && was.c === now.c && was.sx === now.sx && was.sz === now.sz) continue;
         this.remove(b.id);
-        this.add(b);
+        this.add(b, true);
+        this.rebuilt = true;
       }
     }
     return area;
@@ -192,7 +214,12 @@ export class FactoryWorld {
     return this.byHandle.get(collider.handle) ?? null;
   }
 
-  private add(b: Building): void {
+  /** Colliders of a building; a belt piece on the relief waits for the next flush (unless `now`). */
+  private add(b: Building, now = false): void {
+    if (!now && isBelt(b.type) && !this.terrain.flat) {
+      this.pendingBelts.add(b.id);
+      return;
+    }
     const [w, h] = BUILDINGS[b.type].footprint;
     const [rw, rh] = rotatedSize(w, h, b.rot);
     const cx = (b.x + rw / 2) * FACTORY_CELL;
@@ -255,6 +282,7 @@ export class FactoryWorld {
 
   private remove(id: number): void {
     this.beltDecks.delete(id);
+    this.pendingBelts.delete(id);
     const list = this.colliders.get(id);
     if (!list) return;
     for (const c of list) {

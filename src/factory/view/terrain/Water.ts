@@ -23,7 +23,8 @@ export class Water {
     this.mesh.name = 'lake';
     this.mesh.position.set(lake.x * FACTORY_CELL, lake.level / 100, lake.z * FACTORY_CELL);
     this.mesh.scale.set(lake.rx * FACTORY_CELL * 1.15, 1, lake.rz * FACTORY_CELL * 1.15);
-    this.mesh.renderOrder = 1;
+    // First of the transparent things: ghosts and markers in front of the lake blend over it, not under.
+    this.mesh.renderOrder = -1;
     this.mesh.receiveShadow = true;
   }
 

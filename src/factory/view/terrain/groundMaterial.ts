@@ -106,6 +106,9 @@ export function groundMaterial(): THREE.MeshLambertMaterial {
         `#include <color_fragment>
         vec4 groundNoise = texture2D(uNoise, vGroundWorld.xz / 64.0);
         diffuseColor.rgb *= 0.88 + 0.16 * groundNoise.r + 0.08 * groundNoise.g;
+        // Derivatives out of any branch (undefined in non-uniform control flow).
+        vec2 gridP = vGroundWorld.xz / 2.0;
+        vec2 gridFw = fwidth(gridP);
         vec2 gridCell = floor(vGroundWorld.xz / 2.0);
         vec2 latticeCell = gridCell + uMargin;
         if (latticeCell.x >= 0.0 && latticeCell.y >= 0.0 && latticeCell.x < uCellsSize.x && latticeCell.y < uCellsSize.y) {
@@ -129,8 +132,7 @@ export function groundMaterial(): THREE.MeshLambertMaterial {
           if (uGrid.w > 0.001 && gridCell.x >= 0.0 && gridCell.y >= 0.0 && gridCell.x < uGridCells.x && gridCell.y < uGridCells.y) {
             // Build grid around the aim: cell edges, and cells no belt fits on tinted red.
             float fade = (1.0 - smoothstep(uGrid.z * 0.6, uGrid.z, distance(vGroundWorld.xz, uGrid.xy))) * uGrid.w;
-            vec2 p = vGroundWorld.xz / 2.0;
-            vec2 w = abs(fract(p - 0.5) - 0.5) / fwidth(p);
+            vec2 w = abs(fract(gridP - 0.5) - 0.5) / gridFw;
             float line = 1.0 - min(min(w.x, w.y), 1.0);
             diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), line * 0.5 * fade);
             if (cell.b > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.85, 0.18, 0.12), 0.32 * fade);
@@ -138,7 +140,7 @@ export function groundMaterial(): THREE.MeshLambertMaterial {
         }`,
       );
   };
-  m.customProgramCacheKey = () => 'ground-v2';
+  m.customProgramCacheKey = () => 'ground-v3';
   material = m;
   return m;
 }

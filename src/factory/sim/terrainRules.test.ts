@@ -80,6 +80,18 @@ describe('placement on the relief', () => {
     expect([...sim.terrain.eff]).toEqual([...sim.terrain.base]);
   });
 
+  it('refuses a pad whose banks would push a belt or a garage door beside it past its limits', () => {
+    // Corners at x = 10, 11, 12: 100, 50, 0 cm, then −80 cm per cell: a belt at (12, 5) is at the limit.
+    const sim = fixture((gi) => (gi <= 10 ? 100 : gi === 11 ? 50 : gi === 12 ? 0 : -80 * (gi - 12)));
+    expect(sim.place('conveyor', 12, 5, 1, { free: true }).ok).toBe(true);
+    expect(sim.check('smelter', 10, 5, 0, { free: true })).toMatchObject({ ok: false, error: 'steep', detail: 'neighbor' });
+    // A garage on ground rising 15 cm per cell, then a smelter two cells in front of its door.
+    const rise = fixture((_gi, gj) => 15 * gj);
+    expect(rise.place('garage', 5, 6, 0, { free: true }).ok).toBe(true);
+    expect(rise.check('smelter', 5, 11, 0, { free: true })).toMatchObject({ ok: false, error: 'steep', detail: 'neighbor' });
+    expect(rise.check('smelter', 15, 11, 0, { free: true }).ok).toBe(true);
+  });
+
   it('snaps a row of machines along a slope into terraces', () => {
     const sim = ramp(6); // 21 cm per cell
     const pys: number[] = [];

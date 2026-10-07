@@ -167,9 +167,10 @@ export interface PlaceCheck {
   cutFill?: number;
   /**
    * Why 'steep': a cell too steep under a pad (slope), too much relief under it (relief), too much to dig or
-   * fill (cut), the ground in front of a garage door (door); a belt's cell too steep (belt) or twisted (twist).
+   * fill (cut), the ground in front of a garage door (door), its banks would make a belt or a garage door
+   * beside it too steep (neighbor); a belt's cell too steep (belt) or twisted (twist).
    */
-  detail?: 'slope' | 'relief' | 'cut' | 'door' | 'belt' | 'twist';
+  detail?: 'slope' | 'relief' | 'cut' | 'door' | 'neighbor' | 'belt' | 'twist';
 }
 
 export type BuildingTypeOf<T extends BuildingType> = Extract<Building, { type: T }>;

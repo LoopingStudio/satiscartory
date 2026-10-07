@@ -114,9 +114,19 @@ export function buildTerrainGeometry(t: Terrain, ax = axis(t.width, t.margin), a
   }
   const key = `${t.id}|${t.width}|${t.height}|${t.margin}`;
   let st = statics.get(key);
-  if (!st || t.id === 'flat') {
-    st = { index: buildIndex(nx, nz), colors: buildColors(t, xs, zs, pos) };
-    statics.set(key, st);
+  if (!st || !t.generated) {
+    // Colors from the natural ground (pads and banks come and go; the shader paints them).
+    const natural = new Float32Array(nx * nz * 3);
+    for (let j = 0; j < nz; j++) {
+      for (let i = 0; i < nx; i++) {
+        const a = i - ax.first;
+        const b = j - az.first;
+        const inside = a >= 0 && b >= 0 && a < t.nx && b < t.nz;
+        natural[(i + j * nx) * 3 + 1] = inside ? t.base[a + b * t.nx]! / 100 : pos[(i + j * nx) * 3 + 1]!;
+      }
+    }
+    st = { index: buildIndex(nx, nz), colors: buildColors(t, xs, zs, natural) };
+    if (t.generated) statics.set(key, st);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));

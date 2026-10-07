@@ -171,8 +171,8 @@ export class FactoryMode implements Mode {
     const inside = saved ? this.sim.at(Math.floor(saved.x / FACTORY_CELL), Math.floor(saved.z / FACTORY_CELL)) : undefined;
     let spawn: THREE.Vector3;
     if (saved && (!inside || isBelt(inside.type) || BUILDINGS[inside.type].hollow)) {
-      const x = this.clampToMap(saved.x, this.sim.width);
-      const z = this.clampToMap(saved.z, this.sim.height);
+      const x = terrain.flat ? saved.x : this.clampToMap(saved.x, this.sim.width);
+      const z = terrain.flat ? saved.z : this.clampToMap(saved.z, this.sim.height);
       spawn = new THREE.Vector3(x, Math.max(saved.y, terrain.heightAt(x, z) + 0.05), z);
     } else spawn = this.spawnPoint(new THREE.Vector3());
     this.player = new CharacterController(
@@ -195,7 +195,8 @@ export class FactoryMode implements Mode {
     this.avatar = new PlayerAvatar(this.game.assets);
     this.scene.add(this.avatar.root);
     // The camera looks through trees and rocks (no pumping in a forest), never under the ground.
-    this.orbit = new OrbitCamera(this.camera, this.world.physics, this.player.collider, terrain.flat ? {} : { groundAt: (x, z) => terrain.heightAt(x, z), filter: (c) => !this.world.isDecor(c) });
+    // (Over the lake, its surface: the camera never goes under the water, which is not drawn from below.)
+    this.orbit = new OrbitCamera(this.camera, this.world.physics, this.player.collider, terrain.flat ? {} : { groundAt: (x, z) => terrain.heightAt(x, z) + terrain.waterDepthAt(x, z), filter: (c) => !this.world.isDecor(c) });
     this.world.overlapsPlayer = (c) => this.player.collider.isEnabled() && c.intersectsShape(this.player.collider.shape, this.player.collider.translation(), this.player.collider.rotation());
     // New game: spawn south of the hub looking toward it (+Z).
     this.orbit.yaw = this.state.player ? this.state.player.yaw : 0;
@@ -428,10 +429,33 @@ export class FactoryMode implements Mode {
   }
   private readonly pushList: { x: number; z: number; r: number }[] = [];
 
-  /** New game's spawn, south of the hub, on the ground. */
+  /**
+   * New game's spawn, south of the hub, on the ground; when something solid was built there, the nearest
+   * cell where nothing (but a belt or a garage's floor) stands.
+   */
   private spawnPoint(out: THREE.Vector3): THREE.Vector3 {
-    const x = FACTORY_MAP.spawn.x * FACTORY_CELL;
-    const z = FACTORY_MAP.spawn.z * FACTORY_CELL;
+    const sx = FACTORY_MAP.spawn.x;
+    const sz = FACTORY_MAP.spawn.z;
+    const free = (cx: number, cz: number) => {
+      const b = this.sim.at(cx, cz);
+      return this.sim.inBounds(cx, cz) && (!b || isBelt(b.type) || !!BUILDINGS[b.type].hollow) && !this.sim.terrain.isWetCell(cx, cz);
+    };
+    let fx = sx;
+    let fz = sz;
+    search: for (let r = 0; r < 20; r++) {
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+          if (free(Math.floor(sx) + dx, Math.floor(sz) + dz)) {
+            fx = sx + dx;
+            fz = sz + dz;
+            break search;
+          }
+        }
+      }
+    }
+    const x = fx * FACTORY_CELL;
+    const z = fz * FACTORY_CELL;
     return out.set(x, this.sim.terrain.heightAt(x, z) + 0.1, z);
   }
 
@@ -651,15 +675,17 @@ export class FactoryMode implements Mode {
    */
   private flushTerrain(): void {
     const area = this.world.flush();
-    if (!area) return;
-    this.cars.onTerrain(area);
-    if (this.driving) return;
+    if (area) this.cars.onTerrain(area);
+    if (!this.world.rebuilt || this.driving) return;
+    // On the highest surface under the feet: the ground, or a belt whose deck rose under the player.
     const p = this.player.cur;
-    const [x0, z0, x1, z1] = area;
-    if (p.x < x0 - 1 || p.x > x1 + 1 || p.z < z0 - 1 || p.z > z1 + 1) return;
-    const g = this.sim.terrain.heightAt(p.x, p.z);
-    if (p.y < g - 0.02) this.player.teleport(this.tmpV.set(p.x, g + 0.02, p.z));
+    this.lift.origin = { x: p.x, y: p.y + 1.5, z: p.z };
+    this.lift.dir = { x: 0, y: -1, z: 0 };
+    const hit = this.world.physics.world.castRay(this.lift, 3, true, undefined, undefined, this.player.collider, undefined, (c) => !this.world.isDecor(c));
+    const top = Math.max(this.sim.terrain.heightAt(p.x, p.z), hit ? p.y + 1.5 - hit.timeOfImpact : -Infinity);
+    if (p.y < top - 0.02 && top - p.y < 1.5) this.player.teleport(this.tmpV.set(p.x, top + 0.02, p.z));
   }
+  private readonly lift = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
 
   fixedUpdate(dt: number): void {
     const input = this.game.input;
@@ -693,13 +719,16 @@ export class FactoryMode implements Mode {
       sprint = input.isDown('sprint') || this.padSprint;
       jump = input.consume('jump');
     }
-    // Map edge: no walking further out than MAP_EDGE m past the grid (the cliffs stop the player first).
+    // Map edge on the relief: no walking further out than MAP_EDGE m past the grid (the cliffs stop the
+    // player first; past them the heightfield ends). A flat map keeps its wide floor.
     const p = this.player.cur;
-    const hi = (n: number) => n * FACTORY_CELL + MAP_EDGE;
-    if ((p.x <= -MAP_EDGE && dirX < 0) || (p.x >= hi(this.sim.width) && dirX > 0)) dirX = 0;
-    if ((p.z <= -MAP_EDGE && dirZ < 0) || (p.z >= hi(this.sim.height) && dirZ > 0)) dirZ = 0;
     const terrain = this.sim.terrain;
-    if (p.x < -MAP_EDGE - 1 || p.z < -MAP_EDGE - 1 || p.x > hi(this.sim.width) + 1 || p.z > hi(this.sim.height) + 1) {
+    const hi = (n: number) => n * FACTORY_CELL + MAP_EDGE;
+    if (!terrain.flat) {
+      if ((p.x <= -MAP_EDGE && dirX < 0) || (p.x >= hi(this.sim.width) && dirX > 0)) dirX = 0;
+      if ((p.z <= -MAP_EDGE && dirZ < 0) || (p.z >= hi(this.sim.height) && dirZ > 0)) dirZ = 0;
+    }
+    if (!terrain.flat && (p.x < -MAP_EDGE - 1 || p.z < -MAP_EDGE - 1 || p.x > hi(this.sim.width) + 1 || p.z > hi(this.sim.height) + 1)) {
       const x = this.clampToMap(p.x, this.sim.width);
       const z = this.clampToMap(p.z, this.sim.height);
       this.player.teleport(this.tmpV.set(x, Math.max(p.y, terrain.heightAt(x, z) + 0.05), z));
