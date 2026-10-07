@@ -170,3 +170,32 @@ describe('buildings on the relief (physics)', () => {
     fw.dispose();
   });
 });
+
+describe('scenery (physics)', () => {
+  it('building over a tree clears its trunk; dismantling brings it back', () => {
+    const sim = FactorySim.newGame({ terrain: 'vallonne-1' });
+    const fw = new FactoryWorld(sim);
+    fw.physics.step(0);
+    const world = fw as unknown as { decor: { items: { kind: string; x: number; z: number; solid: boolean }[] }; decorColliders: Map<number, RAPIER.Collider> };
+    // A tree under a placeable smelter.
+    let found: { i: number; cx: number; cz: number } | null = null;
+    world.decor.items.forEach((it, i) => {
+      if (found || !it.solid || it.kind === 'rock') return;
+      const cx = Math.floor(it.x / 2);
+      const cz = Math.floor(it.z / 2);
+      if (sim.check('smelter', cx, cz, 0, { free: true }).ok) found = { i, cx, cz };
+    });
+    expect(found).not.toBeNull();
+    const { i, cx, cz } = found!;
+    const trunk = world.decorColliders.get(i)!;
+    expect(trunk.isEnabled()).toBe(true);
+    const r = sim.place('smelter', cx, cz, 0, { free: true });
+    expect(r.ok).toBe(true);
+    expect(trunk.isEnabled()).toBe(false);
+    expect(fw.isDecor(trunk)).toBe(true);
+    if (r.ok) sim.remove(r.building.id);
+    fw.flush();
+    expect(trunk.isEnabled()).toBe(true);
+    fw.dispose();
+  });
+});

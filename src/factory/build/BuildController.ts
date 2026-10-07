@@ -360,7 +360,7 @@ export class BuildController {
     const hit =
       this.tool.kind === 'build'
         ? world.castRay(this.ray, 120, true, undefined, undefined, exclude, undefined, (c) => this.world.isGround(c))
-        : world.castRay(this.ray, 120, true, undefined, undefined, exclude);
+        : world.castRay(this.ray, 120, true, undefined, undefined, exclude, undefined, (c) => !this.world.isDecor(c));
     if (hit) {
       p = origin.clone().addScaledVector(dir, hit.timeOfImpact);
       if (this.tool.kind !== 'build') this.aim.buildingId = this.world.buildingOf(hit.collider);

@@ -9,6 +9,9 @@ import { GARAGE_CLUTTER, GARAGE_LINTEL, GARAGE_WALLS, rotateBox } from './view/g
 import { rotateLocal } from './view/beltPath';
 import type { FactorySim, TerrainRect } from './sim/FactorySim';
 import { deckY, type DeckPlane, type Terrain } from './sim/terrain';
+import { decorLayoutCached, isCleared, type DecorLayout } from './sim/decor';
+import { FACTORY_MAP } from '../data/factoryMap';
+import { TERRAINS } from '../data/factoryTerrain';
 import type { Building } from './sim/types';
 
 /** Collider heights per building type (meters). Conveyors are low enough to step onto. */
@@ -35,6 +38,14 @@ export class FactoryWorld {
   /** Deck each belt piece's collider was built on. */
   private beltDecks = new Map<number, DeckPlane>();
   private readonly deck: DeckPlane = { c: 0, sx: 0, sz: 0 };
+  /** Relief map: the scenery (trunks and big rocks are solid) and their colliders by item. */
+  private decor: DecorLayout | null = null;
+  private readonly decorColliders = new Map<number, RAPIER.Collider>();
+  private readonly decorHandles = new Set<number>();
+  /** Decor colliders to re-enable once nothing stands in them (a building was dismantled over the player). */
+  private readonly decorPending = new Set<number>();
+  /** Does this collider overlap the player? Set by the factory (never re-enable a trunk inside the player). */
+  overlapsPlayer: ((c: RAPIER.Collider) => boolean) | null = null;
   private unsub: (() => void)[] = [];
 
   constructor(private readonly sim: FactorySim) {
@@ -54,9 +65,30 @@ export class FactoryWorld {
       this.ground.setFriction(1);
     }
     for (const b of sim.buildings.values()) this.add(b);
+    if (sim.terrain.generated && sim.terrain.id in TERRAINS) {
+      const spawn = { x: FACTORY_MAP.spawn.x * FACTORY_CELL, z: FACTORY_MAP.spawn.z * FACTORY_CELL };
+      this.decor = decorLayoutCached(sim.terrain, sim.nodes, spawn, TERRAINS[sim.terrain.id as keyof typeof TERRAINS].plateau);
+      this.decor.items.forEach((it, i) => {
+        if (!it.solid) return;
+        const y = sim.terrain.heightAt(it.x, it.z);
+        const desc = it.kind === 'rock'
+          ? RAPIER.ColliderDesc.ball(0.75 * it.scale).setTranslation(it.x, y + 0.15 * it.scale, it.z)
+          : RAPIER.ColliderDesc.cylinder(1.5, (it.kind === 'oak' ? 0.35 : it.kind === 'pine' ? 0.28 : 0.2) * it.scale).setTranslation(it.x, y + 1.5, it.z);
+        const c = this.physics.world.createCollider(desc.setFriction(0.8));
+        c.setEnabled(!isCleared(this.decor!, i, sim.grid));
+        this.decorColliders.set(i, c);
+        this.decorHandles.add(c.handle);
+      });
+    }
     this.unsub.push(
-      sim.events.on('placed', (b) => this.add(b)),
-      sim.events.on('removed', (b) => this.remove(b.id)),
+      sim.events.on('placed', (b) => {
+        this.add(b);
+        this.refreshDecor(b);
+      }),
+      sim.events.on('removed', (b) => {
+        this.remove(b.id);
+        this.refreshDecor(b);
+      }),
       sim.events.on('terrain', (r) => {
         const d = this.dirty;
         this.dirty = d ? { i0: Math.min(d.i0, r.i0), j0: Math.min(d.j0, r.j0), i1: Math.max(d.i1, r.i1), j1: Math.max(d.j1, r.j1) } : { ...r };
@@ -83,6 +115,22 @@ export class FactoryWorld {
       this.ground.setShape(new RAPIER.Heightfield(t.nz - 1, t.nx - 1, this.heights!, { x: (t.nx - 1) * FACTORY_CELL, y: 1, z: (t.nz - 1) * FACTORY_CELL }));
       area = [d.i0 * FACTORY_CELL, d.j0 * FACTORY_CELL, d.i1 * FACTORY_CELL, d.j1 * FACTORY_CELL];
     }
+    // Decor back where nothing stands any more (not inside the player), and on the changed ground.
+    for (const i of [...this.decorPending]) {
+      const c = this.decorColliders.get(i)!;
+      if (this.overlapsPlayer?.(c)) continue;
+      c.setEnabled(true);
+      this.decorPending.delete(i);
+    }
+    if (d && this.decor) {
+      const [x0, z0, x1, z1] = [d.i0 * FACTORY_CELL, d.j0 * FACTORY_CELL, d.i1 * FACTORY_CELL, d.j1 * FACTORY_CELL];
+      for (const [i, c] of this.decorColliders) {
+        const it = this.decor.items[i]!;
+        if (it.x < x0 - 1 || it.x > x1 + 1 || it.z < z0 - 1 || it.z > z1 + 1) continue;
+        const y = this.terrain.heightAt(it.x, it.z);
+        c.setTranslation({ x: it.x, y: y + (it.kind === 'rock' ? 0.15 * it.scale : 1.5), z: it.z });
+      }
+    }
     if (d || this.beltsStale) {
       this.sim.syncTopology();
       // Links changed: any belt's shape may have; otherwise only the belts on the changed corners.
@@ -99,6 +147,27 @@ export class FactoryWorld {
       }
     }
     return area;
+  }
+
+  /** A tree trunk or a big rock (the cameras look through them). */
+  isDecor(c: RAPIER.Collider): boolean {
+    return this.decorHandles.has(c.handle);
+  }
+
+  /** A building appeared or left: the trunks and rocks under it go or come back. */
+  private refreshDecor(b: Building): void {
+    const d = this.decor;
+    if (!d) return;
+    for (const [cx, cz] of this.sim.cellsFor(b.type, b.x, b.z, b.rot)) {
+      for (const i of d.byCell.get(cx + cz * this.sim.width) ?? []) {
+        const c = this.decorColliders.get(i);
+        if (!c) continue;
+        if (isCleared(d, i, this.sim.grid)) {
+          c.setEnabled(false);
+          this.decorPending.delete(i);
+        } else this.decorPending.add(i);
+      }
+    }
   }
 
   /** The collider is the ground (the slab or the heightfield). */

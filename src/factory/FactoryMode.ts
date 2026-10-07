@@ -190,10 +190,13 @@ export class FactoryMode implements Mode {
         return !!type && isBelt(type);
       },
       onEvent: () => toast('La voiture a pris l’eau : retour au sec', 'info', 2200),
+      isDecor: (c) => this.world.isDecor(c),
     });
     this.avatar = new PlayerAvatar(this.game.assets);
     this.scene.add(this.avatar.root);
-    this.orbit = new OrbitCamera(this.camera, this.world.physics, this.player.collider, terrain.flat ? {} : { groundAt: (x, z) => terrain.heightAt(x, z) });
+    // The camera looks through trees and rocks (no pumping in a forest), never under the ground.
+    this.orbit = new OrbitCamera(this.camera, this.world.physics, this.player.collider, terrain.flat ? {} : { groundAt: (x, z) => terrain.heightAt(x, z), filter: (c) => !this.world.isDecor(c) });
+    this.world.overlapsPlayer = (c) => this.player.collider.isEnabled() && c.intersectsShape(this.player.collider.shape, this.player.collider.translation(), this.player.collider.rotation());
     // New game: spawn south of the hub looking toward it (+Z).
     this.orbit.yaw = this.state.player ? this.state.player.yaw : 0;
     this.faceYaw = this.orbit.yaw;

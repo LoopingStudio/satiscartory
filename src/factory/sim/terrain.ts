@@ -272,6 +272,11 @@ export class Terrain {
     return this.id === 'flat';
   }
 
+  /** A generated map (not flat, not a test fixture): it has scenery (trees, rocks) and far mountains. */
+  get generated(): boolean {
+    return this.shape !== null;
+  }
+
   static create(id: TerrainId, width: number, height: number, nodes: readonly ResourceNode[] = []): Terrain {
     if (id === 'flat') return Terrain.flat(width, height);
     const g = generate(id, width, height, nodes);

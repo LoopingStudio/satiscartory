@@ -21,6 +21,10 @@ import { TerrainTextures } from './terrain/terrainTextures';
 import { groundUniforms } from './terrain/groundMaterial';
 import { Foundations } from './Foundations';
 import { GRASS_PUSHERS, GrassField, grassUniforms } from './terrain/GrassField';
+import { Decor } from './terrain/Decor';
+import { decorLayoutCached } from '../sim/decor';
+import { FACTORY_MAP } from '../../data/factoryMap';
+import { TERRAINS } from '../../data/factoryTerrain';
 import type { GrassQuality } from '../../data/factoryTerrain';
 import { deckPitch, deckShear } from './terrain/deck';
 import { deckY, type DeckPlane } from '../sim/terrain';
@@ -66,6 +70,7 @@ export class FactoryView {
   private textures: TerrainTextures | null = null;
   private foundations: Foundations | null = null;
   private grass: GrassField | null = null;
+  private decor: Decor | null = null;
   private foundationsDirty = true;
   private decks: Float32Array | null = null;
   /** Ground changed (corners) since the last frame. */
@@ -100,6 +105,11 @@ export class FactoryView {
       grassUniforms.uFlatten.value.set(0, 0, 10, 0);
       for (const p of grassUniforms.uPush.value) p.set(0, 0, 0);
       this.root.add(this.grass.root);
+      if (t.generated && t.id in TERRAINS) {
+        const spawn = { x: FACTORY_MAP.spawn.x * FACTORY_CELL, z: FACTORY_MAP.spawn.z * FACTORY_CELL };
+        this.decor = new Decor(sim, decorLayoutCached(t, sim.nodes, spawn, TERRAINS[t.id as keyof typeof TERRAINS].plateau));
+        this.root.add(this.decor.root);
+      }
     }
     for (const b of sim.buildings.values()) this.addVisual(b);
     const cellsOf = (b: Building) => this.sim.cellsFor(b.type, b.x, b.z, b.rot);
@@ -110,6 +120,7 @@ export class FactoryView {
         this.markersDirty = true;
         this.foundationsDirty = true;
         this.textures?.occupancyChanged(cellsOf(b));
+        this.decor?.refreshCells(cellsOf(b));
       }),
       sim.events.on('removed', (b) => {
         const v = this.visuals.get(b.id);
@@ -120,6 +131,7 @@ export class FactoryView {
         this.markersDirty = true;
         this.foundationsDirty = true;
         this.textures?.occupancyChanged(cellsOf(b));
+        this.decor?.refreshCells(cellsOf(b));
       }),
       sim.events.on('topology', () => {
         this.conveyorsDirty = true;
@@ -485,6 +497,7 @@ export class FactoryView {
     this.terrainDirty = null;
     this.terrainMesh?.updateCorners(r.i0, r.j0, r.i1, r.j1);
     this.textures?.terrainChanged(r);
+    this.decor?.reheight([r.i0 * FACTORY_CELL, r.j0 * FACTORY_CELL, r.i1 * FACTORY_CELL, r.j1 * FACTORY_CELL]);
     for (const v of this.visuals.values()) {
       const b = v.building;
       if (isNode(b) && b.x + 1 >= r.i0 && b.x <= r.i1 && b.z + 1 >= r.j0 && b.z <= r.j1) v.placeOn(this.sim);
@@ -587,6 +600,7 @@ export class FactoryView {
     this.textures?.dispose();
     this.foundations?.dispose();
     this.grass?.dispose();
+    this.decor?.dispose();
     if (grassUniforms.uCells.value === this.textures?.cells) grassUniforms.uCells.value = grassUniforms.uHeights.value = null;
     if (groundUniforms.uCells.value === this.textures?.cells) groundUniforms.uCells.value = null;
     this.terrainMesh?.dispose();

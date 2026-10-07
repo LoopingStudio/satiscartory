@@ -53,6 +53,8 @@ export interface FactoryCarsOptions {
   isConveyor(collider: RAPIER.Collider): boolean;
   /** Something happened to the driven car worth a message (it drowned in the lake and was put back). */
   onEvent?(kind: 'water'): void;
+  /** Trees and rocks: the chase camera looks through them, exit spots stand on the ground under them. */
+  isDecor?(collider: RAPIER.Collider): boolean;
 }
 
 /** Where the player gets out: feet position and facing (the car's heading). */
@@ -440,7 +442,7 @@ export class FactoryCars {
   private floorAt(x: number, fromY: number, z: number, exclude: Set<number>): number {
     this.ray.origin = { x, y: fromY, z };
     this.ray.dir = { x: 0, y: -1, z: 0 };
-    const hit = this.world.castRay(this.ray, 6, true, undefined, undefined, undefined, undefined, (c) => !exclude.has(c.handle) && !this.parkedHandles.has(c.handle) && !this.opts.isConveyor(c));
+    const hit = this.world.castRay(this.ray, 6, true, undefined, undefined, undefined, undefined, (c) => !exclude.has(c.handle) && !this.parkedHandles.has(c.handle) && !this.opts.isConveyor(c) && !this.opts.isDecor?.(c));
     return hit ? fromY - hit.timeOfImpact : this.opts.ground.heightAt(x, z);
   }
 
@@ -611,7 +613,8 @@ export class FactoryCars {
     if (!this.chase) {
       this.baseFov ??= camera.fov;
       const g = this.opts.ground;
-      this.chase = new ChaseCamera(camera, this.world, v.collider, g.flat ? {} : { groundAt: (x, z) => g.heightAt(x, z) });
+      const decor = this.opts.isDecor;
+      this.chase = new ChaseCamera(camera, this.world, v.collider, g.flat ? {} : { groundAt: (x, z) => g.heightAt(x, z), filter: decor ? (c) => !decor(c) : undefined });
     }
     const lv = v.body.linvel();
     this.vel.set(lv.x, lv.y, lv.z);
