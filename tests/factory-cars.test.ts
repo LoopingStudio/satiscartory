@@ -11,11 +11,14 @@ import { carGeometryFromBoxes, type CarGeometry } from '../src/car/geometry';
 import { computeCarStats, type CarSpec } from '../src/car/stats';
 import { tuningFromStats } from '../src/car/tuning';
 import { FactoryWorld } from '../src/factory/FactoryWorld';
-import { FactoryCars } from '../src/factory/cars/FactoryCars';
+import { FactoryCars, carGroundOf } from '../src/factory/cars/FactoryCars';
 import { CAR_GRAVITY_SCALE, FACTORY_CAR, distanceToBox, toLocal } from '../src/factory/cars/carMath';
 import { bayPose } from '../src/garage/parking';
 import type { CarInstance, CarPose } from '../src/garage/assembly';
 import { GameState } from '../src/state/GameState';
+import { FactorySim } from '../src/factory/sim/FactorySim';
+import { Terrain } from '../src/factory/sim/terrain';
+import { upYOfQuat } from '../src/factory/cars/carMath';
 import { Vehicle, NO_CONTROLS, type VehicleControls, type VehicleOptions } from '../src/vehicle/Vehicle';
 import { makeCarPreview } from '../src/car/CarModel';
 
@@ -85,14 +88,15 @@ function carAt(id: string, spec: CarSpec, pose: CarPose | null): CarInstance {
   return { id, name: id, blueprint: spec.blueprint, parts: { ...spec.parts } as CarInstance['parts'], pose };
 }
 
-function setup(state = new GameState()) {
+/** The real map's nodes and hub on flat ground: the positions below assume a flat floor (slopes: terrain-cars tests). */
+function setup(state = new GameState(FactorySim.newGame({ terrain: 'flat' })), events: string[] = []) {
   const fw = new FactoryWorld(state.sim);
   const scene = new THREE.Scene();
   const isConveyor = (c: RAPIER.Collider) => {
     const id = fw.buildingOf(c);
     return id !== null && state.sim.buildings.get(id)?.type === 'conveyor';
   };
-  const cars = new FactoryCars(fakeAssets(), fw.physics, scene, state, { ground: fw.ground, isConveyor });
+  const cars = new FactoryCars(fakeAssets(), fw.physics, scene, state, { ground: carGroundOf(state.sim.terrain), isConveyor, onEvent: (k) => events.push(k) });
   const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 1000);
   const held = new Set<Action>();
   const input = {
@@ -478,3 +482,131 @@ describe('CarModel preview', () => {
   });
 });
 
+
+// ------------------------------------------------------------------ on the relief
+
+/** A 64×64-cell factory (128 m) on a relief fixture: corner heights in cm from `f(gi, gj)`, optional water level (cm). */
+function reliefState(f: (gi: number, gj: number) => number, water: number | null = null): GameState {
+  const W = 64;
+  const M = 4;
+  const n = W + 2 * M + 1;
+  const cm: number[] = [];
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) cm.push(Math.round(f(i - M, j - M)));
+  return new GameState(new FactorySim({ width: W, height: W, terrain: Terrain.fromHeights(W, W, M, cm, water), hub: null }));
+}
+/** Rise in cm per 2 m cell of a slope of `deg` degrees. */
+const rise = (deg: number) => Math.tan((deg * Math.PI) / 180) * 200;
+/** Flat until x = 16 cells, then up along +x at `deg`. */
+const rampX = (deg: number) => (gi: number) => Math.max(0, gi - 16) * rise(deg);
+
+describe('FactoryCars on the relief', () => {
+  it('a car parked on a 15° slope stands tilted to it and gets in without a jolt', () => {
+    const state = reliefState(rampX(15));
+    const t = state.sim.terrain;
+    const x = 70;
+    state.cars = [carAt('s', SPORT, { x, y: t.heightAt(x, 64), z: 64, yaw: Math.PI / 2 })]; // facing +X, up the slope
+    const f = setup(state);
+    const body = (f.cars as unknown as { entries: Map<string, { body: RAPIER.RigidBody }> }).entries.get('s')!.body;
+    expect(upYOfQuat(body.rotation())).toBeCloseTo(Math.cos((15 * Math.PI) / 180), 2);
+    expect(f.cars.enter('s')).toBe(true);
+    const y0 = vehicleOf(f.cars).curPos.y;
+    let worst = 0;
+    for (let i = 0; i < 30; i++) {
+      f.step();
+      worst = Math.max(worst, Math.abs(vehicleOf(f.cars).curPos.y - y0));
+    }
+    expect(worst).toBeLessThan(0.15);
+  });
+
+  it('the hold brake keeps a car still on 20° with no input', () => {
+    const state = reliefState(rampX(20));
+    const t = state.sim.terrain;
+    state.cars = [carAt('s', SPORT, { x: 70, y: t.heightAt(70, 64), z: 64, yaw: 0 })]; // across the slope
+    const f = setup(state);
+    f.cars.enter('s');
+    f.run(0.5);
+    const p0 = vehicleOf(f.cars).curPos.clone();
+    f.run(3);
+    expect(vehicleOf(f.cars).curPos.distanceTo(p0)).toBeLessThan(0.3);
+  });
+
+  it('down a 25° slope at full throttle, the speed stays near the cap', () => {
+    const state = reliefState(rampX(25));
+    const t = state.sim.terrain;
+    state.cars = [carAt('s', SPORT, { x: 120, y: t.heightAt(120, 64), z: 64, yaw: -Math.PI / 2 })]; // facing -X, downhill
+    const f = setup(state);
+    f.cars.enter('s');
+    let top = 0;
+    for (let i = 0; i < Math.round(3.5 / PHYS_DT); i++) {
+      f.held.clear();
+      f.held.add('throttle');
+      f.step();
+      const v = vehicleOf(f.cars);
+      if (v.curPos.x > 40) top = Math.max(top, v.body.linvel().x * -1);
+    }
+    expect(top).toBeGreaterThan(15);
+    expect(top).toBeLessThanOrEqual(27);
+  });
+
+  it('drives down into a valley 6 m deep without being put back, the camera above the ground', () => {
+    // A bowl 6 m deep around (64, 64) m.
+    const state = reliefState((gi, gj) => {
+      const d = Math.hypot(gi - 32, gj - 32);
+      return d < 6 ? -600 : d < 24 ? -600 * (1 - (d - 6) / 18) ** 2 : 0;
+    });
+    const t = state.sim.terrain;
+    state.cars = [carAt('s', SPORT, { x: 64, y: t.heightAt(64, 10), z: 10, yaw: 0 })]; // facing +Z, toward the bowl
+    const f = setup(state);
+    f.cars.enter('s');
+    let lowest = Infinity;
+    let worstCam = Infinity;
+    for (let i = 0; i < Math.round(5 / PHYS_DT); i++) {
+      f.held.clear();
+      if (i < 120) f.held.add('throttle');
+      f.step();
+      if (i % 4 === 0) {
+        f.cars.update(PHYS_DT * 4, 1, f.camera);
+        const c = f.camera.position;
+        worstCam = Math.min(worstCam, c.y - t.heightAt(c.x, c.z));
+      }
+      lowest = Math.min(lowest, vehicleOf(f.cars).curPos.y);
+    }
+    expect(lowest).toBeLessThan(-5);
+    expect(vehicleOf(f.cars).curPos.y).toBeLessThan(-4);
+    expect(worstCam).toBeGreaterThan(0.5);
+  });
+
+  it('gets out on a side slope with the feet on the ground', () => {
+    const state = reliefState(rampX(14));
+    const t = state.sim.terrain;
+    state.cars = [carAt('s', SPORT, { x: 70, y: t.heightAt(70, 64), z: 64, yaw: 0 })]; // facing +Z: the slope rises to its right
+    const f = setup(state);
+    f.cars.enter('s');
+    f.run(1);
+    const spot = f.cars.exit();
+    expect(spot).not.toBeNull();
+    expect(Math.abs(spot!.position.y - t.heightAt(spot!.position.x, spot!.position.z))).toBeLessThan(0.15);
+  });
+
+  it('in the lake, the water slows the car, then puts it back on dry ground with a message', () => {
+    // A pond 2 m deep east of x = 40 cells, water level -40 cm.
+    const state = reliefState((gi) => (gi > 40 ? -200 : gi > 34 ? -200 * ((gi - 34) / 6) : 0), -40);
+    const t = state.sim.terrain;
+    const events: string[] = [];
+    state.cars = [carAt('s', SPORT, { x: 50, y: t.heightAt(50, 64), z: 64, yaw: Math.PI / 2 })]; // facing +X, into the pond
+    const f = setup(state, events);
+    f.cars.enter('s');
+    let entered = 0;
+    for (let i = 0; i < Math.round(8 / PHYS_DT) && !events.length; i++) {
+      f.held.clear();
+      f.held.add('throttle');
+      f.step();
+      const p = vehicleOf(f.cars).curPos;
+      if (t.waterDepthAt(p.x, p.z) > 0.5) entered++;
+    }
+    expect(entered).toBeGreaterThan(0);
+    expect(events).toEqual(['water']);
+    const p = vehicleOf(f.cars).curPos;
+    expect(t.waterDepthAt(p.x, p.z)).toBeLessThan(0.05);
+  });
+});

@@ -4,7 +4,7 @@ import type { CarGeometry } from '../car/geometry';
 import type { VehicleTuning } from '../car/tuning';
 import { CAR_SCALE } from '../config/constants';
 import { VEHICLE } from '../data/vehicle';
-import { speedCapForce } from './speedCap';
+import { slopeCapForce, speedCapForce } from './speedCap';
 
 export interface VehicleControls {
   /** 0..1 */
@@ -26,6 +26,21 @@ export interface VehicleOptions {
   speedCap?: number;
   /** Colliders the wheel rays may rest on (false = ignored; the chassis still collides). Default: all. */
   wheelFilter?: (collider: RAPIER.Collider) => boolean;
+  /**
+   * No throttle and no brake below 1.5 m/s: full brakes, no engine, so the car stays put on a slope (the
+   * coast brake alone holds about 2°). Default off.
+   */
+  holdBrake?: boolean;
+  /** With `speedCap`, on the ground: cap the 3D speed and cancel the downhill pull above the knee. Default off. */
+  slopeSpeedCap?: boolean;
+}
+
+/** Spawn and reset rotation: a heading, or a full rotation (a car parked on a slope). */
+export interface VehicleSpawn {
+  position: THREE.Vector3;
+  yaw: number;
+  /** Overrides `yaw` when given. */
+  quat?: { x: number; y: number; z: number; w: number };
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -67,7 +82,7 @@ export class Vehicle {
     private readonly world: RAPIER.World,
     readonly geometry: CarGeometry,
     public tuning: VehicleTuning,
-    spawn: { position: THREE.Vector3; yaw: number },
+    spawn: VehicleSpawn,
     private readonly opts: VehicleOptions = {},
   ) {
     const s = CAR_SCALE;
@@ -84,7 +99,7 @@ export class Vehicle {
     // Center of mass between the axles (not the body box center) so the car sits level.
     const comZ = (geometry.wheels.reduce((acc, w) => acc + w.center[2], 0) / Math.max(1, geometry.wheels.length)) * s;
 
-    const q = new THREE.Quaternion().setFromAxisAngle(UP, spawn.yaw);
+    const q = spawn.quat ? new THREE.Quaternion(spawn.quat.x, spawn.quat.y, spawn.quat.z, spawn.quat.w) : new THREE.Quaternion().setFromAxisAngle(UP, spawn.yaw);
     const comY = cy + tuning.comY;
     const m = tuning.massKg;
     // Box inertia, boosted on roll/pitch so the car resists flipping.
@@ -184,8 +199,13 @@ export class Vehicle {
     for (const i of this.frontIdx) vc.setWheelEngineForce(i, front);
     for (const i of this.rearIdx) vc.setWheelEngineForce(i, rear);
     // Rapier brakes take an impulse per step. The handbrake adds to the foot brake on the rear wheels.
-    const brakeImpulse = (brake * dt) / 4;
+    let brakeImpulse = (brake * dt) / 4;
     const coast = c.throttle === 0 && c.brake === 0 ? (t.massKg * VEHICLE.COAST_DECEL * dt) / 4 : 0;
+    if (this.opts.holdBrake && c.throttle === 0 && c.brake === 0 && absSpeed < 1.5) {
+      // Parking brake on every wheel: holds a sports car on 30°.
+      brakeImpulse = (t.brakeN * dt) / 4;
+      for (let i = 0; i < vc.numWheels(); i++) vc.setWheelEngineForce(i, 0);
+    }
     const handbrake = c.handbrake ? (t.brakeN * VEHICLE.HANDBRAKE_BRAKE * dt) / 4 : 0;
     for (const i of this.frontIdx) vc.setWheelBrake(i, brakeImpulse + coast);
     for (const i of this.rearIdx) vc.setWheelBrake(i, brakeImpulse + coast + handbrake);
@@ -203,13 +223,23 @@ export class Vehicle {
       const s = (-drag * dt) / vmag;
       body.applyImpulse({ x: this.v.x * s, y: this.v.y * s, z: this.v.z * s }, true);
     }
-    // Opt-in soft speed cap: horizontal resistance only (falls are not slowed down).
+    // Opt-in soft speed cap: horizontal resistance only (falls are not slowed down). With slopeSpeedCap, on
+    // the ground, along the velocity and with the downhill pull cancelled.
     if (this.opts.speedCap !== undefined) {
-      const hv = Math.hypot(this.v.x, this.v.z);
-      const cap = speedCapForce(t, this.opts.speedCap, hv);
-      if (cap > 0) {
-        const s = (-cap * dt) / hv;
-        body.applyImpulse({ x: this.v.x * s, y: 0, z: this.v.z * s }, true);
+      if (this.opts.slopeSpeedCap && this.wheelsInContact > 0 && vmag > 0.01) {
+        const g = 9.81 * (this.opts.gravityScale ?? 1);
+        const cap = speedCapForce(t, this.opts.speedCap, vmag) + slopeCapForce(t.massKg, g, this.v.y / vmag, this.opts.speedCap, vmag);
+        if (cap > 0) {
+          const s = (-cap * dt) / vmag;
+          body.applyImpulse({ x: this.v.x * s, y: this.v.y * s, z: this.v.z * s }, true);
+        }
+      } else {
+        const hv = Math.hypot(this.v.x, this.v.z);
+        const cap = speedCapForce(t, this.opts.speedCap, hv);
+        if (cap > 0) {
+          const s = (-cap * dt) / hv;
+          body.applyImpulse({ x: this.v.x * s, y: 0, z: this.v.z * s }, true);
+        }
       }
     }
     const df = t.downforceK * speed * speed * dt;
@@ -251,9 +281,9 @@ export class Vehicle {
     this.readPose();
   }
 
-  /** Teleports the car (respawn), zeroing velocities. */
-  reset(position: THREE.Vector3, yaw: number): void {
-    const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
+  /** Teleports the car (respawn), zeroing velocities; `quat` (a slope) overrides the heading. */
+  reset(position: THREE.Vector3, yaw: number, quat?: { x: number; y: number; z: number; w: number }): void {
+    const q = quat ? new THREE.Quaternion(quat.x, quat.y, quat.z, quat.w) : new THREE.Quaternion().setFromAxisAngle(UP, yaw);
     this.body.setTranslation({ x: position.x, y: position.y, z: position.z }, true);
     this.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);

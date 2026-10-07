@@ -174,9 +174,13 @@ describe('saves on the relief', () => {
     const sim = new FactorySim({ width: 16, height: 16 });
     sim.place('smelter', 4, 4, 0, { free: true });
     const save = sim.serialize();
-    expect(save.terrain).toBeUndefined();
+    expect(save.terrain).toBe('flat');
     expect(save.buildings[0]!.py).toBeUndefined();
     expect(FactorySim.fromSave(save, { width: 16, height: 16 }).terrain.flat).toBe(true);
+    // A save that names no relief (made before it) lands on the default map's.
+    const old: FactorySave = { ...save };
+    delete old.terrain;
+    expect(FactorySim.fromSave(old).terrain.id).toBe('vallonne-1');
   });
 
   it('a save from before the relief keeps every building: pads computed, those in the lake on fill', () => {

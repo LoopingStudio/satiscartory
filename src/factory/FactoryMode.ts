@@ -32,7 +32,7 @@ import { openSettings } from '../ui/menus/SettingsPanel';
 import { FactorySim } from './sim/FactorySim';
 import { spawnDemoFactory, spawnStressLoops } from './sim/testLayouts';
 import type { Action } from '../config/keybinds';
-import { FactoryCars } from './cars/FactoryCars';
+import { FactoryCars, carGroundOf } from './cars/FactoryCars';
 import { GaragePanel } from '../garage/GaragePanel';
 import { bayOccupant, bayPose, bayRect, type BayBlocker, type GarageSpot } from '../garage/parking';
 import { makeCarPreview } from '../car/CarModel';
@@ -182,12 +182,13 @@ export class FactoryMode implements Mode {
     // Cars: old saves' cars without a place park in free garage bays.
     this.state.parkCars();
     this.cars = new FactoryCars(this.game.assets, this.world.physics, this.scene, this.state, {
-      ground: this.world.ground,
+      ground: carGroundOf(this.sim.terrain),
       isConveyor: (c) => {
         const id = this.world.buildingOf(c);
         const type = id !== null ? this.sim.buildings.get(id)?.type : undefined;
         return !!type && isBelt(type);
       },
+      onEvent: () => toast('La voiture a pris l’eau : retour au sec', 'info', 2200),
     });
     this.avatar = new PlayerAvatar(this.game.assets);
     this.scene.add(this.avatar.root);
@@ -336,8 +337,13 @@ export class FactoryMode implements Mode {
     // A factory built before the relief, loaded on it: once (the next save stores the pad heights).
     const migrated = this.sim.migration;
     if (migrated?.padded) {
+      const raised = [...this.sim.buildings.values()].some((b) => b.py);
       const lake = migrated.inWater ? `, ${migrated.inWater} dans le lac sur un remblai` : '';
-      toast(`Nouvelle carte avec du relief : tes bâtiments ont été posés sur des fondations${lake}`, 'info', 6000);
+      toast(
+        raised ? `Nouvelle carte avec du relief : tes bâtiments ont été posés sur des fondations${lake}` : 'Nouvelle carte avec du relief : ton usine est restée sur le plateau, les collines commencent autour',
+        'info',
+        6000,
+      );
       this.sim.migration = null;
     }
   }
@@ -453,8 +459,9 @@ export class FactoryMode implements Mode {
 
   /** Gets out if slow enough; false otherwise. */
   private exitCar(): boolean {
-    if (!this.cars.canExit()) {
-      toast('Ralentis pour descendre', 'info', 1200);
+    const blocker = this.cars.exitBlocker();
+    if (blocker) {
+      toast(blocker === 'tilt' ? 'Trop en pente pour descendre' : 'Ralentis pour descendre', 'info', 1200);
       return false;
     }
     const spot = this.cars.exit(this.player.collider);
@@ -476,7 +483,7 @@ export class FactoryMode implements Mode {
     this.padPrimary = this.mousePrimary = false;
     this.build.setTool({ kind: 'none' });
     this.hud.onToolChanged(this.build.tool);
-    this.garagePanel.open({ id: b.id, x: b.x, z: b.z, rot: b.rot });
+    this.garagePanel.open({ id: b.id, x: b.x, z: b.z, rot: b.rot, ...(b.py !== undefined ? { py: b.py } : {}) });
     this.game.pointer.release();
   }
 
@@ -519,14 +526,15 @@ export class FactoryMode implements Mode {
     if (!g) return;
     const pose = bayPose(g);
     const a = pose.yaw + 0.45;
-    const look = new THREE.Vector3(pose.x, 0.9, pose.z);
-    const target = new THREE.Vector3(pose.x + Math.sin(a) * 9.5, 4.2, pose.z + Math.cos(a) * 9.5);
-    // Pulled in when a building stands in front of the door (cars, dynamic or not, are ignored).
+    const look = new THREE.Vector3(pose.x, pose.y + 0.9, pose.z);
+    const target = new THREE.Vector3(pose.x + Math.sin(a) * 9.5, pose.y + 4.2, pose.z + Math.cos(a) * 9.5);
+    // Pulled in when a building or the ground stands in front of the door (cars, dynamic or not, are ignored).
     const dir = target.clone().sub(look);
     const len = dir.length();
     dir.divideScalar(len);
-    const hit = this.world.physics.world.castRay(new RAPIER.Ray(look, dir), len, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, undefined, this.player.collider, undefined, (c) => this.world.buildingOf(c) !== null);
+    const hit = this.world.physics.world.castRay(new RAPIER.Ray(look, dir), len, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, undefined, this.player.collider, undefined, (c) => this.world.buildingOf(c) !== null || this.world.isGround(c));
     if (hit) target.copy(look).addScaledVector(dir, Math.max(1.5, hit.timeOfImpact - 0.3));
+    target.y = Math.max(target.y, this.sim.terrain.heightAt(target.x, target.z) + 1);
     this.camera.position.lerp(target, 1 - Math.exp(-6 * dt));
     this.camera.lookAt(look);
   }
@@ -628,7 +636,9 @@ export class FactoryMode implements Mode {
    */
   private flushTerrain(): void {
     const area = this.world.flush();
-    if (!area || this.driving) return;
+    if (!area) return;
+    this.cars.onTerrain(area);
+    if (this.driving) return;
     const p = this.player.cur;
     const [x0, z0, x1, z1] = area;
     if (p.x < x0 - 1 || p.x > x1 + 1 || p.z < z0 - 1 || p.z > z1 + 1) return;
@@ -1003,7 +1013,8 @@ export class FactoryMode implements Mode {
     if (!this.controlling) html = this.resumeHint && !this.uiOpen ? 'Clic : reprendre · <kbd>Échap</kbd> pause' : '';
     else if (this.driving) {
       const car = this.state.cars.find((c) => c.id === this.cars.drivingId);
-      const exit = this.cars.canExit() ? `${k('interact')} descendre` : '<span class="muted">ralentis pour descendre</span>';
+      const blocker = this.cars.exitBlocker();
+      const exit = !blocker ? `${k('interact')} descendre` : `<span class="muted">${blocker === 'tilt' ? 'trop en pente pour descendre' : 'ralentis pour descendre'}</span>`;
       html = `<b>${car?.name ?? 'Voiture'}</b> · ${Math.round(this.cars.speedKmh())} km/h · ${exit} · ${k('retry')} courir · ${k('respawn')} replacer`;
     } else if (t.kind === 'build') {
       const check = this.build.lastCheck;

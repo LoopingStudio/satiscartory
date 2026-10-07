@@ -11,7 +11,7 @@ export type TerrainId = 'flat' | 'vallonne-1';
 export const TERRAIN_IDS: readonly TerrainId[] = ['flat', 'vallonne-1'];
 
 /** Terrain of a new game, and of a save that names none. */
-export const FACTORY_TERRAIN_DEFAULT: TerrainId = 'flat';
+export const FACTORY_TERRAIN_DEFAULT: TerrainId = 'vallonne-1';
 
 export interface TerrainDef {
   seed: number;

@@ -7,6 +7,7 @@ import { specOf, type CarInstance, type CarPose } from '../../garage/assembly';
 import { buildLook, type CarBuild } from '../../garage/build';
 import { bayPose } from '../../garage/parking';
 import type { CarSpec } from '../../car/stats';
+import type { Terrain } from '../sim/terrain';
 import { BLUEPRINTS, type BlueprintId } from '../../data/blueprints';
 import { VEHICLE } from '../../data/vehicle';
 import { FACTORY_CELL, PLAYER_HEIGHT, PLAYER_RADIUS } from '../../config/constants';
@@ -18,15 +19,40 @@ import { Vehicle, NO_CONTROLS } from '../../vehicle/Vehicle';
 import { ChaseCamera } from '../../vehicle/ChaseCamera';
 import { readVehicleControls } from '../../vehicle/VehicleInput';
 import {
-  CAR_GRAVITY_SCALE, FACTORY_CAR, boxOverlapsRect, carBox, carModelKey, distanceToBox, exitCandidates,
-  insideMap, keepInside, poseOf, samePose, toWorld, upYOfQuat, type CarBox,
+  CAR_GRAVITY_SCALE, FACTORY_CAR, boxCorners, boxOverlapsRect, carBox, carModelKey, distanceToBox, exitCandidates,
+  insideMap, keepInside, poseOf, samePose, terrainFit, toWorld, upYOfQuat, type CarBox, type TerrainFit,
 } from './carMath';
 
+/** The ground of the factory as the cars need it (the relief, or a flat floor at 0). */
+export interface CarGround {
+  /** Ground height (m) under (x, z). */
+  heightAt(x: number, z: number): number;
+  /** Lowest ground (m). */
+  minY: number;
+  /** Water over the ground at (x, z) (m, 0 when dry), and the water level (m, null without a lake). */
+  waterDepthAt(x: number, z: number): number;
+  waterLevel: number | null;
+  /** Flat floor: cars park level, nothing else changes. */
+  flat: boolean;
+}
+
+/** The cars' view of the factory's relief. */
+export function carGroundOf(t: Terrain): CarGround {
+  return {
+    heightAt: (x, z) => t.heightAt(x, z),
+    minY: t.minY,
+    waterDepthAt: (x, z) => t.waterDepthAt(x, z),
+    waterLevel: t.lake ? t.lake.level / 100 : null,
+    flat: t.flat,
+  };
+}
+
 export interface FactoryCarsOptions {
-  /** The factory ground (floor height when nothing else is found under a car). */
-  ground: RAPIER.Collider;
+  ground: CarGround;
   /** Conveyor colliders: solid for the chassis, ignored by the wheel rays and by the floor probe. */
   isConveyor(collider: RAPIER.Collider): boolean;
+  /** Something happened to the driven car worth a message (it drowned in the lake and was put back). */
+  onEvent?(kind: 'water'): void;
 }
 
 /** Where the player gets out: feet position and facing (the car's heading). */
@@ -57,7 +83,6 @@ interface CarEntry {
 const ENTER_LIFT = 0.05;
 const RESET_LIFT = 0.4;
 const IDENTITY = { x: 0, y: 0, z: 0, w: 1 };
-const UP = new THREE.Vector3(0, 1, 0);
 
 /**
  * The assembled cars standing in the factory and the one being driven.
@@ -82,6 +107,9 @@ export class FactoryCars {
   private baseFov: number | null = null;
   private lastSafe: CarPose | null = null;
   private safeTimer = 0;
+  /** Seconds the driven car has been under deep water. */
+  private drownTime = 0;
+  private readonly fit: TerrainFit = { y: 0, q: { x: 0, y: 0, z: 0, w: 1 } };
   private readonly pos = new THREE.Vector3();
   private readonly quat = new THREE.Quaternion();
   private readonly vel = new THREE.Vector3();
@@ -170,12 +198,33 @@ export class FactoryCars {
     return e;
   }
 
-  /** Fixed body + box at `pose`, visual at rest there, seated driver hidden. */
+  /**
+   * How a car stands at `pose`: level at its height, or, on the relief when it stands on the ground (not on
+   * something else), tilted to the slope at the ground's height. In `this.fit`.
+   */
+  private standing(pose: CarPose, box: CarBox): TerrainFit {
+    const f = this.fit;
+    const g = this.opts.ground;
+    if (!g.flat) {
+      terrainFit(pose, box, (x, z) => g.heightAt(x, z), f);
+      if (Math.abs(pose.y - f.y) < 0.3) return f;
+    }
+    f.y = pose.y;
+    const h = pose.yaw / 2;
+    f.q.x = 0;
+    f.q.y = Math.sin(h);
+    f.q.z = 0;
+    f.q.w = Math.cos(h);
+    return f;
+  }
+
+  /** Fixed body + box at `pose` (tilted to the slope it stands on), visual at rest there, seated driver hidden. */
   private park(e: CarEntry, pose: CarPose): void {
-    const q = new THREE.Quaternion().setFromAxisAngle(UP, pose.yaw);
+    const fit = this.standing(pose, e.box);
+    const q = new THREE.Quaternion(fit.q.x, fit.q.y, fit.q.z, fit.q.w);
     const b = e.box;
     e.body = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.fixed().setTranslation(pose.x, pose.y, pose.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }),
+      RAPIER.RigidBodyDesc.fixed().setTranslation(pose.x, fit.y, pose.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }),
     );
     e.collider = this.world.createCollider(
       RAPIER.ColliderDesc.cuboid((b.maxX - b.minX) / 2, (b.maxY - b.minY) / 2, (b.maxZ - b.minZ) / 2)
@@ -185,7 +234,7 @@ export class FactoryCars {
     );
     this.parkedHandles.add(e.collider.handle);
     e.placed = { ...pose };
-    e.model.root.position.set(pose.x, pose.y, pose.z);
+    e.model.root.position.set(pose.x, fit.y, pose.z);
     e.model.root.quaternion.copy(q);
     e.model.update(0, 0, 0);
     e.model.setDriver(false);
@@ -213,7 +262,7 @@ export class FactoryCars {
     let best: string | null = null;
     let bestD = maxDist;
     for (const e of this.entries.values()) {
-      if (e.vehicle || (e.build && !opts.builds) || Math.abs(pos.y - e.placed.y) > 2.5) continue;
+      if (e.vehicle || (e.build && !opts.builds) || Math.abs(pos.y - e.placed.y) > 3) continue;
       const d = distanceToBox(e.placed, e.box, pos.x, pos.z);
       if (d <= bestD) {
         bestD = d;
@@ -269,12 +318,14 @@ export class FactoryCars {
     const p = e.placed;
     this.unpark(e);
     const tuning = tuningFromStats(computeCarStats(specOf(car)));
+    // As parked: tilted on a slope (a level spawn there would start inside the hill and jolt).
+    const fit = this.standing(p, e.box);
     e.vehicle = new Vehicle(
       this.world,
       e.model.geometry,
       tuning,
-      { position: new THREE.Vector3(p.x, p.y + ENTER_LIFT, p.z), yaw: p.yaw },
-      { gravityScale: CAR_GRAVITY_SCALE, speedCap: FACTORY_CAR.SPEED_CAP, wheelFilter: this.wheelFilter },
+      { position: new THREE.Vector3(p.x, fit.y + ENTER_LIFT, p.z), yaw: p.yaw, quat: { ...fit.q } },
+      { gravityScale: CAR_GRAVITY_SCALE, speedCap: FACTORY_CAR.SPEED_CAP, wheelFilter: this.wheelFilter, holdBrake: true, slopeSpeedCap: true },
     );
     // The chassis crosses belt lines (see collisionGroups).
     e.vehicle.collider.setCollisionGroups(CAR_GROUPS);
@@ -283,16 +334,23 @@ export class FactoryCars {
     this.pos.copy(e.vehicle.curPos);
     this.lastSafe = { ...p };
     this.safeTimer = 0;
+    this.drownTime = 0;
     this.chase = null;
     return true;
   }
 
-  /** Slow enough to get out (< FACTORY_CAR.EXIT_SPEED). False on foot. */
+  /** Slow enough (< FACTORY_CAR.EXIT_SPEED) and level enough to get out. False on foot. */
   canExit(): boolean {
+    return this.exitBlocker() === null;
+  }
+
+  /** Why the driver cannot get out now: too fast, or the car leans too much (a steep slope); null if they can. */
+  exitBlocker(): 'speed' | 'tilt' | 'driving' | null {
     const v = this.driving?.vehicle;
-    if (!v) return false;
+    if (!v) return 'driving';
     const lv = v.body.linvel();
-    return Math.hypot(lv.x, lv.y, lv.z) < FACTORY_CAR.EXIT_SPEED;
+    if (Math.hypot(lv.x, lv.y, lv.z) >= FACTORY_CAR.EXIT_SPEED) return 'speed';
+    return upYOfQuat(v.curQuat) < FACTORY_CAR.EXIT_UP ? 'tilt' : null;
   }
 
   /**
@@ -325,7 +383,7 @@ export class FactoryCars {
   spotBeside(carId: string, ignore?: RAPIER.Collider | null): ExitSpot | null {
     const e = this.entries.get(carId);
     if (!e || this.physics.disposed) return null;
-    const pose = e.vehicle ? poseOf(e.vehicle.curPos, e.vehicle.curQuat, e.placed.y) : e.placed;
+    const pose = e.vehicle ? poseOf(e.vehicle.curPos, e.vehicle.curQuat, e.vehicle.groundY() ?? this.opts.ground.heightAt(e.vehicle.curPos.x, e.vehicle.curPos.z)) : e.placed;
     const exclude = new Set<number>();
     if (e.vehicle) exclude.add(e.vehicle.collider.handle);
     if (ignore) exclude.add(ignore.handle);
@@ -357,20 +415,33 @@ export class FactoryCars {
     this.ray.dir = { x: 0, y: -1, z: 0 };
     const hit = this.world.castRay(this.ray, 5, true, undefined, undefined, ignore ?? undefined, body ?? undefined, (c) => !this.parkedHandles.has(c.handle) && !this.opts.isConveyor(c));
     if (hit) return p.y + 1 - hit.timeOfImpact;
-    const g = this.opts.ground;
-    return g.translation().y + (g.halfExtents()?.y ?? 0);
+    return this.opts.ground.heightAt(p.x, p.z);
   }
 
-  /** First free exit candidate for the player's capsule, else the car's roof. */
+  /**
+   * First free exit candidate for the player's capsule, each tested on its own floor (on a side slope the
+   * uphill and downhill spots stand higher and lower than the car), else the car's roof.
+   */
   private spotFor(pose: CarPose, box: CarBox, exclude: Set<number>): ExitSpot {
     const w = this.state.sim.width * FACTORY_CELL;
     const h = this.state.sim.height * FACTORY_CELL;
     for (const c of exitCandidates(pose, box)) {
       if (!insideMap(c.x, c.z, w, h, PLAYER_RADIUS)) continue;
-      if (this.capsuleFree(c.x, pose.y, c.z, exclude)) return { position: new THREE.Vector3(c.x, pose.y + 0.02, c.z), yaw: pose.yaw };
+      const floor = this.floorAt(c.x, pose.y + 3, c.z, exclude);
+      if (Math.abs(floor - pose.y) > FACTORY_CAR.EXIT_STEP) continue;
+      if (this.capsuleFree(c.x, floor + 0.05, c.z, exclude)) return { position: new THREE.Vector3(c.x, floor + 0.02, c.z), yaw: pose.yaw };
     }
     const top = toWorld(pose, (box.minX + box.maxX) / 2, (box.minZ + box.maxZ) / 2);
-    return { position: new THREE.Vector3(top.x, pose.y + box.maxY + 0.05, top.z), yaw: pose.yaw };
+    const roof = Math.max(pose.y, this.opts.ground.heightAt(top.x, top.z)) + box.maxY + 0.05;
+    return { position: new THREE.Vector3(top.x, roof, top.z), yaw: pose.yaw };
+  }
+
+  /** Floor under (x, z) from `fromY` down (no cars, no conveyors, nor `exclude`); else the ground. */
+  private floorAt(x: number, fromY: number, z: number, exclude: Set<number>): number {
+    this.ray.origin = { x, y: fromY, z };
+    this.ray.dir = { x: 0, y: -1, z: 0 };
+    const hit = this.world.castRay(this.ray, 6, true, undefined, undefined, undefined, undefined, (c) => !exclude.has(c.handle) && !this.parkedHandles.has(c.handle) && !this.opts.isConveyor(c));
+    return hit ? fromY - hit.timeOfImpact : this.opts.ground.heightAt(x, z);
   }
 
   /** Player capsule standing on `floorY` at (x, z) touches nothing (but `exclude`)? */
@@ -386,14 +457,50 @@ export class FactoryCars {
     return true;
   }
 
-  /** Puts the driven car back on its last safe pose (respawn key, falls, flips). */
+  /** Puts the driven car back on its last safe pose (respawn key, falls, flips), tilted to the ground there. */
   resetToLastSafe(): void {
-    const v = this.driving?.vehicle;
+    const e = this.driving;
+    const v = e?.vehicle;
     const s = this.lastSafe;
-    if (!v || !s) return;
-    v.reset(new THREE.Vector3(s.x, s.y + RESET_LIFT, s.z), s.yaw);
+    if (!e || !v || !s) return;
+    const fit = this.standing(s, e.box);
+    // Lift clear of the ground under every corner of the box.
+    let lift = 0;
+    if (!this.opts.ground.flat) for (const c of boxCorners(s, e.box)) lift = Math.max(lift, this.opts.ground.heightAt(c.x, c.z) - fit.y);
+    v.reset(new THREE.Vector3(s.x, fit.y + Math.min(lift, 1.5) + RESET_LIFT, s.z), s.yaw, { ...fit.q });
     this.safeTimer = 0;
+    this.drownTime = 0;
     this.chase?.snap();
+  }
+
+  /**
+   * The ground changed over [x0, z0, x1, z1] (m): parked cars there stand again on it (refitted, lifted if
+   * it rose under them), the driven car is lifted out if the ground now crosses it.
+   */
+  onTerrain(area: [number, number, number, number]): void {
+    if (this.physics.disposed) return;
+    const g = this.opts.ground;
+    const [x0, z0, x1, z1] = area;
+    for (const e of this.entries.values()) {
+      if (e.vehicle) continue;
+      const p = e.placed;
+      if (p.x < x0 - 6 || p.x > x1 + 6 || p.z < z0 - 6 || p.z > z1 + 6) continue;
+      const y = Math.max(p.y, g.heightAt(p.x, p.z));
+      const pose = { ...p, y };
+      this.unpark(e);
+      this.park(e, pose);
+      const car = this.carOf(e.id);
+      if (car?.pose && Math.abs(car.pose.y - y) > 0.01) car.pose.y = y;
+    }
+    const v = this.driving?.vehicle;
+    if (v) {
+      const p = v.curPos;
+      const under = g.heightAt(p.x, p.z) - p.y;
+      if (under > -0.05 && p.x > x0 - 6 && p.x < x1 + 6 && p.z > z0 - 6 && p.z < z1 + 6) {
+        v.body.setTranslation({ x: p.x, y: p.y + under + 0.1, z: p.z }, true);
+        v.afterWorldStep();
+      }
+    }
   }
 
   /** Speed of the driven car (km/h, 0 on foot). */
@@ -415,9 +522,24 @@ export class FactoryCars {
     const w = this.state.sim.width * FACTORY_CELL;
     const h = this.state.sim.height * FACTORY_CELL;
     const p = v.curPos;
-    if (p.y < FACTORY_CAR.FALL_Y || v.flippedTime > VEHICLE.FLIP_RESPAWN_S || !insideMap(p.x, p.z, w, h, -FACTORY_CAR.MAP_LOST)) {
+    const g = this.opts.ground;
+    // Fell through the ground (or far under the lowest ground).
+    const fell = p.y < g.heightAt(p.x, p.z) - FACTORY_CAR.FALL_DEPTH || p.y < g.minY - 10;
+    // In the lake: the water slows the car down; deep in it for a while, it is put back on dry ground.
+    const level = g.waterLevel;
+    const wet = level !== null && g.waterDepthAt(p.x, p.z) > 0 && p.y < level - FACTORY_CAR.WET_DEPTH;
+    this.drownTime = wet && p.y < level! - FACTORY_CAR.DROWN_DEPTH ? this.drownTime + dt : 0;
+    if (this.drownTime > FACTORY_CAR.DROWN_S) {
+      this.resetToLastSafe();
+      this.opts.onEvent?.('water');
+    } else if (fell || v.flippedTime > VEHICLE.FLIP_RESPAWN_S || !insideMap(p.x, p.z, w, h, -FACTORY_CAR.MAP_LOST)) {
       this.resetToLastSafe();
     } else {
+      if (wet) {
+        const lv = v.body.linvel();
+        const k = Math.exp(-FACTORY_CAR.WATER_DRAG * dt);
+        v.body.setLinvel({ x: lv.x * k, y: lv.y, z: lv.z * k }, true);
+      }
       const lv = v.body.linvel();
       const vx = keepInside(p.x, lv.x, w);
       const vz = keepInside(p.z, lv.z, h);
@@ -435,8 +557,8 @@ export class FactoryCars {
     this.safeTimer = 0;
     const ground = v.groundY();
     const p = v.curPos;
-    if (ground === null || v.wheelsInContact < v.controller.numWheels() || upYOfQuat(v.curQuat) < 0.9) return;
-    if (!insideMap(p.x, p.z, w, h, FACTORY_CAR.MAP_MARGIN)) return;
+    if (ground === null || v.wheelsInContact < v.controller.numWheels() || upYOfQuat(v.curQuat) < FACTORY_CAR.SAFE_UP) return;
+    if (!insideMap(p.x, p.z, w, h, FACTORY_CAR.MAP_MARGIN) || this.opts.ground.waterDepthAt(p.x, p.z) > 0.05) return;
     this.lastSafe = poseOf(p, v.curQuat, ground);
   }
 
@@ -470,7 +592,8 @@ export class FactoryCars {
     e.model.update(dt, v.steerAngle, v.speed, susp);
     if (!this.chase) {
       this.baseFov ??= camera.fov;
-      this.chase = new ChaseCamera(camera, this.world, v.collider);
+      const g = this.opts.ground;
+      this.chase = new ChaseCamera(camera, this.world, v.collider, g.flat ? {} : { groundAt: (x, z) => g.heightAt(x, z) });
     }
     const lv = v.body.linvel();
     this.vel.set(lv.x, lv.y, lv.z);

@@ -42,6 +42,9 @@ async function main() {
   game.icons = new ItemIcons(game.assets);
 
   const state = SaveManager.load() ?? new GameState();
+  // Dev relief game (?terrain=): never saved, from the start (a reload before the factory replaces this
+  // state would otherwise save the real game).
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has('terrain')) state.ephemeral = true;
   /** A « Nouvelle partie » dialog is open: a second click (Space on the button behind it) opens no other. */
   let confirmingNewGame = false;
   const newGame = async () => {

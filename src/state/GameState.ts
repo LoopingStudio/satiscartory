@@ -8,6 +8,7 @@ import { Inventory, Wallet, type Stack } from './Inventory';
 import { LEGACY_MAP_OFFSET } from '../data/factoryMap';
 import { FACTORY_CELL } from '../config/constants';
 import { TIERS, isUnlocked } from '../data/tiers';
+import { TERRAIN_RULES } from '../data/factoryTerrain';
 import type { BuildingType } from '../data/buildings';
 import type { Inventory as ItemCounts } from '../data/items';
 
@@ -135,6 +136,27 @@ export class GameState {
     s.cars = Array.isArray(data.cars)
       ? data.cars.filter((c) => c && typeof c.id === 'string' && typeof c.blueprint === 'string').map((c) => ({ ...c, parts: c.parts ?? {}, pose: sanitizePose(c.pose) }))
       : [];
+    // On the relief (a save made before it, say), a car left in the lake, on a steep slope or off the map
+    // waits for a garage bay instead (« À ranger »); a player deep in the lake starts at the spawn.
+    const relief = s.sim.terrain;
+    if (!relief.flat) {
+      const t = relief;
+      const g = { gx: 0, gz: 0, twist: 0 };
+      for (const c of s.cars) {
+        const p = c.pose;
+        if (!p) continue;
+        const cx = Math.floor(p.x / FACTORY_CELL);
+        const cz = Math.floor(p.z / FACTORY_CELL);
+        const steep = s.sim.inBounds(cx, cz) && Math.max(Math.abs(t.cellGrad(cx, cz, g).gx), Math.abs(g.gz)) > TERRAIN_RULES.BELT_GRAD;
+        if (!s.sim.inBounds(cx, cz) || steep || t.waterDepthAt(p.x, p.z) > 0.5) c.pose = null;
+      }
+      if (s.player) {
+        const edge = 20;
+        const x = Math.max(-edge, Math.min(s.sim.width * FACTORY_CELL + edge, s.player.x));
+        const z = Math.max(-edge, Math.min(s.sim.height * FACTORY_CELL + edge, s.player.z));
+        s.player = t.waterDepthAt(x, z) > 1.2 ? null : { ...s.player, x, z };
+      }
+    }
     // Builds: one per existing garage; the parts of any other one go back to the hub.
     for (const raw of Array.isArray(data.builds) ? data.builds : []) {
       const b = sanitizeBuild(raw);

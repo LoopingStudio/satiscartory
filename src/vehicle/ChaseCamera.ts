@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 
+/** Opt-in for cars outside the race (factory relief). */
+export interface ChaseOptions {
+  /** Ground height under (x, z): the camera stays above it (descents, valleys). */
+  groundAt?: (x: number, z: number) => number;
+  /** Colliders the occlusion ray may hit (default: all but the car). */
+  filter?: (c: RAPIER.Collider) => boolean;
+}
+
 /** Smoothed chase camera with speed-based FOV, Trackmania style. */
 export class ChaseCamera {
   distance = 7.5;
@@ -18,6 +26,7 @@ export class ChaseCamera {
     readonly camera: THREE.PerspectiveCamera,
     private readonly world?: RAPIER.World,
     private readonly exclude?: RAPIER.Collider,
+    private readonly opts: ChaseOptions = {},
   ) {}
 
   snap(): void {
@@ -43,6 +52,8 @@ export class ChaseCamera {
     const dist = this.distance + speedRatio * 2.5;
     const desired = carPos.clone().addScaledVector(this.dir, -dist).add(new THREE.Vector3(0, this.height + speedRatio * 0.6, 0));
     const lookAt = carPos.clone().addScaledVector(this.dir, this.lookAhead).add(new THREE.Vector3(0, 1.0, 0));
+    const ground = this.opts.groundAt;
+    if (ground) desired.y = Math.max(desired.y, ground(desired.x, desired.z) + 1.4);
     if (!this.initialized) {
       this.pos.copy(desired);
       this.look.copy(lookAt);
@@ -65,9 +76,13 @@ export class ChaseCamera {
         to.divideScalar(len);
         this.ray.origin = { x: from.x, y: from.y, z: from.z };
         this.ray.dir = { x: to.x, y: to.y, z: to.z };
-        const hit = this.world.castRay(this.ray, len, true, undefined, undefined, this.exclude);
+        const hit = this.world.castRay(this.ray, len, true, undefined, undefined, this.exclude, undefined, this.opts.filter);
         if (hit && hit.timeOfImpact > 0.8) this.camera.position.copy(from).addScaledVector(to, hit.timeOfImpact - 0.4);
       }
+    }
+    if (ground) {
+      const c = this.camera.position;
+      c.y = Math.max(c.y, ground(c.x, c.z) + 0.6);
     }
     this.camera.lookAt(this.look);
     const fov = 68 + speedRatio * 16;

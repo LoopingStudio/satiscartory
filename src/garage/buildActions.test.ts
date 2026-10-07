@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GameState } from '../state/GameState';
+import { FactorySim } from '../factory/sim/FactorySim';
 import { BLUEPRINTS } from '../data/blueprints';
 import { defaultChoices } from './assembly';
 import { bayPose, type GarageSpot } from './parking';
@@ -12,7 +13,8 @@ const total = (c: ItemCounts) => Object.values(c).reduce((a, n) => a + (n ?? 0),
 
 /** A new game with two wheels in the backpack and a chassis in the hub. */
 function started(): GameState {
-  const s = new GameState();
+  // Flat ground: the garage at (40, 40) is about build actions, not about the relief.
+  const s = new GameState(FactorySim.newGame({ terrain: 'flat' }));
   s.inventory.add('wheel', 2);
   s.sim.hub.add('chassis', 1);
   return s;

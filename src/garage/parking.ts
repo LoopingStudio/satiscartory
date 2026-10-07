@@ -10,6 +10,8 @@ export interface GarageSpot {
   x: number;
   z: number;
   rot: Rot;
+  /** Its pad height on the relief (cm); absent on a flat map. */
+  py?: number;
 }
 
 export { GARAGE_DOOR_SIDE };
@@ -21,7 +23,7 @@ export function bayPose(g: Omit<GarageSpot, 'id'>): CarPose {
   const [w, h] = BUILDINGS.garage.footprint;
   const [rw, rh] = rotatedSize(w, h, g.rot);
   const side = rotateSide(GARAGE_DOOR_SIDE, g.rot);
-  return { x: (g.x + rw / 2) * FACTORY_CELL, y: 0, z: (g.z + rh / 2) * FACTORY_CELL, yaw: Math.atan2(DX[side], DZ[side]) };
+  return { x: (g.x + rw / 2) * FACTORY_CELL, y: (g.py ?? 0) / 100, z: (g.z + rh / 2) * FACTORY_CELL, yaw: Math.atan2(DX[side], DZ[side]) };
 }
 
 /** World rectangle [minX, minZ, maxX, maxZ] inside the garage walls (bay and doorway). */

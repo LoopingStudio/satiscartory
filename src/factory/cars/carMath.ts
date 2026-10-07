@@ -21,12 +21,24 @@ export const FACTORY_CAR = {
   MAP_PUSH: 4,
   /** Farther than this (m) outside the map: back to the last safe pose. */
   MAP_LOST: 12,
-  /** Below this height (m): back to the last safe pose. */
-  FALL_Y: -5,
+  /** More than this (m) under the ground below it, or 10 m under the lowest ground: fell through, back to the last safe pose. */
+  FALL_DEPTH: 4,
   /** Seconds between two safe-pose snapshots. */
   SAFE_INTERVAL: 0.5,
   /** Gap (m) between the car's box and the player's capsule when getting out. */
   EXIT_GAP: 0.25,
+  /** Safe poses only this level (up axis ≥ 0.97, about 14°): a reset there never starts in the slope. */
+  SAFE_UP: 0.97,
+  /** Getting out only this level (up axis ≥ 0.9, about 25°). */
+  EXIT_UP: 0.9,
+  /** An exit spot's floor at most this far (m) above or below the car's. */
+  EXIT_STEP: 1.5,
+  /** Water: wet wheels above this depth (m, horizontal drag), drowned below that (back to the last safe pose after DROWN_S). */
+  WET_DEPTH: 0.15,
+  DROWN_DEPTH: 0.9,
+  DROWN_S: 1.5,
+  /** Horizontal drag in the water (1/s): about 8 m/s top speed. */
+  WATER_DRAG: 1.5,
 } as const;
 
 /** Gravity scale of a car body in the factory world: it weighs what it weighs in the race (grip, suspension). */
@@ -175,6 +187,56 @@ export function poseOf(pos: { x: number; z: number }, q: { x: number; y: number;
 /** Same place within `eps` (meters / radians)? */
 export function samePose(a: CarPose, b: CarPose, eps = 1e-4): boolean {
   return Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps && Math.abs(a.z - b.z) < eps && Math.abs(a.yaw - b.yaw) < eps;
+}
+
+/** A car's rotation (quaternion) and height on the ground: see terrainFit. */
+export interface TerrainFit {
+  y: number;
+  q: { x: number; y: number; z: number; w: number };
+}
+
+/**
+ * How a car at `pose` sits on the ground `heightAt`: the plane through the ground under its front, back,
+ * left and right (40 % of the box out from its middle) gives its pitch and roll; `y` is that plane under
+ * the pose's origin (the ground under the middle of the axles). Pure math (the quaternion is yaw, then
+ * pitch, then roll).
+ */
+export function terrainFit(pose: CarPose, b: CarBox, heightAt: (x: number, z: number) => number, out: TerrainFit = { y: 0, q: { x: 0, y: 0, z: 0, w: 1 } }): TerrainFit {
+  const cx = (b.minX + b.maxX) / 2;
+  const cz = (b.minZ + b.maxZ) / 2;
+  const dx = Math.max(0.1, 0.4 * (b.maxX - b.minX));
+  const dz = Math.max(0.1, 0.4 * (b.maxZ - b.minZ));
+  const at = (lx: number, lz: number) => {
+    const w = toWorld(pose, lx, lz);
+    return heightAt(w.x, w.z);
+  };
+  const front = at(cx, cz + dz);
+  const back = at(cx, cz - dz);
+  const left = at(cx + dx, cz);
+  const right = at(cx - dx, cz);
+  const sFwd = (front - back) / (2 * dz);
+  const sLeft = (left - right) / (2 * dx);
+  out.y = (front + back + left + right) / 4 - sFwd * cz - sLeft * cx;
+  // q = Ry(yaw) · Rx(−pitch) · Rz(roll): nose up rotates +Z toward +Y, left side up rotates +X toward +Y.
+  const yaw = pose.yaw / 2;
+  const pitch = -Math.atan(sFwd) / 2;
+  const roll = Math.atan(sLeft) / 2;
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  const cr = Math.cos(roll);
+  const sr = Math.sin(roll);
+  // (Ry · Rx) then · Rz.
+  const ax = cy * sp;
+  const ay = sy * cp;
+  const az = -sy * sp;
+  const aw = cy * cp;
+  out.q.x = ax * cr + ay * sr;
+  out.q.y = ay * cr - ax * sr;
+  out.q.z = az * cr + aw * sr;
+  out.q.w = aw * cr - az * sr;
+  return out;
 }
 
 /** What CarModel builds from a car (blueprint + installed parts): a different key means a rebuild. */
