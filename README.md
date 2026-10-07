@@ -45,7 +45,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | E sur un convoyeur | Prendre les objets de cette case dans le sac ; maintenu 0,5 s : ceux de toute la ligne (les convoyeurs reliés, en amont et en aval). Ce qui ne rentre pas dans le sac reste sur le convoyeur |
 | E | Utiliser une machine ou une foreuse : recette, « Charger » (sac puis hangar), « Prendre » (production vers le sac) |
 | E sur le hangar | Onglets Hangar (échanges sac ↔ hangar), Établi (fabrication à la main) et Paliers (déblocage des bâtiments) |
-| E sur un garage | Panneau du garage : assembler une voiture dans sa place, changer ses pièces, la démonter, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
+| E sur un garage | Panneau du garage : assembler une voiture dans sa place (d'un coup, ou pièce par pièce avec « Poser maintenant »), changer ses pièces, la démonter, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
 | E près d'une voiture garée | Monter, à 3,2 m au plus (un bâtiment visé passe avant ; voir ci-dessous) |
 | Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
 | A | Menu de construction : bâtiments par catégorie, miniature, coût (j'ai / il faut) et palier ; clic pour placer |
@@ -126,7 +126,8 @@ Le garage est un bâtiment de l’usine (touche 6, palier 5 ; 40 plaques, 24 tig
 
 - **E sur un garage** ouvre son panneau sans quitter l’usine : la caméra cadre la place depuis la porte, les colonnes laissent la voiture visible au milieu. On y assemble une voiture (la place doit être libre ; le sac paie d’abord, puis le hangar), qu’un fantôme montre dans la place avant l’assemblage. On change les pièces de la voiture garée là ou on la démonte (pièces dans le sac, le surplus au hangar), on choisit la voiture de course (★), et « Courir » ouvre le choix du circuit avec elle.
 - **Les voitures restent garées** dans l’usine, là où on les laisse, et se conduisent (commandes ci-dessus). Elles traversent les lignes de convoyeurs, qui sont au sol ; machines, murs et voitures garées restent solides. Dans l’usine, la vitesse est plafonnée à 90 km/h environ. Le kart de location ne roule que sur les circuits.
-- Un garage où une voiture est garée ne se démonte pas, et on ne construit pas sur une voiture.
+- **Construire pièce par pièce** : dans le brouillon d'une nouvelle voiture, « Poser maintenant » met dans la place ce qu'on a d'une pièce (deux roues, par exemple) sans attendre le reste. La voiture en construction reste dans le garage : pièces posées en couleur, le reste en transparence, des chandelles jaunes sous les roues manquantes, la carrosserie en métal nu tant qu'il manque des panneaux, le moteur posé sur son essieu. Son panneau dit ce qui est posé (« 3/6 pièces »), pose la suite ou retire une pièce (rendue au sac). La voiture sort, numérotée et choisie pour courir, dès que les pièces obligatoires y sont ; « Abandonner » rend tout.
+- Un garage où une voiture est garée ou en construction ne se démonte pas, et on ne construit pas sur une voiture.
 - Sauvegardes : les voitures d’une ancienne sauvegarde se garent dès le premier garage construit, une par garage libre ; les autres attendent le suivant.
 
 ## Architecture

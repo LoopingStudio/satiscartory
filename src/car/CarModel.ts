@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { AssetLoader } from '../core/assets/AssetLoader';
 import { CAR_SCALE } from '../config/constants';
 import { BLUEPRINTS } from '../data/blueprints';
-import type { ItemId } from '../data/items';
+import { ITEMS, type ItemId } from '../data/items';
+import type { BuildLook } from '../garage/build';
 import { carGeometryFromBoxes, type CarGeometry, type NodeBox } from './geometry';
 import type { CarSpec } from './stats';
 
@@ -44,6 +45,12 @@ export function carGeometryOf(assets: AssetLoader, model: ModelKey): CarGeometry
   return geometry;
 }
 
+/** Body of a car under construction once the chassis is in but not every panel: bare metal. */
+const bareMaterial = new THREE.MeshStandardMaterial({ color: 0x9aa0b4, metalness: 0.55, roughness: 0.45 });
+/** Jack stands under the wheels not installed yet (garage yellow). */
+const standMaterial = new THREE.MeshStandardMaterial({ color: 0xf0b36a, roughness: 0.7 });
+const standGeometry = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+
 interface WheelRig {
   pivot: THREE.Group;
   spinner: THREE.Group;
@@ -65,11 +72,17 @@ export class CarModel {
   /** The kart's seated character (null for cars without one). */
   private readonly driver: THREE.Object3D | null;
   private ghostMat: THREE.MeshStandardMaterial | null = null;
+  /** The model as loaded (body, optional parts; the wheels are moved to their pivots). */
+  private readonly body: THREE.Object3D;
+  private readonly spoiler: THREE.Object3D | null;
+  /** Jack stands and loose engine of a car under construction (setBuildLook). */
+  private readonly buildExtras = new THREE.Group();
 
-  constructor(assets: AssetLoader, spec: CarSpec) {
+  constructor(private readonly assets: AssetLoader, private readonly spec: CarSpec) {
     const bp = BLUEPRINTS[spec.blueprint];
     this.geometry = carGeometryOf(assets, bp.model);
     const body = assets.instantiate(bp.model);
+    this.body = body;
     this.root.add(body);
     this.root.scale.setScalar(CAR_SCALE);
     body.updateMatrixWorld(true);
@@ -79,6 +92,7 @@ export class CarModel {
     const racing = wheelItem === 'wheel_racing';
     // Hide/show optional body parts.
     const spoiler = body.getObjectByName('spoiler');
+    this.spoiler = spoiler ?? null;
     if (spoiler) spoiler.visible = !!spec.parts.spoiler;
 
     for (const w of this.geometry.wheels) {
@@ -137,12 +151,7 @@ export class CarModel {
 
   /** Translucent look (one material per model, reused by later calls; freed by dispose()). */
   setGhost(opacity: number): void {
-    if (this.ghostMat) {
-      this.ghostMat.opacity = opacity;
-      return;
-    }
-    const mat = new THREE.MeshStandardMaterial({ color: 0xbfd4ff, transparent: true, opacity, depthWrite: false });
-    this.ghostMat = mat;
+    const mat = this.ghostMaterial(opacity);
     this.root.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) {
@@ -150,6 +159,63 @@ export class CarModel {
         m.castShadow = false;
       }
     });
+  }
+
+  private ghostMaterial(opacity: number): THREE.MeshStandardMaterial {
+    if (this.ghostMat) this.ghostMat.opacity = opacity;
+    else this.ghostMat = new THREE.MeshStandardMaterial({ color: 0xbfd4ff, transparent: true, opacity, depthWrite: false });
+    return this.ghostMat;
+  }
+
+  /**
+   * Car under construction (garage bay): installed parts as they are, the rest see-through. The body is
+   * see-through without its chassis, bare metal until every panel is in; the wheels go on front first, left
+   * first, missing ones stand on jack stands; an installed engine sits over its axle until the body hides it.
+   */
+  setBuildLook(look: BuildLook): void {
+    const ghost = this.ghostMaterial(0.3);
+    const paint = (root: THREE.Object3D, mat: THREE.Material | null) =>
+      root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.userData.solid ??= m.material;
+        m.material = mat ?? (m.userData.solid as THREE.Material);
+        m.castShadow = mat !== ghost;
+      });
+    paint(this.body, look.body === 'ghost' ? ghost : look.body === 'bare' ? bareMaterial : null);
+    if (this.spoiler) {
+      this.spoiler.visible = look.spoiler;
+      paint(this.spoiler, null);
+    }
+    this.setDriver(false);
+    this.wheels.forEach((w, i) => paint(w.spinner, i < look.wheels ? null : ghost));
+
+    this.buildExtras.clear();
+    this.root.add(this.buildExtras);
+    this.geometry.wheels.forEach((w, i) => {
+      if (i < look.wheels) return;
+      // Under the hub, a little inside the wheel.
+      const stand = new THREE.Mesh(standGeometry, standMaterial);
+      const h = Math.max(0.05, w.center[1] - w.radius * 0.35);
+      stand.scale.set(0.12, h, 0.12);
+      stand.position.set(w.center[0] * 0.7, 0, w.center[2]);
+      stand.castShadow = true;
+      this.buildExtras.add(stand);
+    });
+    const bp = BLUEPRINTS[this.spec.blueprint];
+    const axle = this.geometry.wheels.filter((w) => w.front === (bp.engineMount === 'front'));
+    if (look.engine && axle.length) {
+      const key = ITEMS.engine.model;
+      const engine = this.assets.instantiate(key);
+      const { bbox, size } = this.assets.info(key);
+      const s = 0.6 / CAR_SCALE / Math.max(size.x, size.y, size.z, 0.01);
+      const z = axle.reduce((a, w) => a + w.center[2], 0) / axle.length;
+      const y = axle[0]!.center[1] + axle[0]!.radius * 0.2;
+      engine.scale.setScalar(s);
+      engine.position.set(-(bbox.min.x + bbox.max.x) / 2 * s, y - bbox.min.y * s, z * 0.8 - ((bbox.min.z + bbox.max.z) / 2) * s);
+      engine.traverse((o) => ((o as THREE.Mesh).castShadow = true));
+      this.buildExtras.add(engine);
+    }
   }
 
   /** Detaches the model and frees what it owns (shared geometries/materials stay in the asset cache). */

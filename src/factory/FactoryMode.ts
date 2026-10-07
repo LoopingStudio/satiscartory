@@ -214,7 +214,14 @@ export class FactoryMode implements Mode {
     this.build.onChange = () => this.hud.onToolChanged(this.build.tool);
     this.build.onMessage = (text, kind) => toast(text, kind, 1600);
     this.build.placementGuard = (cells, type) => this.placementBlocker(cells, type);
-    this.build.dismantleGuard = (b) => (b.type === 'garage' && bayOccupant(this.state.cars, b, this.bayBlocker) ? 'Une voiture est garée dans ce garage : sors-la d’abord' : null);
+    this.build.dismantleGuard = (b) =>
+      b.type !== 'garage'
+        ? null
+        : bayOccupant(this.state.cars, b, this.bayBlocker)
+          ? 'Une voiture est garée dans ce garage : sors-la d’abord'
+          : this.state.builds.some((w) => w.garage === b.id)
+            ? 'Une voiture est en construction dans ce garage : termine-la ou abandonne-la d’abord (E sur le garage)'
+            : null;
     this.garagePanel = new GaragePanel(this.hud.layer, this.state, this.game.icons, {
       close: () => this.closeGarage(),
       race: (carId) => this.goRace(carId),
@@ -309,10 +316,10 @@ export class FactoryMode implements Mode {
     return null;
   }
 
-  /** The player stands inside a car (just assembled in the bay, or restored there): step beside it. */
+  /** The player stands inside a car (just assembled in the bay, or restored there) or a car under construction: step beside it. */
   private moveOutOfCars(): void {
     if (this.driving) return;
-    const id = this.cars.carNear(this.player.cur, PLAYER_RADIUS);
+    const id = this.cars.carNear(this.player.cur, PLAYER_RADIUS, { builds: true });
     const spot = id ? this.cars.spotBeside(id, this.player.collider) : null;
     if (spot) this.teleportPlayer(spot.position, spot.yaw);
   }

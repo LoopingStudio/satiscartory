@@ -298,3 +298,15 @@ Retour joueur : impossible de savoir où sort une foreuse, et un convoyeur posé
 - **Sac plein** : `FactorySim.takeFromBelts(ids, sink)` ne retire que ce que le sac accepte ; le reste reste à sa place sur le convoyeur (un test vérifie que rien ne se perd ni ne se duplique ensuite). Message : « Pris : 3 minerais de fer », avec « sac plein, le reste reste sur le convoyeur » si besoin.
 - **Priorité de E** : le bâtiment visé (machine, hangar, garage), puis le convoyeur visé s'il y a des objets sur sa ligne, puis la voiture la plus proche. Un convoyeur vide laisse donc E atteindre une voiture garée à côté.
 - Le ramassage ne compte ni dans les livraisons au hangar ni dans la production (`delivered`, `crafted`).
+
+## Voitures construites pièce par pièce (octobre 2026)
+
+Demande : pouvoir commencer une voiture, poser ses roues en attendant le reste, et la voir dans le garage.
+
+- **Chantier** (`garage/build.ts`, pur) : une voiture en construction occupe la place d'un garage (`GameState.builds`, un par garage au plus, sauvegardé). Chaque emplacement reçoit **une sorte** de pièce, jusqu'à son nombre : deux roues maintenant, deux plus tard. Pour changer de sorte (roues racing), on retire d'abord celles posées.
+- **Poser** : depuis le brouillon d'une nouvelle voiture (« Poser maintenant », place vide), puis depuis la vue « En construction ». Le sac paie d'abord, puis le hangar, autant que l'emplacement en prend et que le stock en a. « Assembler » (tout d'un coup) reste pour quand tout est là.
+- **Fin automatique** : dès que les emplacements obligatoires sont pleins, la voiture sort comme une voiture assemblée (numérotée, choisie pour courir, objectif « assemblée »). Un emplacement facultatif (aileron) ne vient avec elle que plein ; sinon ses pièces reviennent au sac. Choisi parce qu'un bouton « Terminer » de plus n'apporte rien : l'aileron se pose aussi après.
+- **Retirer / Abandonner** : les pièces reviennent au sac (le surplus au hangar). Un chantier vidé libère la place.
+- **Dans la place** : le modèle de la voiture finie, avec ce qui est posé en couleur et le reste en transparence. La carrosserie est transparente sans châssis, en métal nu tant que des panneaux manquent (Sportive), en couleur ensuite. Les roues se posent avant d'abord, gauche d'abord ; une roue manquante est remplacée par une chandelle jaune. Un moteur posé se voit sur son essieu (arrière pour le kart, avant pour la Sportive, `Blueprint.engineMount`), jusqu'à ce que la carrosserie le cache.
+- Le chantier est **solide** comme une voiture garée (même boîte de collision) : on ne le traverse ni à pied ni en voiture, et le joueur qui se trouverait dedans est déplacé à côté. Il ne se conduit pas, ne se choisit pas pour courir, et une voiture qui attend une place ne s'y gare pas.
+- Un garage avec un chantier ne se démonte pas (« termine-la ou abandonne-la d'abord »). Au chargement, un chantier dont le garage n'existe plus rend ses pièces au hangar.

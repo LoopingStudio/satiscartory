@@ -53,13 +53,16 @@ export function carLocation(car: CarInstance, garage: GarageSpot, drivenId: stri
 export interface AssembleCheck extends AssemblyCheck {
   /** Car already standing in the bay (assembling is refused). */
   occupant: CarInstance | null;
+  /** A car under construction in the bay (assembling is refused too). */
+  build: boolean;
 }
 
 /** Can this draft be assembled in this garage? (parts in stock and a free bay). */
 export function checkAssembleIn(state: GameState, bpId: BlueprintId, choices: PartChoices, garage: GarageSpot, blocker?: BayBlocker): AssembleCheck {
   const check = checkAssembly(partStock(state), bpId, choices);
   const occupant = bayOccupant(state.cars, garage, blocker);
-  return { ...check, ok: check.ok && !occupant, occupant };
+  const build = state.builds.some((b) => b.garage === garage.id);
+  return { ...check, ok: check.ok && !occupant && !build, occupant, build };
 }
 
 /**
@@ -67,7 +70,7 @@ export function checkAssembleIn(state: GameState, bpId: BlueprintId, choices: Pa
  * and completes the « assembled » objective. Null (nothing changed) if parts are missing or the bay is taken.
  */
 export function assembleCar(state: GameState, bpId: BlueprintId, choices: PartChoices, garage: GarageSpot, blocker?: BayBlocker): CarInstance | null {
-  if (bayOccupant(state.cars, garage, blocker)) return null;
+  if (bayOccupant(state.cars, garage, blocker) || state.builds.some((b) => b.garage === garage.id)) return null;
   const before = partStock(state);
   const after = { ...before };
   const car = assemble(after, bpId, choices, state.carCounter + 1);

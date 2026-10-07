@@ -2,6 +2,7 @@ import { FactorySim } from '../factory/sim/FactorySim';
 import type { FactorySave } from '../factory/sim/types';
 import { sanitizePose, type CarInstance } from '../garage/assembly';
 import { parkUnplaced, type BayBlocker } from '../garage/parking';
+import { refundBuild, sanitizeBuild, type CarBuild } from '../garage/build';
 import type { TrackRecord } from '../race/records';
 import { Inventory, Wallet, type Stack } from './Inventory';
 import { LEGACY_MAP_OFFSET } from '../data/factoryMap';
@@ -42,6 +43,8 @@ export interface SaveData {
   tier?: number;
   /** Number of tiers that existed when saving (absent before the garage tier: 4). */
   tierMax?: number;
+  /** Cars under construction in garage bays. */
+  builds?: CarBuild[];
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -49,6 +52,8 @@ export class GameState {
   sim: FactorySim;
   player: PlayerSave | null = null;
   cars: CarInstance[] = [];
+  /** Cars under construction, one per garage bay at most (garage/build.ts). */
+  builds: CarBuild[] = [];
   selectedCarId: string | null = null;
   records: Record<string, TrackRecord> = {};
   settings: Settings = { ...DEFAULT_SETTINGS };
@@ -70,9 +75,9 @@ export class GameState {
     return new Wallet(this.inventory, this.sim.hub);
   }
 
-  /** Parks the cars that have no place yet in free garage bays; returns them. */
+  /** Parks the cars that have no place yet in free garage bays (not those with a car under construction); returns them. */
   parkCars(blocker?: BayBlocker): CarInstance[] {
-    const garages = [...this.sim.buildings.values()].filter((b) => b.type === 'garage');
+    const garages = [...this.sim.buildings.values()].filter((b) => b.type === 'garage' && !this.builds.some((w) => w.garage === b.id));
     return parkUnplaced(this.cars, garages, blocker);
   }
 
@@ -106,6 +111,7 @@ export class GameState {
       factory: this.sim.serialize(),
       player: this.player,
       cars: this.cars,
+      builds: this.builds,
       selectedCarId: this.selectedCarId,
       records: this.records,
       settings: this.settings,
@@ -127,6 +133,17 @@ export class GameState {
     s.cars = Array.isArray(data.cars)
       ? data.cars.filter((c) => c && typeof c.id === 'string' && typeof c.blueprint === 'string').map((c) => ({ ...c, parts: c.parts ?? {}, pose: sanitizePose(c.pose) }))
       : [];
+    // Builds: one per existing garage; the parts of any other one go back to the hub.
+    for (const raw of Array.isArray(data.builds) ? data.builds : []) {
+      const b = sanitizeBuild(raw);
+      if (!b) continue;
+      if (s.sim.buildings.get(b.garage)?.type === 'garage' && !s.builds.some((w) => w.garage === b.garage)) s.builds.push(b);
+      else {
+        const refund: ItemCounts = {};
+        refundBuild(refund, b);
+        s.sim.give(refund);
+      }
+    }
     // null = the loaner kart (a valid choice); fall back only when missing or dangling.
     const sel = data.selectedCarId;
     s.selectedCarId = sel === undefined ? (s.cars[0]?.id ?? null) : sel !== null && !s.cars.some((c) => c.id === sel) ? (s.cars[0]?.id ?? null) : sel;
@@ -148,6 +165,7 @@ export class GameState {
     this.sim = other.sim;
     this.player = other.player;
     this.cars = other.cars;
+    this.builds = other.builds;
     this.selectedCarId = other.selectedCarId;
     this.records = other.records;
     this.settings = other.settings;

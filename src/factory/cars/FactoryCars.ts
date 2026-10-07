@@ -4,6 +4,9 @@ import type { AssetLoader } from '../../core/assets/AssetLoader';
 import type { Input } from '../../core/Input';
 import type { GameState } from '../../state/GameState';
 import { specOf, type CarInstance, type CarPose } from '../../garage/assembly';
+import { buildLook, type CarBuild } from '../../garage/build';
+import { bayPose } from '../../garage/parking';
+import type { CarSpec } from '../../car/stats';
 import { BLUEPRINTS, type BlueprintId } from '../../data/blueprints';
 import { VEHICLE } from '../../data/vehicle';
 import { FACTORY_CELL, PLAYER_HEIGHT, PLAYER_RADIUS } from '../../config/constants';
@@ -33,7 +36,9 @@ export interface ExitSpot {
 }
 
 interface CarEntry {
+  /** Car id, or `build:<garage id>` for a car under construction (never driven). */
   id: string;
+  build?: true;
   /** carModelKey() of what `model` shows. */
   key: string;
   model: CarModel;
@@ -114,6 +119,19 @@ export class FactoryCars {
   sync(): void {
     if (this.physics.disposed) return;
     const live = new Set<string>();
+    // Cars under construction: their model in the garage's bay, solid like a parked car.
+    for (const b of this.state.builds) {
+      const g = this.state.sim.buildings.get(b.garage);
+      if (g?.type !== 'garage') continue;
+      const id = `build:${b.garage}`;
+      live.add(id);
+      const key = JSON.stringify([b.blueprint, b.parts]);
+      const pose = bayPose(g);
+      const e = this.entries.get(id);
+      if (e && e.key === key && samePose(e.placed, pose)) continue;
+      if (e) this.removeEntry(e);
+      this.entries.set(id, this.createBuild(b, id, pose, key));
+    }
     for (const car of this.state.cars) {
       if (!car.pose || !BLUEPRINTS[car.blueprint as BlueprintId]) continue;
       live.add(car.id);
@@ -136,6 +154,18 @@ export class FactoryCars {
     const model = new CarModel(this.assets, specOf(car));
     this.scene.add(model.root);
     const e: CarEntry = { id: car.id, key, model, box: carBox(model.geometry), placed: { ...pose }, body: null, collider: null, vehicle: null };
+    this.park(e, pose);
+    return e;
+  }
+
+  /** A car under construction: the model of the finished car (installed parts, defaults elsewhere) shown as built so far. */
+  private createBuild(b: CarBuild, id: string, pose: CarPose, key: string): CarEntry {
+    const parts: CarSpec['parts'] = {};
+    for (const [slot, p] of Object.entries(b.parts)) if (p.n > 0) parts[slot] = p.item;
+    const model = new CarModel(this.assets, { blueprint: b.blueprint, parts });
+    model.setBuildLook(buildLook(b));
+    this.scene.add(model.root);
+    const e: CarEntry = { id, build: true, key, model, box: carBox(model.geometry), placed: { ...pose }, body: null, collider: null, vehicle: null };
     this.park(e, pose);
     return e;
   }
@@ -179,11 +209,11 @@ export class FactoryCars {
    * Closest parked car whose box is within `maxDist` (m, horizontally) of `pos` (the player's feet), for
    * « E : monter ». With maxDist = PLAYER_RADIUS it tells whether the player stands inside a car's box.
    */
-  carNear(pos: THREE.Vector3, maxDist: number = FACTORY_CAR.NEAR_DIST): string | null {
+  carNear(pos: THREE.Vector3, maxDist: number = FACTORY_CAR.NEAR_DIST, opts: { builds?: boolean } = {}): string | null {
     let best: string | null = null;
     let bestD = maxDist;
     for (const e of this.entries.values()) {
-      if (e.vehicle || Math.abs(pos.y - e.placed.y) > 2.5) continue;
+      if (e.vehicle || (e.build && !opts.builds) || Math.abs(pos.y - e.placed.y) > 2.5) continue;
       const d = distanceToBox(e.placed, e.box, pos.x, pos.z);
       if (d <= bestD) {
         bestD = d;
@@ -195,12 +225,13 @@ export class FactoryCars {
 
   /** Does any car (parked or driven) cover part of this world rectangle (m)? For build placement checks. */
   overlapsArea(minX: number, minZ: number, maxX: number, maxZ: number): boolean {
-    return this.carOverlapping(minX, minZ, maxX, maxZ) !== null;
+    return this.carOverlapping(minX, minZ, maxX, maxZ, { builds: true }) !== null;
   }
 
-  /** First car (parked or driven) whose body covers part of the rectangle (world meters). */
-  carOverlapping(minX: number, minZ: number, maxX: number, maxZ: number): string | null {
+  /** First car (parked or driven; cars under construction with `builds`) whose body covers part of the rectangle (world meters). */
+  carOverlapping(minX: number, minZ: number, maxX: number, maxZ: number, opts: { builds?: boolean } = {}): string | null {
     for (const e of this.entries.values()) {
+      if (e.build && !opts.builds) continue;
       const pose = e.vehicle ? poseOf(e.vehicle.curPos, e.vehicle.curQuat, e.placed.y) : e.placed;
       if (boxOverlapsRect(pose, e.box, minX, minZ, maxX, maxZ)) return e.id;
     }

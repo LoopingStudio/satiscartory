@@ -39,6 +39,8 @@ export interface Blueprint {
   model: ModelKey;
   slots: SlotDef[];
   base: BaseStats;
+  /** Where the engine shows on a car under construction (over the front or the rear axle). */
+  engineMount?: 'front' | 'rear';
 }
 
 export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
@@ -54,6 +56,7 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
       { id: 'wheels', name: 'Roues', accepts: ['wheel', 'wheel_racing'], count: 4 },
     ],
     base: { massKg: 320, engineN: 3600, topSpeedKmh: 150, grip: 1.05, downforce: 0.6, steerDeg: 34, brakeN: 4200 },
+    engineMount: 'rear',
   },
   sport: {
     id: 'sport',
@@ -69,6 +72,7 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
       { id: 'spoiler', name: 'Aileron', accepts: ['spoiler'], count: 1, optional: true },
     ],
     base: { massKg: 1050, engineN: 8800, topSpeedKmh: 245, grip: 0.95, downforce: 1.6, steerDeg: 27, brakeN: 14000 },
+    engineMount: 'front',
   },
   loaner: {
     id: 'loaner',

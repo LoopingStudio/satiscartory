@@ -10,6 +10,8 @@ import { append, clear, el, toast } from '../ui/dom';
 import { bestChoices, checkAssembly, specOf, type CarInstance, type PartChoices } from './assembly';
 import { CAR_PARTS, assembleCar, carLocation, checkAssembleIn, disassembleCar, findCar, partStock, selectRaceCar, swapCarPart, type CarLocation } from './actions';
 import { bayOccupant, type BayBlocker, type GarageSpot } from './parking';
+import { buildProgress, type CarBuild } from './build';
+import { abandonBuild, buildIn, installBuildPart, removeBuildPart } from './buildActions';
 
 export interface GaragePanelCallbacks {
   /** « Fermer »: the owner calls close() and gives the controls back. */
@@ -24,7 +26,7 @@ export interface GaragePanelCallbacks {
   bayBlocker?: BayBlocker;
 }
 
-type View = { kind: 'car'; id: string | null } | { kind: 'draft'; blueprint: BlueprintId; choices: PartChoices };
+type View = { kind: 'car'; id: string | null } | { kind: 'draft'; blueprint: BlueprintId; choices: PartChoices } | { kind: 'build' };
 
 const LOCATION_LABEL: Record<CarLocation, string> = { here: 'Dans ce garage', elsewhere: 'Garée ailleurs', driving: 'En route', unplaced: 'À ranger' };
 
@@ -98,6 +100,7 @@ export class GaragePanel {
     // The garage was dismantled (or the game replaced) under the panel.
     if (this.state.sim.buildings.get(spot.id)?.type !== 'garage') return this.cb.close();
     if (this.view.kind === 'car' && this.view.id !== null && !findCar(this.state, this.view.id)) this.view = this.defaultView();
+    if (this.view.kind === 'build' && !this.build) this.view = this.defaultView();
     if (this.contentKey() !== this.key) this.render();
   }
 
@@ -106,9 +109,14 @@ export class GaragePanel {
     return bayOccupant(this.state.cars, spot, this.cb.bayBlocker);
   }
 
+  /** The car under construction in this garage's bay, if any. */
+  private get build(): CarBuild | null {
+    return this.spot ? buildIn(this.state, this.spot.id) : null;
+  }
+
   /** Draft to show as a ghost in the empty bay (same object while it does not change), null otherwise. */
   get preview(): { spec: CarSpec } | null {
-    if (!this.spot || this.view.kind !== 'draft' || this.occupant(this.spot)) return null;
+    if (!this.spot || this.view.kind !== 'draft' || this.occupant(this.spot) || this.build) return null;
     const spec = this.draftSpec(this.view);
     const key = JSON.stringify(spec);
     if (this.previewMemo?.key !== key) this.previewMemo = { key, value: { spec } };
@@ -143,6 +151,7 @@ export class GaragePanel {
   private defaultView(): View {
     const here = this.spot ? this.occupant(this.spot) : null;
     if (here) return { kind: 'car', id: here.id };
+    if (this.build) return { kind: 'build' };
     const stock = partStock(this.state);
     const buildable = BLUEPRINT_IDS.filter((id) => BLUEPRINTS[id].buildable);
     const ready = buildable.find((id) => checkAssembly(stock, id, bestChoices(BLUEPRINTS[id], stock)).ok);
@@ -169,7 +178,7 @@ export class GaragePanel {
     const stock = partStock(this.state);
     const driven = this.driven;
     const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}`).join('|');
-    return [CAR_PARTS.map((i) => stock[i] ?? 0).join(','), cars, this.occupant(spot)?.id, this.state.selectedCarId, JSON.stringify(this.view), this.confirming].join('#');
+    return [CAR_PARTS.map((i) => stock[i] ?? 0).join(','), cars, this.occupant(spot)?.id, JSON.stringify(this.build), this.state.selectedCarId, JSON.stringify(this.view), this.confirming].join('#');
   }
 
   // ------------------------------------------------------------------ UI
@@ -187,9 +196,16 @@ export class GaragePanel {
     const scroll = l.scrollTop;
     clear(l);
     const occupant = this.occupant(this.spot!);
+    const build = this.build;
+    const progress = build ? buildProgress(build) : null;
     l.append(
       el('div', { class: 'row' }, el('h2', {}, 'Garage'), el('span', { class: 'spacer' }), el('button', { class: 'small', 'data-action': 'close', onclick: () => this.cb.close() }, 'Fermer')),
-      el('div', { class: 'muted small' }, occupant ? `Dans la place : ${occupant.name}` : 'Place libre : assemble une voiture ici.'),
+      el('div', { class: 'muted small' },
+        occupant
+          ? `Dans la place : ${occupant.name}`
+          : build && progress
+            ? `Dans la place : ${BLUEPRINTS[build.blueprint].name} en construction (${progress.done}/${progress.total} pièces)`
+            : 'Place libre : assemble une voiture ici, ou pose ses pièces au fur et à mesure.'),
       el('h3', { style: 'margin-top:10px' }, 'Mes voitures'),
     );
     const driven = this.driven;
@@ -213,6 +229,14 @@ export class GaragePanel {
     }
 
     l.appendChild(el('h3', { style: 'margin-top:12px' }, 'Nouvelle voiture'));
+    if (build && progress) {
+      l.appendChild(
+        el('button', { class: `car-row${this.view.kind === 'build' ? ' selected' : ''}`, 'data-action': 'build', onclick: () => this.show({ kind: 'build' }) },
+          el('span', { class: 'car-star' }, '🔧'),
+          el('span', { class: 'col', style: 'gap:0' }, el('b', {}, `${BLUEPRINTS[build.blueprint].name} (en construction)`), el('span', { class: 'muted small' }, `${progress.done}/${progress.total} pièces posées`)),
+        ),
+      );
+    }
     for (const id of BLUEPRINT_IDS) {
       const bp = BLUEPRINTS[id];
       if (!bp.buildable) continue;
@@ -239,8 +263,10 @@ export class GaragePanel {
     const r = this.right;
     const scroll = r.scrollTop;
     clear(r);
+    const build = this.build;
     if (this.view.kind === 'draft') this.renderDraft(r, this.view, stock);
-    else this.renderCar(r, findCar(this.state, this.view.id), stock);
+    else if (this.view.kind === 'build' && build) this.renderBuild(r, build, stock);
+    else if (this.view.kind === 'car') this.renderCar(r, findCar(this.state, this.view.id), stock);
     r.scrollTop = scroll;
   }
 
@@ -257,6 +283,8 @@ export class GaragePanel {
   private renderDraft(r: HTMLElement, view: Extract<View, { kind: 'draft' }>, stock: ItemCounts): void {
     const bp = BLUEPRINTS[view.blueprint];
     const check = checkAssembleIn(this.state, view.blueprint, view.choices, this.spot!, this.cb.bayBlocker);
+    // « Poser » starts building this car in the bay with what is in stock (the bay must be empty).
+    const canPose = !check.occupant && !check.build;
     r.append(el('h2', {}, `Nouvelle voiture : ${bp.name}`), el('div', { class: 'muted small' }, bp.description));
     for (const slot of bp.slots) {
       const row = el('div', { class: 'slot-row' }, el('b', {}, `${slot.name}${slot.count > 1 ? ` ×${slot.count}` : ''}`));
@@ -281,6 +309,19 @@ export class GaragePanel {
       const chosen = view.choices[slot.id];
       const mod = chosen ? PART_MODIFIERS[chosen] : undefined;
       if (mod?.label && chosen !== slot.accepts[0]) row.appendChild(el('div', { class: 'muted small' }, mod.label));
+      if (chosen) {
+        const n = Math.min(stock[chosen] ?? 0, slot.count);
+        row.appendChild(
+          el('button', {
+            class: 'small',
+            disabled: !canPose || n === 0,
+            title: n ? `Poser ${countLabel(chosen, n)} dans la place, sans attendre le reste` : `Pas de ${ITEMS[chosen].name.toLowerCase()} en stock`,
+            'data-action': 'pose',
+            'data-part-slot': slot.id,
+            onclick: () => this.doInstall(view.blueprint, slot.id, chosen),
+          }, n ? `Poser maintenant (${n}/${slot.count})` : 'Poser maintenant'),
+        );
+      }
       r.appendChild(row);
     }
 
@@ -293,16 +334,77 @@ export class GaragePanel {
 
     let reason = '';
     if (check.occupant) reason = `La place est prise par ${check.occupant.name} : sors-la du garage pour en assembler une autre ici.`;
+    else if (check.build) reason = 'Une voiture est en construction dans la place : termine-la ou abandonne-la (🔧 à gauche).';
     else if (Object.keys(check.missing).length) {
       const missing = Object.entries(check.missing).map(([i, n]) => countLabel(i as ItemId, n ?? 0));
       reason = `Il manque : ${missing.join(', ')}. Produis-les à l’usine (assembleuse).`;
     } else if (!check.ok) reason = 'Choisis toutes les pièces.';
     r.append(
-      el('div', { class: reason ? 'bad small' : 'muted small', style: 'margin-top:8px' }, reason || 'Le sac paie d’abord, puis le hangar. La voiture sort dans la place de ce garage.'),
+      el('div', { class: reason ? 'bad small' : 'muted small', style: 'margin-top:8px' }, reason || 'Le sac paie d’abord, puis le hangar. « Assembler » pose tout d’un coup ; « Poser maintenant » commence la voiture dans la place avec ce que tu as, le reste viendra plus tard.'),
       el('div', { class: 'row', style: 'margin-top:10px' },
         el('button', { class: 'primary', disabled: !check.ok, title: reason, 'data-action': 'assemble', onclick: () => this.doAssemble() }, 'Assembler'),
       ),
     );
+  }
+
+  /** The car under construction in the bay: what is installed, « Poser » / « Retirer » per slot, give up. */
+  private renderBuild(r: HTMLElement, build: CarBuild, stock: ItemCounts): void {
+    const bp = BLUEPRINTS[build.blueprint];
+    const { done, total } = buildProgress(build);
+    r.append(
+      el('h2', {}, `En construction : ${bp.name}`),
+      el('div', { class: 'progress', style: 'margin-top:6px' }, el('div', { style: `width:${Math.round((done / total) * 100)}%` })),
+      el('div', { class: 'muted small' }, `${done}/${total} pièces posées · la voiture sort de la place dès que les pièces obligatoires y sont.`),
+    );
+    const planned: CarSpec['parts'] = {};
+    for (const slot of bp.slots) {
+      const cur = build.parts[slot.id];
+      const n = cur?.n ?? 0;
+      if (cur) planned[slot.id] = cur.item;
+      else if (!slot.optional) planned[slot.id] = slot.accepts[0]!;
+      const row = el('div', { class: `slot-row${n >= slot.count ? '' : ' lacking'}` },
+        el('b', {}, `${slot.name}${slot.count > 1 ? ` ×${slot.count}` : ''}${slot.optional ? ' (facultatif)' : ''}`),
+        el('div', { class: n >= slot.count ? 'good small' : 'muted small' }, cur ? `${n}/${slot.count} · ${ITEMS[cur.item].name}` : `0/${slot.count}`),
+      );
+      const opts = el('div', { class: 'row', style: 'flex-wrap:wrap' });
+      if (n < slot.count) {
+        // A slot holds one kind of part: once started, only that one.
+        for (const item of cur ? [cur.item] : slot.accepts) {
+          const have = stock[item] ?? 0;
+          opts.appendChild(
+            this.partButton(item, `Poser ${ITEMS[item].name} (${have} en stock)`, {
+              active: false,
+              disabled: have === 0,
+              slot: slot.id,
+              onclick: () => this.doInstall(build.blueprint, slot.id, item),
+            }),
+          );
+        }
+      }
+      if (n > 0) opts.appendChild(el('button', { class: 'small', 'data-action': 'remove', 'data-part-slot': slot.id, onclick: () => this.doRemove(slot.id) }, 'Retirer'));
+      row.appendChild(opts);
+      r.appendChild(row);
+    }
+    const racing = this.state.selectedCar;
+    r.append(
+      el('h3', { style: 'margin-top:10px' }, 'Une fois finie'),
+      el('div', { class: 'muted small' }, `Comparée à ta voiture de course : ${racing?.name ?? BLUEPRINTS.loaner.name}`),
+      carStatsBlock({ blueprint: build.blueprint, parts: planned }, specOf(racing)),
+      el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Les pièces viennent du sac, puis du hangar ; « Retirer » les rend au sac.'),
+    );
+    if (this.confirming !== 'build') {
+      r.appendChild(el('div', { class: 'row', style: 'margin-top:12px' }, el('button', { class: 'danger', 'data-action': 'abandon', onclick: () => { this.confirming = 'build'; this.render(); } }, 'Abandonner')));
+    } else {
+      r.appendChild(
+        el('div', { class: 'garage-confirm' },
+          el('div', { class: 'small' }, `Abandonner ce ${bp.name} ? Les pièces posées vont dans ton sac (le surplus au hangar).`),
+          el('div', { class: 'row', style: 'margin-top:6px' },
+            el('button', { class: 'danger small', 'data-action': 'confirm-abandon', onclick: () => this.doAbandon() }, 'Oui, abandonner'),
+            el('button', { class: 'small', 'data-action': 'cancel-abandon', onclick: () => { this.confirming = null; this.render(); } }, 'Annuler'),
+          ),
+        ),
+      );
+    }
   }
 
   private renderCar(r: HTMLElement, car: CarInstance | null, stock: ItemCounts): void {
@@ -388,6 +490,43 @@ export class GaragePanel {
     }
     toast(`${car.name} assemblée !`, 'success');
     this.view = { kind: 'car', id: car.id };
+    this.commit();
+  }
+
+  private doInstall(blueprint: BlueprintId, slotId: string, item: ItemId): void {
+    if (!this.spot) return;
+    const res = installBuildPart(this.state, this.spot, blueprint, slotId, item, this.cb.bayBlocker);
+    if (!res.n) {
+      toast('Rien à poser : pièce absente du stock, ou place prise', 'error');
+      return this.render();
+    }
+    this.confirming = null;
+    if (res.car) {
+      toast(`${res.car.name} terminée !`, 'success', 2400);
+      this.view = { kind: 'car', id: res.car.id };
+    } else {
+      toast(`Posé : ${countLabel(item, res.n)}`, 'success', 1400);
+      this.view = { kind: 'build' };
+    }
+    this.commit();
+  }
+
+  private doRemove(slotId: string): void {
+    if (!this.spot) return;
+    const res = removeBuildPart(this.state, this.spot.id, slotId);
+    if (!res.n) return this.render();
+    toast(res.toHub ? `Retiré : ${res.n} pièce${res.n > 1 ? 's' : ''} (${res.toHub} au hangar, sac plein)` : `Retiré : ${res.n} pièce${res.n > 1 ? 's' : ''}, dans ton sac`, 'success', 1600);
+    if (!this.build) this.view = this.defaultView();
+    this.commit();
+  }
+
+  private doAbandon(): void {
+    this.confirming = null;
+    if (!this.spot) return;
+    const res = abandonBuild(this.state, this.spot.id);
+    if (!res) return this.render();
+    toast(res.toHub ? `Chantier abandonné : pièces dans ton sac, ${res.toHub} au hangar (sac plein)` : 'Chantier abandonné : pièces dans ton sac', 'success', 2200);
+    this.view = this.defaultView();
     this.commit();
   }
 
