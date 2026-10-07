@@ -166,13 +166,16 @@ kbd {
 }
 .slot-top { display: flex; align-items: center; gap: 6px; }
 .hotbar .slot.locked { opacity: 0.5; border-style: dashed; }
+.cost-icons { display: flex; gap: 6px; }
+.cost-item { display: inline-flex; align-items: center; gap: 1px; }
+.item-icon.micro { width: 16px; height: 16px; }
 .hotbar .slot.locked .slot-cost { color: var(--muted); }
 .build-card.locked { opacity: 0.55; }
 .mine-bar { display: inline-block; width: 90px; height: 8px; margin-left: 6px; vertical-align: middle; background: #262842; border-radius: 4px; overflow: hidden; }
 .mine-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--gold)); }
 .hotbar .slot.active { border-color: var(--accent); background: rgba(255, 159, 28, 0.18); }
 .hotbar .slot.danger-slot { border-color: var(--bad); background: rgba(255, 93, 93, 0.18); }
-.hotbar .slot.poor .slot-cost { color: var(--bad); }
+.hotbar .slot.poor .slot-cost:not(.cost-icons) { color: var(--bad); }
 .slot-name { font-size: 13px; }
 .slot-cost { font-size: 11px; color: var(--muted); font-weight: 600; }
 .hint {
@@ -264,10 +267,15 @@ kbd {
   .editor-palette { width: 170px; }
 }
 
-/* Garage */
-.garage-left { position: absolute; left: 14px; top: 14px; bottom: 70px; width: min(290px, 38vw); overflow: auto; display: flex; flex-direction: column; gap: 5px; }
-.garage-right { position: absolute; right: 14px; top: 14px; width: min(380px, 50vw); max-height: calc(100% - 90px); overflow: auto; }
-.garage-nav { gap: 8px; }
+/* Garage panel (factory): two side columns clear of the backpack bar, the bay stays visible in the middle. */
+.garage-left { position: absolute; left: 14px; top: 14px; bottom: 90px; width: min(300px, 36vw); overflow: auto; display: flex; flex-direction: column; gap: 5px; }
+.garage-right { position: absolute; right: 14px; top: 14px; width: min(390px, 46vw); max-height: calc(100% - 104px); overflow: auto; }
+/* The factory HUD parts that would sit under the columns (some have an inline display). */
+.driving .bottom-stack .hotbar { display: none; }
+.garage-open .bottom-stack .hotbar, .garage-open .bottom-stack .hint, .garage-open .crosshair, .garage-open .objectives, .garage-open .storage-panel { display: none !important; }
+.part-btn { display: inline-flex; align-items: center; gap: 4px; }
+.part-btn .item-icon.tiny { width: 18px; height: 18px; }
+.garage-confirm { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--bad); border-radius: 10px; background: rgba(255, 93, 93, 0.1); }
 .car-row { display: flex; align-items: center; gap: 10px; text-align: left; }
 .car-row.selected { outline: 2px solid var(--accent); }
 .car-star { font-size: 18px; color: var(--gold); width: 18px; text-align: center; }

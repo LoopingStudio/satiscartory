@@ -7,7 +7,6 @@ export const fr = {
   menu: {
     play: 'Jouer',
     continue: 'Continuer',
-    garage: 'Garage',
     race: 'Courses',
     editor: 'Éditeur de circuit',
     gallery: 'Galerie des modèles (dev)',

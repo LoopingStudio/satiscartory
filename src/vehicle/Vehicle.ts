@@ -4,6 +4,7 @@ import type { CarGeometry } from '../car/geometry';
 import type { VehicleTuning } from '../car/tuning';
 import { CAR_SCALE } from '../config/constants';
 import { VEHICLE } from '../data/vehicle';
+import { speedCapForce } from './speedCap';
 
 export interface VehicleControls {
   /** 0..1 */
@@ -16,6 +17,16 @@ export interface VehicleControls {
 }
 
 export const NO_CONTROLS: VehicleControls = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+
+/** Opt-in behaviour for cars outside the race (factory). Every default is the race behaviour. */
+export interface VehicleOptions {
+  /** Gravity multiplier of the car body (keeps the race feel in a world with another gravity). Default 1. */
+  gravityScale?: number;
+  /** Soft speed cap (m/s): extra resistance so that full throttle tops out there (see speedCap.ts). Default: none. */
+  speedCap?: number;
+  /** Colliders the wheel rays may rest on (false = ignored; the chassis still collides). Default: all. */
+  wheelFilter?: (collider: RAPIER.Collider) => boolean;
+}
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -57,6 +68,7 @@ export class Vehicle {
     readonly geometry: CarGeometry,
     public tuning: VehicleTuning,
     spawn: { position: THREE.Vector3; yaw: number },
+    private readonly opts: VehicleOptions = {},
   ) {
     const s = CAR_SCALE;
     const [minX, minY, minZ] = geometry.bodyMin;
@@ -79,15 +91,15 @@ export class Vehicle {
     const ix = (m / 12) * ((2 * hy) ** 2 + (2 * hz) ** 2) * 1.8;
     const iy = (m / 12) * ((2 * hx) ** 2 + (2 * hz) ** 2);
     const iz = (m / 12) * ((2 * hx) ** 2 + (2 * hy) ** 2) * 2.2;
-    this.body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(spawn.position.x, spawn.position.y, spawn.position.z)
-        .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
-        .setCcdEnabled(true)
-        .setLinearDamping(0)
-        .setAngularDamping(0.6)
-        .setAdditionalMassProperties(m, { x: 0, y: comY, z: comZ }, { x: ix, y: iy, z: iz }, { x: 0, y: 0, z: 0, w: 1 }),
-    );
+    const desc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(spawn.position.x, spawn.position.y, spawn.position.z)
+      .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
+      .setCcdEnabled(true)
+      .setLinearDamping(0)
+      .setAngularDamping(0.6)
+      .setAdditionalMassProperties(m, { x: 0, y: comY, z: comZ }, { x: ix, y: iy, z: iz }, { x: 0, y: 0, z: 0, w: 1 });
+    if (opts.gravityScale !== undefined && opts.gravityScale !== 1) desc.setGravityScale(opts.gravityScale);
+    this.body = world.createRigidBody(desc);
     this.collider = world.createCollider(
       RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(0, cy, cz).setDensity(0).setFriction(0.15).setRestitution(0.05),
       this.body,
@@ -191,6 +203,15 @@ export class Vehicle {
       const s = (-drag * dt) / vmag;
       body.applyImpulse({ x: this.v.x * s, y: this.v.y * s, z: this.v.z * s }, true);
     }
+    // Opt-in soft speed cap: horizontal resistance only (falls are not slowed down).
+    if (this.opts.speedCap !== undefined) {
+      const hv = Math.hypot(this.v.x, this.v.z);
+      const cap = speedCapForce(t, this.opts.speedCap, hv);
+      if (cap > 0) {
+        const s = (-cap * dt) / hv;
+        body.applyImpulse({ x: this.v.x * s, y: 0, z: this.v.z * s }, true);
+      }
+    }
     const df = t.downforceK * speed * speed * dt;
     body.applyImpulse({ x: -this.up.x * df, y: -this.up.y * df, z: -this.up.z * df }, true);
 
@@ -203,7 +224,8 @@ export class Vehicle {
       body.setAngvel({ x: av.x + level.x, y: av.y + (yawTarget - av.y) * Math.min(1, dt * 2), z: av.z + level.z }, true);
     }
 
-    vc.updateVehicle(dt);
+    if (this.opts.wheelFilter) vc.updateVehicle(dt, undefined, undefined, this.opts.wheelFilter);
+    else vc.updateVehicle(dt);
 
     let contact = 0;
     let offroad = 0;
@@ -258,6 +280,21 @@ export class Vehicle {
   /** World-space wheel suspension length (for visuals). */
   suspensionLength(i: number): number {
     return this.controller.wheelSuspensionLength(i) ?? this.tuning.suspensionRest;
+  }
+
+  /** Mean height of the wheels' ground contacts at the last step (null when airborne). */
+  groundY(): number | null {
+    const vc = this.controller;
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < vc.numWheels(); i++) {
+      if (!vc.wheelIsInContact(i)) continue;
+      const p = vc.wheelContactPoint(i);
+      if (!p) continue;
+      sum += p.y;
+      n++;
+    }
+    return n ? sum / n : null;
   }
 
   dispose(): void {

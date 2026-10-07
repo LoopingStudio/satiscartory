@@ -4,7 +4,7 @@ import type { MachineType } from './recipes';
 /** Grid sides: 0 = +Z, 1 = +X, 2 = -Z, 3 = -X (local, before rotation). */
 export type Side = 0 | 1 | 2 | 3;
 
-export type BuildingType = 'conveyor' | 'drill' | 'smelter' | 'press' | 'assembler' | 'hub';
+export type BuildingType = 'conveyor' | 'drill' | 'smelter' | 'press' | 'assembler' | 'garage' | 'hub';
 
 export interface PortDef {
   /** Local cell offset inside the footprint (rotation 0). */
@@ -28,6 +28,8 @@ export interface BuildingDef {
   needsNode?: boolean;
   /** Hub: every outward-facing edge of the footprint is an input. */
   acceptsAllEdges?: boolean;
+  /** Walk-in / drive-in building (garage): walls around an open floor, aim falls back to its cells. */
+  hollow?: boolean;
 }
 
 /**
@@ -101,6 +103,16 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     buildable: true,
     machine: 'assembler',
   },
+  garage: {
+    type: 'garage',
+    name: 'Garage',
+    description: 'Une place pour une voiture : E pour assembler, régler les pièces et choisir sa voiture. Porte à l’avant.',
+    footprint: [3, 4],
+    ports: [],
+    cost: { plate: 40, iron_rod: 24, bolt: 80 },
+    buildable: true,
+    hollow: true,
+  },
   hub: {
     type: 'hub',
     name: 'Hangar central',
@@ -113,4 +125,4 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   },
 };
 
-export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'press', 'assembler'];
+export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'press', 'assembler', 'garage'];

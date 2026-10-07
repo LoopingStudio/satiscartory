@@ -2,6 +2,14 @@ import type { ItemId, Inventory } from '../data/items';
 import type { CarSpec } from '../car/stats';
 import { BLUEPRINTS, type Blueprint, type BlueprintId, type SlotDef } from '../data/blueprints';
 
+/** Where a car stands in the factory (meters; yaw 0 faces +Z, like Vehicle spawns). */
+export interface CarPose {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+}
+
 /** A car built in the garage from parts produced by the factory. */
 export interface CarInstance {
   id: string;
@@ -9,6 +17,15 @@ export interface CarInstance {
   blueprint: string;
   /** Installed part per slot (slot id → item id). */
   parts: Record<string, ItemId>;
+  /** Position in the factory; null/absent = not placed yet (parks in the first free garage). */
+  pose?: CarPose | null;
+}
+
+/** Restores a pose from untrusted save data (null if invalid). */
+export function sanitizePose(p: unknown): CarPose | null {
+  if (!p || typeof p !== 'object') return null;
+  const { x, y, z, yaw } = p as CarPose;
+  return [x, y, z, yaw].every((v) => typeof v === 'number' && Number.isFinite(v)) ? { x, y, z, yaw } : null;
 }
 
 /** Always-available starter car (no parts needed). */

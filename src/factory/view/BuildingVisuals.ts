@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { AssetLoader } from '../../core/assets/AssetLoader';
 import { BUILDINGS, type BuildingType } from '../../data/buildings';
 import { ITEMS } from '../../data/items';
@@ -9,6 +10,7 @@ import type { FactorySim } from '../sim/FactorySim';
 import { isMachine, type Building } from '../sim/types';
 import type { ModelKey } from '../../core/assets/manifest.gen';
 import { HUB_BENCH } from './hubBench';
+import { GARAGE, GARAGE_BAY, GARAGE_CLUTTER, GARAGE_DOOR, GARAGE_INNER, GARAGE_LINTEL, GARAGE_WALLS } from './garageLayout';
 
 const STATUS_COLORS = { working: 0x3ddc84, idle: 0xffb347, blocked: 0xff5d5d, noRecipe: 0x8a8fb5 } as const;
 const statusMaterials = new Map<string, THREE.MeshStandardMaterial>();
@@ -38,6 +40,178 @@ const ICON_SIZE = 0.9;
 const glowGeometry = new THREE.CylinderGeometry(1, 1, 1, 24).translate(0, 0.5, 0);
 const glowMaterial = new THREE.MeshStandardMaterial({ color: 0x4a2a1c, emissive: 0xff6a1a, emissiveIntensity: 0.15, roughness: 0.5 });
 const GLOW_NAME = 'smelter-glow';
+
+/** Garage materials (kit palette; shared by every garage, never disposed). */
+const garageMats = {
+  wall: new THREE.MeshStandardMaterial({ color: 0x8585ab, roughness: 0.85 }),
+  trim: new THREE.MeshStandardMaterial({ color: 0x494971, roughness: 0.8 }),
+  frame: new THREE.MeshStandardMaterial({ color: 0xf0b36a, roughness: 0.7 }),
+  beam: new THREE.MeshStandardMaterial({ color: 0x55557c, roughness: 0.7 }),
+  paint: new THREE.MeshStandardMaterial({ color: 0xe4a35e, roughness: 0.9 }),
+};
+type GarageMat = keyof typeof garageMats;
+/** Height of the floor slab (over resource patches, under the wheels' contact by little) and of the paint on it. */
+const GARAGE_FLOOR_Y = 0.025;
+const GARAGE_PAINT_Y = 0.037;
+/** Console on the back wall: center height, half size of the display, depth of its frame. */
+const GARAGE_SCREEN = { y: 1.75, halfW: 0.62, halfH: 0.35, depth: 0.08 } as const;
+/** Sign on the outer face of the lintel over the door. */
+const GARAGE_SIGN = { halfW: 1.5, bottom: 2.9, top: 3.42, depth: 0.06 } as const;
+const signGeometry = new THREE.BoxGeometry(GARAGE_SIGN.halfW * 2, GARAGE_SIGN.top - GARAGE_SIGN.bottom, GARAGE_SIGN.depth);
+const screenPlane = new THREE.PlaneGeometry(1, 1);
+
+/** Static boxes and paint of the garage merged per material (built once from the shared layout, shared by every garage and ghost). */
+let garageGeometries: Record<GarageMat, THREE.BufferGeometry> | null = null;
+function garageGeometry(): Record<GarageMat, THREE.BufferGeometry> {
+  if (garageGeometries) return garageGeometries;
+  const parts: Record<GarageMat, THREE.BufferGeometry[]> = { wall: [], trim: [], frame: [], beam: [], paint: [] };
+  const box = (mat: GarageMat, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
+    parts[mat].push(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0).translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2));
+  const paint = (x0: number, x1: number, z0: number, z1: number) =>
+    parts.paint.push(new THREE.PlaneGeometry(x1 - x0, z1 - z0).rotateX(-Math.PI / 2).translate((x0 + x1) / 2, GARAGE_PAINT_Y, (z0 + z1) / 2));
+  const { height: H, post } = GARAGE;
+  // Walls = the colliders, except that the side walls end at the door posts (Kenney trusses). Dark
+  // skirting and cap bands stand 2 cm proud; at the back corners the back wall's bands cover the
+  // corner and the side bands start after them (no coplanar faces).
+  const e = 0.02;
+  GARAGE_WALLS.forEach((w, i) => {
+    const back = i === 0;
+    const x0 = w.x - w.hx;
+    const x1 = w.x + w.hx;
+    const z0 = w.z - w.hz;
+    const z1 = w.z + w.hz - (back ? 0 : post);
+    box('wall', x0, x1, 0, H, z0, z1);
+    for (const [y0, y1] of [[0, 0.4], [H - 0.15, H]] as const) {
+      if (back) box('trim', x0 - e, x1 + e, y0, y1, z0 - e, z1 + e);
+      else box('trim', x0 - e, x1 + e, y0, y1, z0 + e, z1);
+    }
+  });
+  // Yellow lintel over the door (its front face recessed behind the sign), two roof beams (visual
+  // only: no roof, open to the cameras).
+  const li = GARAGE_LINTEL;
+  box('frame', li.x - li.hx, li.x + li.hx, li.y - li.hy, li.y + li.hy, li.z - li.hz, li.z + li.hz - GARAGE_SIGN.depth);
+  const dw = GARAGE_DOOR.halfWidth;
+  for (const bz of [-1.3, 1.3]) box('beam', -dw, dw, H - 0.2, H - 0.05, bz - 0.08, bz + 0.08);
+  // Console frame on the back wall.
+  const { y: sy, halfW: shw, halfH: shh, depth: sd } = GARAGE_SCREEN;
+  box('trim', -shw - 0.08, shw + 0.08, sy - shh - 0.08, sy + shh + 0.08, GARAGE_INNER.back, GARAGE_INNER.back + sd);
+  // Painted bay outline (centered on the parking pose).
+  const l = 0.1;
+  const { halfW: bw, halfD: bd } = GARAGE_BAY;
+  paint(-bw, -bw + l, -bd, bd);
+  paint(bw - l, bw, -bd, bd);
+  paint(-bw + l, bw - l, -bd, -bd + l);
+  paint(-bw + l, bw - l, bd - l, bd);
+  garageGeometries = Object.fromEntries(
+    Object.entries(parts).map(([k, list]) => [k, mergeGeometries(list, false) ?? new THREE.BufferGeometry()]),
+  ) as Record<GarageMat, THREE.BufferGeometry>;
+  return garageGeometries;
+}
+
+/** Canvas texture (shared, never disposed); null outside a browser. */
+function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.Texture | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  draw(ctx);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** « GARAGE » on a dark panel between hazard stripes. */
+let garageSignMaterial: THREE.Material | null = null;
+function signMaterial(): THREE.Material {
+  garageSignMaterial ??= new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.6,
+    // 576 × 100 px for the 3 × 0.52 m panel.
+    map: canvasTexture(576, 100, (c) => {
+      c.fillStyle = '#2f2f45';
+      c.fillRect(0, 0, 576, 100);
+      for (const x0 of [0, 516]) {
+        c.save();
+        c.beginPath();
+        c.rect(x0, 0, 60, 100);
+        c.clip();
+        c.fillStyle = '#f0b36a';
+        c.fillRect(x0, 0, 60, 100);
+        c.fillStyle = '#2f2f45';
+        for (let k = -100; k < 60; k += 32) {
+          c.beginPath();
+          c.moveTo(x0 + k, 100);
+          c.lineTo(x0 + k + 16, 100);
+          c.lineTo(x0 + k + 16 + 100, 0);
+          c.lineTo(x0 + k + 100, 0);
+          c.fill();
+        }
+        c.restore();
+      }
+      c.fillStyle = '#f0b36a';
+      c.font = 'bold 66px system-ui, -apple-system, "Segoe UI", sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText('GARAGE', 288, 54);
+    }),
+  });
+  return garageSignMaterial;
+}
+
+/** Console display: a car profile on a blueprint grid (unlit, reads as a lit screen). */
+let garageScreenMaterial: THREE.Material | null = null;
+function screenMaterial(): THREE.Material {
+  garageScreenMaterial ??= new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    map: canvasTexture(256, 144, (c) => {
+      c.fillStyle = '#1b2340';
+      c.fillRect(0, 0, 256, 144);
+      c.strokeStyle = 'rgba(90, 209, 255, 0.18)';
+      c.lineWidth = 1;
+      c.beginPath();
+      for (let x = 16; x < 256; x += 16) {
+        c.moveTo(x + 0.5, 0);
+        c.lineTo(x + 0.5, 144);
+      }
+      for (let y = 16; y < 144; y += 16) {
+        c.moveTo(0, y + 0.5);
+        c.lineTo(256, y + 0.5);
+      }
+      c.stroke();
+      // Car profile (body, cabin, wheels).
+      c.strokeStyle = '#5ad1ff';
+      c.lineWidth = 4;
+      c.lineJoin = 'round';
+      c.beginPath();
+      c.moveTo(40, 92);
+      c.lineTo(40, 76);
+      c.lineTo(78, 70);
+      c.lineTo(104, 48);
+      c.lineTo(160, 48);
+      c.lineTo(188, 70);
+      c.lineTo(216, 74);
+      c.lineTo(216, 92);
+      c.stroke();
+      for (const x of [76, 180]) {
+        c.beginPath();
+        c.arc(x, 96, 14, 0, Math.PI * 2);
+        c.stroke();
+      }
+      // Status bars.
+      const bars: [number, string][] = [[0.8, '#3ddc84'], [0.55, '#ffb347'], [0.9, '#5ad1ff']];
+      bars.forEach(([f, col], i) => {
+        c.fillStyle = 'rgba(255, 255, 255, 0.12)';
+        c.fillRect(24, 118 + i * 8 - 4, 208, 4);
+        c.fillStyle = col;
+        c.fillRect(24, 118 + i * 8 - 4, 208 * f, 4);
+      });
+    }),
+  });
+  return garageScreenMaterial;
+}
 
 /** World position of the center of a footprint. */
 export function footprintCenter(type: BuildingType, x: number, z: number, rot: Rot, out = new THREE.Vector3()): THREE.Vector3 {
@@ -124,6 +298,51 @@ export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group
       add('factory-kit/pipe-large-long', [0.25, top, z + 0.36], 0.16).rotation.y = 0.15;
       break;
     }
+    case 'garage': {
+      // Drive-in bay (layout in garageLayout): walls on three sides, the front (+Z) open as the door
+      // between two yellow posts under a lintel with the sign, open top with two beams, a painted bay
+      // around the parking pose, a console on the back wall and some clutter in the back corners.
+      const geo = garageGeometry();
+      for (const key of Object.keys(geo) as GarageMat[]) {
+        const m = new THREE.Mesh(geo[key], garageMats[key]);
+        m.castShadow = key !== 'paint';
+        m.receiveShadow = true;
+        g.add(m);
+      }
+      const { wall: T, post, height: H } = GARAGE;
+      const inner = GARAGE_INNER;
+      // Floor slab inside the walls (the bay floor has no collider: it is the factory ground).
+      add('factory-kit/top-large', [0, GARAGE_FLOOR_Y, (inner.back + inner.front) / 2], [inner.halfW, 1, (inner.front - inner.back) / 2]);
+      // Hazard stripes across the door.
+      const tiles = 5;
+      const tw = (2 * GARAGE_DOOR.halfWidth) / tiles;
+      for (let i = 0; i < tiles; i++) {
+        add('factory-kit/indicator-special-lines', [-GARAGE_DOOR.halfWidth + (i + 0.5) * tw, GARAGE_PAINT_Y, GARAGE_DOOR.z - 0.25], [tw, 1, 0.5]);
+      }
+      // Door posts: yellow trusses ending the side walls (truss plane along the wall).
+      for (const sx of [-1, 1]) add('factory-kit/structure-yellow-tall', [sx * (inner.halfW + T / 2), 0, GARAGE_DOOR.z - post / 2], [T / 0.3, H / 2, post / 1.1]);
+      // Sign on the lintel, facing out.
+      const t = garageMats.trim;
+      const sign = new THREE.Mesh(signGeometry, [t, t, t, t, signMaterial(), t]);
+      sign.position.set(0, (GARAGE_SIGN.bottom + GARAGE_SIGN.top) / 2, GARAGE_DOOR.z - GARAGE_SIGN.depth / 2);
+      sign.castShadow = true;
+      g.add(sign);
+      // Console display in its frame on the back wall.
+      const screen = new THREE.Mesh(screenPlane, screenMaterial());
+      screen.scale.set(GARAGE_SCREEN.halfW * 2, GARAGE_SCREEN.halfH * 2, 1);
+      screen.position.set(0, GARAGE_SCREEN.y, inner.back + GARAGE_SCREEN.depth + 0.01);
+      g.add(screen);
+      // Clutter in the back corners (boxes of the layout): two tires lying flat (0.6 × 0.35 m model,
+      // axis on X), two crates (1.1 × 0.55 × 1 m model).
+      const { tires, crates } = GARAGE_CLUTTER;
+      const tire = tires.hy;
+      for (const k of [0, 1]) {
+        add('car-kit/debris-tire', [tires.x, tire / 2 + k * tire, tires.z], [tire / 0.35, tires.hx / 0.3, tires.hz / 0.3]).rotation.set(0, k * 0.6, Math.PI / 2);
+      }
+      add('factory-kit/box-large', [crates.x, 0, crates.z], 0.8);
+      add('factory-kit/box-large', [crates.x, 0.44, crates.z], 0.6).rotation.y = 0.35;
+      break;
+    }
     default: {
       // Compile-time check: every building type has a model.
       const missing: never = type;
@@ -183,7 +402,7 @@ export class BuildingVisual {
       this.benchPiece = model.getObjectByName('bench-piece') ?? null;
       this.benchPieceY = this.benchPiece?.position.y ?? 0;
     }
-    if (type !== 'conveyor' && type !== 'hub') {
+    if (type !== 'conveyor' && type !== 'hub' && type !== 'garage') {
       this.lamp = new THREE.Mesh(lampGeometry, statusMaterial('noRecipe'));
       if (type === 'drill') this.lamp.position.set(-1, 3.95, 0);
       else this.lamp.position.set(1.1, 2.45, -0.6);

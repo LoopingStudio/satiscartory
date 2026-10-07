@@ -12,12 +12,20 @@ import { analyzeTrack } from '../track/validate';
 import { clear, createLayer, el, formatTime, toast } from '../ui/dom';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor } from './medals';
 import { BLUEPRINTS } from '../data/blueprints';
-import { computeCarStats, statBars, type CarSpec } from '../car/stats';
-import { LOANER_SPEC } from '../garage/assembly';
+import { LOANER_SPEC, specOf } from '../garage/assembly';
+import { selectRaceCar } from '../garage/actions';
+import { carStatsBlock } from '../ui/carStats';
+import type { CarSpec } from '../car/stats';
+import type { EditorParams } from '../track/editor/TrackEditorMode';
 import type { RaceParams } from './RaceMode';
+
+/** Screen the track selection goes back to (Escape, back button), carried through races and the editor. */
+export type TrackOrigin = 'menu' | 'factory';
 
 export interface TrackSelectParams {
   selected?: string;
+  /** Opened from the factory (garage « Courir »): back goes to the factory. Default: the main menu. */
+  origin?: TrackOrigin;
 }
 
 /** Track list with medals/records, car choice and a live 3D preview of the selected track. */
@@ -36,6 +44,7 @@ export class TrackSelectMode implements Mode {
   private t = 0;
   private center = new THREE.Vector3();
   private radius = 60;
+  private origin: TrackOrigin = 'menu';
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(50, 1, 4000);
@@ -46,6 +55,7 @@ export class TrackSelectMode implements Mode {
   enter(params?: TrackSelectParams): void {
     addLightRig(this.scene, { shadowSize: 120, sky: 0x9fc0f0, fog: [400, 1600] }).follow(new THREE.Vector3());
     this.tracks = TrackStore.all();
+    this.origin = params?.origin === 'factory' ? 'factory' : 'menu';
     this.layer = createLayer('tracks-screen');
     this.listEl = el('div', { class: 'panel track-list' });
     this.detailEl = el('div', { class: 'panel track-detail' });
@@ -76,7 +86,7 @@ export class TrackSelectMode implements Mode {
   private renderList(): void {
     const list = this.listEl!;
     clear(list);
-    list.appendChild(el('div', { class: 'row' }, el('h2', {}, 'Circuits'), el('span', { class: 'spacer' }), el('button', { class: 'small', onclick: () => void this.game.switchMode('menu') }, 'Menu')));
+    list.appendChild(el('div', { class: 'row' }, el('h2', {}, 'Circuits'), el('span', { class: 'spacer' }), el('button', { class: 'small', onclick: () => this.back() }, this.origin === 'factory' ? 'Usine' : 'Menu')));
     const section = (title: string, items: TrackData[]) => {
       list.appendChild(el('h3', { style: 'margin-top:10px' }, title));
       if (!items.length) list.appendChild(el('div', { class: 'muted small' }, 'Aucun pour l’instant — crée-en un dans l’éditeur.'));
@@ -95,13 +105,13 @@ export class TrackSelectMode implements Mode {
     };
     section('Officiels', this.tracks.filter((t) => t.builtin));
     section('Mes circuits', this.tracks.filter((t) => !t.builtin));
-    list.appendChild(el('button', { style: 'margin-top:10px', onclick: () => void this.game.switchMode('editor', {}) }, '+ Nouveau circuit'));
+    list.appendChild(el('button', { style: 'margin-top:10px', onclick: () => this.openEditor({}) }, '+ Nouveau circuit'));
   }
 
   private carOptions(): { id: string | null; label: string; spec: CarSpec }[] {
     return [
       { id: null, label: BLUEPRINTS.loaner.name, spec: LOANER_SPEC },
-      ...this.state.cars.map((c) => ({ id: c.id, label: c.name, spec: { blueprint: c.blueprint as CarSpec['blueprint'], parts: c.parts } })),
+      ...this.state.cars.map((c) => ({ id: c.id, label: c.name, spec: specOf(c) })),
     ];
   }
 
@@ -134,7 +144,7 @@ export class TrackSelectMode implements Mode {
     const select = el('select', {
       onchange: (e: Event) => {
         const v = (e.target as HTMLSelectElement).value;
-        this.state.selectedCarId = v === '' ? null : v;
+        selectRaceCar(this.state, v === '' ? null : v);
         this.renderDetail();
       },
     });
@@ -144,15 +154,7 @@ export class TrackSelectMode implements Mode {
       select.appendChild(opt);
     }
     const current = options.find((o) => (o.id ?? null) === (this.state.selectedCar?.id ?? null)) ?? options[0]!;
-    const bars = statBars(computeCarStats(current.spec));
-    d.append(
-      el('h3', { style: 'margin-top:12px' }, 'Voiture'),
-      select,
-      el('div', { class: 'stat-bars small' },
-        ...(['speed', 'accel', 'grip', 'weight'] as const).map((k) =>
-          el('div', { class: 'stat-bar' }, el('span', {}, { speed: 'Vitesse', accel: 'Accélération', grip: 'Adhérence', weight: 'Poids' }[k]), el('div', { class: 'bar' }, el('div', { style: `width:${bars[k] * 10}%` })))),
-      ),
-    );
+    d.append(el('h3', { style: 'margin-top:12px' }, 'Voiture'), select, carStatsBlock(current.spec, null, 'small'));
 
     const buttons = el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' });
     buttons.appendChild(
@@ -160,13 +162,14 @@ export class TrackSelectMode implements Mode {
         class: 'primary',
         disabled: !analysis.ok,
         onclick: () => {
-          const p: RaceParams = { track: t };
+          const back: TrackSelectParams = { selected: t.id, origin: this.origin };
+          const p: RaceParams = { track: t, carId: this.state.selectedCar?.id ?? null, returnTo: 'tracks', returnParams: back };
           void this.game.switchMode('race', p);
         },
       }, analysis.ok ? 'Courir' : 'Circuit invalide'),
     );
     if (!t.builtin) {
-      buttons.appendChild(el('button', { onclick: () => void this.game.switchMode('editor', { trackId: t.id }) }, 'Modifier'));
+      buttons.appendChild(el('button', { onclick: () => this.openEditor({ trackId: t.id }) }, 'Modifier'));
       buttons.appendChild(
         el('button', {
           class: 'danger',
@@ -180,10 +183,19 @@ export class TrackSelectMode implements Mode {
         }, 'Supprimer'),
       );
     } else {
-      buttons.appendChild(el('button', { onclick: () => void this.game.switchMode('editor', { copyOf: t.id }) }, 'Copier dans l’éditeur'));
+      buttons.appendChild(el('button', { onclick: () => this.openEditor({ copyOf: t.id }) }, 'Copier dans l’éditeur'));
     }
-    buttons.appendChild(el('button', { onclick: () => void this.game.switchMode('garage') }, 'Garage'));
+    // From the factory, the back button of the list already says « Usine ».
+    if (this.origin !== 'factory') buttons.appendChild(el('button', { onclick: () => void this.game.switchMode('factory') }, 'Usine'));
     d.appendChild(buttons);
+  }
+
+  private openEditor(params: EditorParams): void {
+    void this.game.switchMode('editor', { ...params, origin: this.origin } satisfies EditorParams);
+  }
+
+  private back(): void {
+    void this.game.switchMode(this.origin);
   }
 
   fixedUpdate(): void {}
@@ -193,11 +205,11 @@ export class TrackSelectMode implements Mode {
     const a = this.t * 0.12;
     this.camera.position.set(this.center.x + Math.cos(a) * this.radius, this.center.y + this.radius * 0.55, this.center.z + Math.sin(a) * this.radius);
     this.camera.lookAt(this.center);
-    if (this.game.input.wasPressed('cancel')) void this.game.switchMode('menu');
+    if (this.game.input.wasPressed('cancel')) this.back();
   }
 
   debugState() {
-    return { tracks: this.tracks.map((t) => t.id), selected: this.selected?.id ?? null };
+    return { tracks: this.tracks.map((t) => t.id), selected: this.selected?.id ?? null, origin: this.origin };
   }
 
   exit(): void {

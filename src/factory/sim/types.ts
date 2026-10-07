@@ -52,7 +52,12 @@ export interface HubB extends Base {
   type: 'hub';
 }
 
-export type Building = ConveyorB | DrillB | MachineB | HubB;
+/** Garage: no items, no ports. Which car stands in it is derived from the cars' poses (GameState). */
+export interface GarageB extends Base {
+  type: 'garage';
+}
+
+export type Building = ConveyorB | DrillB | MachineB | GarageB | HubB;
 
 export interface Link {
   target: number;

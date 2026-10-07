@@ -27,6 +27,8 @@ describe('asset manifest', () => {
       // Hub crafting bench.
       'factory-kit/structure-yellow-short', 'factory-kit/box-large', 'factory-kit/lever-single', 'factory-kit/pipe-large-long',
       'car-kit/debris-plate-small-a',
+      // Garage (posts: structure-yellow-tall; clutter: box-large, debris-tire).
+      'factory-kit/top-large', 'factory-kit/indicator-special-lines',
       'city-kit-roads/road-straight', 'city-kit-roads/road-bend', 'city-kit-roads/road-curve', 'city-kit-roads/road-slant',
     ];
     for (const k of required) expect(Object.keys(MODELS)).toContain(k);

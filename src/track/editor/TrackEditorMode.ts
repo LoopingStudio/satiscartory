@@ -17,6 +17,7 @@ import { emptyTrack, type TrackData, type TrackPiece } from '../TrackData';
 import { analyzeTrack, type TrackAnalysis } from '../validate';
 import { medalsFromAuthor } from '../../race/medals';
 import type { RaceParams } from '../../race/RaceMode';
+import type { TrackOrigin, TrackSelectParams } from '../../race/TrackSelectMode';
 
 export interface EditorParams {
   trackId?: string;
@@ -25,6 +26,8 @@ export interface EditorParams {
   track?: TrackData;
   /** Unsaved-changes flag carried through a test drive. */
   dirty?: boolean;
+  /** Where the track selection goes back to when leaving the editor (carried through test drives). */
+  origin?: TrackOrigin;
 }
 
 type Tool = { kind: 'piece'; id: string } | { kind: 'erase' };
@@ -71,6 +74,7 @@ export class TrackEditorMode implements Mode {
   private history = new History();
   private rig!: LightRig;
   private dirty = false;
+  private origin: TrackOrigin | undefined;
   // camera
   private target = new THREE.Vector3(48, 0, 24);
   private yaw = Math.PI * 0.75;
@@ -92,6 +96,7 @@ export class TrackEditorMode implements Mode {
   }
 
   enter(params?: EditorParams): void {
+    this.origin = params?.origin;
     if (params?.track) {
       this.track = params.track;
       this.dirty = params.dirty ?? true;
@@ -210,7 +215,7 @@ export class TrackEditorMode implements Mode {
     }
     this.track.name = this.nameInput.value.trim() || 'Mon circuit';
     const working = this.track;
-    const back: EditorParams = { track: working, dirty: this.dirty };
+    const back: EditorParams = { track: working, dirty: this.dirty, origin: this.origin };
     const params: RaceParams = {
       track: working,
       test: true,
@@ -286,7 +291,7 @@ export class TrackEditorMode implements Mode {
 
   private leave(): void {
     if (this.dirty && this.track.pieces.length > 1 && !window.confirm('Quitter sans enregistrer ?')) return;
-    void this.game.switchMode('tracks', { selected: this.track.id });
+    void this.game.switchMode('tracks', { selected: this.track.id, origin: this.origin } satisfies TrackSelectParams);
   }
 
   // ------------------------------------------------------------------ frame

@@ -51,6 +51,11 @@ export class PhysicsWorld {
     return !!this.debugLines;
   }
 
+  /** True once dispose() freed the WASM world: no Rapier object of it may be touched any more. */
+  get disposed(): boolean {
+    return this.freed;
+  }
+
   updateDebug(): void {
     if (!this.debugLines) return;
     const { vertices, colors } = this.world.debugRender();

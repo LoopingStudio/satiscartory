@@ -11,7 +11,6 @@ import { FactoryMode } from './factory/FactoryMode';
 import { RaceMode } from './race/RaceMode';
 import { TrackSelectMode } from './race/TrackSelectMode';
 import { TrackEditorMode } from './track/editor/TrackEditorMode';
-import { GarageMode } from './garage/GarageMode';
 import { applySettings, openSettings } from './ui/menus/SettingsPanel';
 import { ItemIcons } from './core/assets/IconRenderer';
 import { fr } from './ui/i18n/fr';
@@ -44,7 +43,6 @@ async function main() {
   const state = SaveManager.load() ?? new GameState();
   const menuEntries = (): MenuEntry[] => [
     { label: SaveManager.hasSave() ? fr.menu.continue : fr.menu.play, mode: 'factory', primary: true },
-    { label: fr.menu.garage, mode: 'garage' },
     { label: fr.menu.race, mode: 'tracks' },
     { label: fr.menu.editor, mode: 'editor' },
     { label: fr.menu.settings, action: () => openSettings(game, state) },
@@ -69,7 +67,6 @@ async function main() {
   game.modes.register('race', () => new RaceMode(game, state));
   game.modes.register('tracks', () => new TrackSelectMode(game, state));
   game.modes.register('editor', () => new TrackEditorMode(game, state));
-  game.modes.register('garage', () => new GarageMode(game, state));
   // The factory keeps producing whatever mode is active.
   game.addFactoryTicker(() => state.sim.tick());
   applySettings(game, state);

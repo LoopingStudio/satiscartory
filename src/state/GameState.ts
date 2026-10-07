@@ -1,6 +1,7 @@
 import { FactorySim } from '../factory/sim/FactorySim';
 import type { FactorySave } from '../factory/sim/types';
-import type { CarInstance } from '../garage/assembly';
+import { sanitizePose, type CarInstance } from '../garage/assembly';
+import { parkUnplaced, type BayBlocker } from '../garage/parking';
 import type { TrackRecord } from '../race/records';
 import { Inventory, Wallet, type Stack } from './Inventory';
 import { LEGACY_MAP_OFFSET } from '../data/factoryMap';
@@ -39,6 +40,8 @@ export interface SaveData {
   inventory?: (Stack | null)[];
   /** Hub tiers unlocked. Missing in saves older than the tiers: everything stays unlocked. */
   tier?: number;
+  /** Number of tiers that existed when saving (absent before the garage tier: 4). */
+  tierMax?: number;
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -65,6 +68,12 @@ export class GameState {
   /** Backpack first, then the hub (pays costs, receives refunds and pickups). */
   wallet(): Wallet {
     return new Wallet(this.inventory, this.sim.hub);
+  }
+
+  /** Parks the cars that have no place yet in free garage bays; returns them. */
+  parkCars(blocker?: BayBlocker): CarInstance[] {
+    const garages = [...this.sim.buildings.values()].filter((b) => b.type === 'garage');
+    return parkUnplaced(this.cars, garages, blocker);
   }
 
   isUnlocked(type: BuildingType): boolean {
@@ -104,6 +113,7 @@ export class GameState {
       carCounter: this.carCounter,
       inventory: this.inventory.serialize(),
       tier: this.tier,
+      tierMax: TIERS.length,
     };
   }
 
@@ -114,7 +124,9 @@ export class GameState {
     if (s.player && (data.factory.version ?? 1) < 3) {
       s.player = { ...s.player, x: s.player.x + LEGACY_MAP_OFFSET * FACTORY_CELL, z: s.player.z + LEGACY_MAP_OFFSET * FACTORY_CELL };
     }
-    s.cars = Array.isArray(data.cars) ? data.cars : [];
+    s.cars = Array.isArray(data.cars)
+      ? data.cars.filter((c) => c && typeof c.id === 'string' && typeof c.blueprint === 'string').map((c) => ({ ...c, parts: c.parts ?? {}, pose: sanitizePose(c.pose) }))
+      : [];
     // null = the loaner kart (a valid choice); fall back only when missing or dangling.
     const sel = data.selectedCarId;
     s.selectedCarId = sel === undefined ? (s.cars[0]?.id ?? null) : sel !== null && !s.cars.some((c) => c.id === sel) ? (s.cars[0]?.id ?? null) : sel;
@@ -123,9 +135,11 @@ export class GameState {
     s.objectives = data.objectives ?? {};
     s.carCounter = data.carCounter ?? s.cars.length;
     s.inventory = Inventory.fromSave(data.inventory);
-    // Saves from before the tiers keep every building available.
+    // Saves from before the tiers keep every building available, and so does a save that had every
+    // tier of its version (tiers added later, like the garage, come unlocked).
     const t = data.tier;
-    s.tier = typeof t === 'number' && Number.isFinite(t) ? Math.max(0, Math.min(TIERS.length, Math.floor(t))) : TIERS.length;
+    const savedMax = typeof data.tierMax === 'number' ? data.tierMax : 4;
+    s.tier = typeof t === 'number' && Number.isFinite(t) ? (t >= savedMax ? TIERS.length : Math.max(0, Math.min(TIERS.length, Math.floor(t)))) : TIERS.length;
     return s;
   }
 

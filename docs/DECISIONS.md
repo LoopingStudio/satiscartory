@@ -113,12 +113,12 @@ Choix tranchés pendant le développement (le plan de référence est `docs/PLAN
   8. Bonus : la Sportive
 
   Ils sont mémorisés dans la sauvegarde.
-- **Garage** :
+- **Garage** (devenu un bâtiment de l'usine en octobre 2026, voir « Garage dans l'usine ») :
   - Assemblage par emplacement : roues standard ou racing, aileron optionnel.
   - Les barres de stats se comparent à la voiture de course actuelle.
   - On peut changer une pièce (échange avec le stock) ou démonter la voiture, ce qui rembourse ses pièces.
   - La voiture assemblée devient la voiture de course (★).
-- **Touche G** : ouvre le garage depuis l'usine. Le panneau du hangar (E) y mène aussi.
+- **Touche G** (supprimée en octobre 2026, voir « Garage dans l'usine ») : ouvrait le garage depuis l'usine. Le panneau du hangar (E) y menait aussi.
 - **Poteaux des portiques** : déplacés juste hors de la tuile. Sur le trottoir, ils accrochaient les voitures en sortie de virage.
 
 ## P7 : revue adverse (16 défauts confirmés, tous corrigés et couverts par des tests)
@@ -177,7 +177,7 @@ Une nouvelle partie ne donne plus de stock : on part de rien, à la main, et le 
   - **Minage à la main** : maintenir E en visant une case libre d'un gisement, à 6 m au plus du point le plus proche de la case (`HAND.MINE_REACH` ; la visée à la troisième personne tombe un peu devant). Un minerai toutes les 0,75 s (`HAND.MINE_SECONDS`) va dans le sac. Les gisements sont inépuisables. Côté simulation, `FactorySim.mineAt(x, z, sink)` : rien sous un bâtiment (une foreuse couvre ses cases) ni hors gisement, et rien n'est miné si le sac est plein (« Sac plein »), donc rien ne se perd. Le minage à la main ne compte pas dans les statistiques de production (`crafted`).
   - **Établi intégré au hangar** : ce n'est pas un bâtiment, c'est l'onglet « Établi » du panneau du hangar (E → Hangar / Établi / Paliers). Il est posé sur la face sud du hangar, côté apparition du joueur. Ses recettes (`machine: 'bench'`) se fabriquent en maintenant le bouton. `Wallet.craft` prend les entrées dans le sac puis au hangar, met le résultat dans le sac (le surplus déborde au hangar), et ne fait rien s'il manque une entrée.
   - **Fer en trois étapes** : foreuse → **Fonderie** (nouveau bâtiment 2×1, même tunnel que les autres machines) → **Constructeur** (l'ancienne presse, renommée ; son id interne reste `press` pour les sauvegardes) → assembleuse. La fonderie n'a qu'une recette et démarre dessus.
-  - **Paliers au hangar** : quatre paliers payés sac d'abord, puis hangar (`GameState.unlockNextTier`). Le palier atteint est sauvegardé (`tier`). Un bâtiment verrouillé reste dans la barre de construction et y affiche son palier.
+  - **Paliers au hangar** : quatre paliers payés sac d'abord, puis hangar (`GameState.unlockNextTier`) ; un cinquième, Garage, s'y ajoute avec « Garage dans l'usine ». Le palier atteint est sauvegardé (`tier`). Un bâtiment verrouillé reste dans la barre de construction et y affiche son palier.
   - **Le hangar démarre vide** (`START_STORAGE = {}`).
 - **Cadences** (1 foreuse = 1 fonderie = 1 constructeur) :
 
@@ -200,6 +200,7 @@ Une nouvelle partie ne donne plus de stock : on part de rien, à la main, et le 
   | Fonderie | 4 plaques, 6 tiges |
   | Constructeur | 10 plaques, 8 tiges, 16 boulons |
   | Assembleuse | 20 plaques, 12 tiges, 40 boulons |
+  | Garage (ajouté ensuite) | 40 plaques, 24 tiges, 80 boulons |
 
 - **Paliers** :
 
@@ -209,13 +210,48 @@ Une nouvelle partie ne donne plus de stock : on part de rien, à la main, et le 
   | 2. Fonderie | 10 plaques, 10 tiges | fonderie |
   | 3. Constructeur | 30 plaques, 20 tiges, 40 boulons | constructeur |
   | 4. Assemblage | 60 plaques, 40 tiges, 120 boulons, 10 pneus | assembleuse |
+  | 5. Garage (ajouté ensuite) | 80 plaques, 60 tiges, 160 boulons, 8 pneus | garage |
 
 - **Temps à la main** : 0,75 s par minerai ; à l'établi, 0,75 s pour un lingot, une tige ou 4 boulons, et 1 s pour 2 plaques (3 lingots). Le palier 1 demande environ 22 s de travail (10 minerais, 10 lingots, 10 tiges). Le palier 1, la première foreuse et les ~15 convoyeurs jusqu'au hangar en demandent environ 1 min 30 (le test `objectives.test.ts` exige moins de 2 min).
 - **Faisabilité vérifiée par les données** : `tiers.test.ts` calcule par point fixe, sur `RECIPES` et les gisements de la carte, tout ce qui est productible avant chaque palier (main, établi, machines des paliers précédents, foreuses). Il vérifie que le coût du palier et celui des bâtiments qu'il débloque le sont, et qu'au dernier palier tous les objets du jeu le sont. Une modification des recettes, des coûts ou des paliers qui casserait la progression fait donc échouer les tests. `bootstrap.test.ts` joue le début d'une partie (minage, établi, paliers 1 et 2, première foreuse) sur la vraie carte.
-- **Objectifs d'accueil**, dans l'ordre : miner à la main, 10 tiges à l'établi, palier 1, foreuse reliée au hangar, palier 2, fonderie, palier 3, plaques au constructeur, pneus, palier 4, pièces de voiture, assemblage, course, bonus Sportive. Chaque étape est aussi validée dès que le palier suivant est atteint, donc une sauvegarde où tout est débloqué ne rejoue pas l'amorçage.
+- **Objectifs d'accueil**, dans l'ordre : miner à la main, 10 tiges à l'établi, palier 1, foreuse reliée au hangar, palier 2, fonderie, palier 3, plaques au constructeur, pneus, palier 4, pièces de voiture, palier 5, garage, assemblage, course, bonus Sportive (palier 5 et garage ajoutés avec « Garage dans l'usine »). Chaque étape est aussi validée dès que le palier suivant est atteint, donc une sauvegarde où tout est débloqué ne rejoue pas l'amorçage.
 - **Sauvegardes** :
-  - Sans champ `tier` (sauvegardes d'avant les paliers) : tous les paliers sont débloqués. Une valeur invalide est bornée : négative → 0, trop grande → 4, non numérique → tout débloqué.
+  - Sans champ `tier` (sauvegardes d'avant les paliers) : tous les paliers sont débloqués. Une valeur invalide est bornée : négative → 0, non numérique → tout débloqué. Une valeur égale ou supérieure au nombre de paliers de sa version (`tierMax`, voir « Garage dans l'usine ») débloque tout, paliers ajoutés depuis compris.
   - Les recettes de la presse ont changé d'id (`plate` et `bolt` prenaient du minerai ; ce sont maintenant `iron_plate`, `iron_rod` et `bolts`). Une machine sauvegardée avec un ancien id, ou avec la recette d'une autre machine, repart sans recette au chargement, et ses tampons reviennent au hangar.
   - Une recette gardée dont les entrées ont changé (châssis, moteur) : les objets du tampon d'entrée qui ne sont plus des entrées sont rendus au hangar.
   - Démonter un bâtiment rembourse son coût **actuel**, même s'il a été payé à l'ancien prix (accepté : retenir le prix payé par bâtiment n'en vaut pas la peine).
 - **Usine de démonstration** (`?layout=demo`) : quatre chaînes, toutes en foreuse → fonderie → constructeur. Les plaques ; les tiges, fusionnées sur la ligne des plaques ; les boulons (un constructeur « Tige » puis un constructeur « Boulons ») ; les pneus.
+
+## Garage dans l'usine (octobre 2026)
+
+Le garage n'est plus une scène à part (touche G, entrée « Garage » du menu principal, `GarageMode` supprimé) : c'est un bâtiment de l'usine, et les voitures assemblées y restent garées et se conduisent entre les machines.
+
+- **Choix validés** :
+  - **Garage à construire au palier 5** : un palier « Garage » (80 plaques, 60 tiges, 160 boulons, 8 pneus) débloque le bâtiment (touche 6 ; 40 plaques, 24 tiges, 80 boulons). Il occupe 3×4 cases (6 × 8 m) : des murs sur trois côtés, toute la face avant (le petit côté) ouverte en porte de 2,8 m de haut sous un linteau à enseigne, pas de toit. Sur le fantôme, une flèche bleue (la couleur des entrées) marque la porte ; R tourne le garage. Le hangar n'a plus de terminal Garage.
+  - **Panneau dans l'usine** (`GaragePanel`) : E sur un garage ouvre son panneau sans changer de scène, en deux colonnes latérales pour laisser la place visible au milieu.
+    - À gauche : les voitures et où elles sont (« Dans ce garage », « Garée ailleurs », « En route », « À ranger »), le kart de location, les nouvelles voitures (Kart, Sportive) et les pièces en stock (sac + hangar).
+    - À droite : le brouillon (pièces par emplacement, stats comparées à la voiture de course, « Assembler »), montré en fantôme dans la place vide ; ou la voiture choisie (stats, « Courir », « Choisir pour courir »). Changer une pièce et « Démonter » (confirmé par un second clic) ne valent que pour la voiture garée dans ce garage.
+    - « Courir » fait de la voiture la voiture de course et ouvre le choix du circuit, dont le bouton de retour dit alors « Usine » (`TrackSelectParams.origin`, transmis à la course et à l'éditeur). Les boutons « Garage » de la course et du choix de circuit deviennent « Usine ».
+    - Les actions sont pures (`garage/actions.ts`, testées) : le sac paie d'abord, puis le hangar, et les remboursements remplissent le sac puis débordent au hangar.
+  - **Voitures conduisibles** : E près d'une voiture garée pour monter, commandes de course (Z/S/Q/D ou flèches, Espace frein à main), E pour descendre, Retour arrière pour replacer la voiture, Entrée pour descendre et choisir un circuit avec elle (`RaceParams.carId` : records et objectif « course » pour cette voiture). Le kart de location ne roule que sur les circuits.
+- **Une place par garage** : la place est le centre de l'emprise, voiture tournée vers la porte (`parking.bayPose`). Une voiture dont le centre est à moins de 2,2 m de ce point est « dans ce garage » (`carInBay`) ; le bâtiment lui-même ne stocke rien (`GarageB` n'a ni port ni objet), tout se déduit de `CarInstance.pose`.
+  - Assembler exige une place libre ; la voiture y apparaît et devient la voiture de course.
+  - Un garage occupé ne se démonte pas (« sors-la d'abord »). On ne construit pas sur une voiture, ni, sauf un convoyeur, sur le joueur (`placementGuard` et `dismantleGuard` de `BuildController`).
+- **Priorité de E** : d'abord le bâtiment visé (hangar, garage, machine), sinon la voiture garée la plus proche, à 3,2 m au plus de sa boîte. Une voiture dans la place cache le sol du garage : la viser, c'est monter.
+- **Bâtiment creux** (`hollow`) : le garage n'a pas de collider de sol, les voitures roulent sur le sol de l'usine. Un rayon qui touche le sol dans son emprise le désigne quand même, et sa surbrillance est un contour avec un sol teinté plutôt qu'une boîte, qui teinterait la vue depuis l'intérieur. Une position sauvegardée dans un garage est gardée au chargement.
+- **Murs** : 3,5 m. Un saut (1,6 m) plus l'autostep (0,9 m) atteint 2,5 m depuis le sol et 3,3 m depuis un convoyeur posé contre le mur, mais pas depuis le haut d'une machine (2,1 m). Murs, linteau et caisses des coins arrière sont des colliders. Pas de toit, seulement deux poutres décoratives, pour que la caméra orbitale et la caméra de poursuite ne s'y coincent pas. `garageLayout.ts` partage ces boîtes entre le modèle, les colliders et la surbrillance (tests : la porte laisse passer la Sportive, la place la contient).
+- **Caméra du panneau** : tant que le panneau est ouvert, la caméra quitte l'orbite et se place devant la porte, de trois quarts (à 9,5 m de la place, 4,2 m de haut, décalée de 0,45 rad), en visant la place à 0,9 m du sol. Le HUD de l'usine qui passerait sous les colonnes est masqué.
+- **Groupes de collision** (`factory/collisionGroups.ts`) : les convoyeurs de l'usine sont au sol et partout, contrairement à ceux, surélevés, de Satisfactory. La caisse d'une voiture conduite et les convoyeurs s'ignorent donc, et les rayons de roue ignorent aussi les convoyeurs (option `wheelFilter`) : la voiture traverse une ligne de convoyeurs sans monter dessus. Machines, murs et voitures garées restent solides ; les rayons de roue ignorent les voitures garées (on ne grimpe pas dessus). Le contrôleur du joueur ignore les groupes : à pied, on marche toujours sur les convoyeurs.
+- **Gravité** : le monde de l'usine reste à -9,81 pour le personnage. Le corps d'une voiture conduite a une échelle de gravité de -20 / -9,81 ≈ 2,04 (`CAR_GRAVITY_SCALE`) : elle pèse ce qu'elle pèse en course, avec la même adhérence et la même suspension (test).
+- **Vitesse plafonnée** : 25 m/s (90 km/h) dans l'usine, qui n'est pas un circuit. Une résistance horizontale s'ajoute au-delà de 80 % du plafond, calibrée pour que plein gaz sur le plat plafonne juste là (`vehicle/speedCap.ts`) ; une voiture plus lente que le plafond n'est pas touchée, et les chutes ne sont pas freinées. La caméra de poursuite prend ce plafond comme vitesse de pointe pour son FOV. Les trois options du `Vehicle` (gravité, plafond, filtre des roues) sont facultatives : sans elles, la conduite de course est identique au bit près (test).
+- **Limites** : la voiture reste à 2 m à l'intérieur de la carte (mur mou : la vitesse vers le bord est limitée à 4 m/s par mètre restant). Sous -5 m, couchée ou coincée plus de 1,6 s (même règle qu'en course) ou à plus de 12 m hors de la carte, elle revient à sa dernière position sûre, relevée toutes les 0,5 s quand elle est droite sur ses quatre roues dans la carte. Retour arrière fait de même.
+- **Règles de sortie** :
+  - E ne fait descendre que sous 3 m/s (sinon « Ralentis pour descendre »), Entrée aussi. La voiture se gare là où elle est : pose enregistrée, hauteur prise sur le sol.
+  - Le joueur sort à gauche du siège, sinon à droite, derrière, devant, puis aux mêmes places 1,2 m plus loin. Si tout est bloqué, il sort sur le toit.
+  - Pendant la conduite, la capsule du joueur est désactivée et l'avatar caché (le kart montre son pilote assis, masqué quand il est garé). `state.player` garde l'endroit où le joueur est monté, donc un rechargement ne le fait jamais apparaître dans la voiture. Un joueur qui se trouve dans une voiture (assemblée sur lui, ou au chargement) est déplacé à côté (`moveOutOfCars`).
+- **Sauvegardes** :
+  - `CarInstance.pose` (x, y, z, cap) est écrite à chaque pas de la conduite, donc une sauvegarde peut tomber à tout moment. Au chargement, une pose invalide est ignorée (`sanitizePose`), comme une voiture sans id ou sans plan.
+  - Les voitures sans place (anciennes sauvegardes, pose invalide) sont « À ranger ». À l'entrée dans l'usine et à chaque garage construit, elles prennent les places libres, garages dans l'ordre de construction (`GameState.parkCars`). Les voitures d'une ancienne sauvegarde se garent donc dès le premier garage construit, une par garage.
+  - `SaveData.tierMax` enregistre le nombre de paliers de la version (absent : 4). Une sauvegarde qui avait tous les paliers de sa version reçoit ceux ajoutés depuis, donc le garage ; une sauvegarde d'avant les paliers garde tout débloqué.
+- **Objectifs** : deux étapes entre les pièces de voiture et l'assemblage, palier 5 puis « Construis un garage » (porte vers un espace libre pour sortir en voiture). Toutes deux sont validées dès qu'une voiture existe, donc une sauvegarde qui a déjà une voiture ne les rejoue pas.
+- **Barre de construction** : avec six bâtiments, les coûts deviennent compacts, une icône et une quantité par objet (en rouge s'il en manque), avec le texte complet en infobulle.

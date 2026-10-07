@@ -51,7 +51,6 @@ export interface HudCallbacks {
   setCrafting(active: boolean): void;
   resume(): void;
   menu(): void;
-  garage(): void;
   settings(): void;
   closePanel(): void;
 }
@@ -151,7 +150,7 @@ export class FactoryHud {
             title: locked ? `${def.description} Débloqué au palier ${tierOf(type)} (hangar).` : def.description,
           },
           el('span', { class: 'slot-top' }, el('kbd', {}, String(i + 1)), el('span', { class: 'slot-name' }, def.name)),
-          el('span', { class: 'slot-cost' }, locked ? `Palier ${tierOf(type)}` : costText(def.cost)),
+          locked ? el('span', { class: 'slot-cost' }, `Palier ${tierOf(type)}`) : this.costIcons(def.cost),
         ),
       );
     });
@@ -160,6 +159,16 @@ export class FactoryHud {
       el('button', { class: `slot${dis ? ' active danger-slot' : ''}`, onclick: () => this.cb.selectTool(dis ? { kind: 'none' } : { kind: 'dismantle' }) },
         el('span', { class: 'slot-top' }, el('kbd', {}, 'F'), el('span', { class: 'slot-name' }, 'Démonter')), el('span', { class: 'slot-cost' }, 'remboursé')),
     );
+  }
+
+  /** Compact cost for the build bar: icon + quantity per item (red when short), full text in the tooltip. */
+  private costIcons(cost: ItemCounts): HTMLElement {
+    const row = el('span', { class: 'slot-cost cost-icons', title: costText(cost) });
+    for (const [item, n] of Object.entries(cost) as [ItemId, number][]) {
+      const short = this.wallet.count(item) < n;
+      row.append(el('span', { class: `cost-item${short ? ' bad' : ''}` }, this.icon(item, 'item-icon micro'), `${n}`));
+    }
+    return row;
   }
 
   setHint(html: string): void {
@@ -223,13 +232,12 @@ export class FactoryHud {
         el('p', { class: 'muted' }, 'Clique pour prendre le contrôle de la caméra.'),
         el('div', { class: 'controls-help' },
           el('div', {}, el('kbd', {}, 'Z Q S D'), ' se déplacer · ', el('kbd', {}, 'Maj'), ' courir · ', el('kbd', {}, 'Espace'), ' sauter'),
-          el('div', {}, el('kbd', {}, '1-5'), ' construire · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter · ', el('kbd', {}, 'A'), ' menu de construction'),
+          el('div', {}, el('kbd', {}, '1-6'), ' construire · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter · ', el('kbd', {}, 'A'), ' menu de construction'),
           el('div', {}, el('kbd', {}, 'E'), ' maintenu sur un gisement : miner · ', el('kbd', {}, 'E'), ' utiliser une machine / le hangar (établi, paliers)'),
-          el('div', {}, el('kbd', {}, 'Tab'), ' sac · ', el('kbd', {}, 'G'), ' garage · ', el('kbd', {}, 'Échap'), ' pause'),
+          el('div', {}, el('kbd', {}, 'E'), ' près d’une voiture : monter / descendre · ', el('kbd', {}, 'Tab'), ' sac · ', el('kbd', {}, 'Échap'), ' pause'),
         ),
         el('div', { class: 'row', style: 'margin-top:12px' },
           el('button', { class: 'primary', onclick: () => this.cb.resume() }, paused ? 'Reprendre' : 'Jouer'),
-          el('button', { onclick: () => this.cb.garage() }, 'Garage'),
           el('button', { onclick: () => this.cb.settings() }, 'Réglages'),
           el('button', { onclick: () => this.cb.menu() }, 'Menu principal'),
         ),
@@ -508,8 +516,6 @@ export class FactoryHud {
       ),
       el('div', { class: 'row', style: 'margin-top:10px' },
         el('button', { disabled: this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer'),
-        el('span', { class: 'spacer' }),
-        el('button', { class: 'primary', onclick: () => this.cb.garage() }, 'Aller au garage'),
       ),
     );
   }

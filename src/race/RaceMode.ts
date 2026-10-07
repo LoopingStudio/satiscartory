@@ -24,12 +24,17 @@ import { RaceSession, type RaceEvent } from './RaceSession';
 import { crossGate } from './crossing';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
 import { countAttempt, submitRun } from './records';
-import { LOANER_SPEC } from '../garage/assembly';
+import { LOANER_SPEC, specOf } from '../garage/assembly';
 
 export interface RaceParams {
   track?: TrackData;
-  /** Car to drive (defaults to the selected car, else the loaner kart). */
+  /** Car to drive (defaults to the car of `carId`, else the selected car, else the loaner kart). */
   spec?: CarSpec;
+  /**
+   * Assembled car this run is for (null = the loaner): drives it unless `spec` is given, and goes in the
+   * records and the « race » objective. Defaults to the selected car, or to none when `spec` is forced.
+   */
+  carId?: string | null;
   /** Test drive from the editor: no records, offers to set the author time. */
   test?: boolean;
   returnTo?: ModeName;
@@ -98,9 +103,11 @@ export class RaceMode implements Mode {
     this.checkpointCount = this.track.gates.filter((g) => g.kind === 'checkpoint').length;
     this.finishDir = finishDirections(this.trackData, this.track.gates);
 
-    const sel = this.state.selectedCar;
-    this.spec = params?.spec ?? (sel ? { blueprint: sel.blueprint as CarSpec['blueprint'], parts: sel.parts } : LOANER_SPEC);
-    this.carId = params?.spec ? null : (sel?.id ?? null);
+    const car = params?.carId !== undefined
+      ? (this.state.cars.find((c) => c.id === params.carId) ?? null)
+      : params?.spec ? null : this.state.selectedCar;
+    this.spec = params?.spec ?? specOf(car);
+    this.carId = car?.id ?? null;
     const stats = computeCarStats(this.spec);
     this.carModel = new CarModel(this.game.assets, this.spec);
     this.scene.add(this.carModel.root);
@@ -329,7 +336,7 @@ export class RaceMode implements Mode {
       el('div', { class: 'row', style: 'margin-top:12px;justify-content:center' },
         el('button', { class: 'primary', onclick: () => this.restart() }, 'Réessayer (Entrée)'),
         el('button', { onclick: () => this.exitTo() }, test ? 'Retour à l’éditeur' : 'Circuits'),
-        !test ? el('button', { onclick: () => void this.game.switchMode('garage') }, 'Garage') : null,
+        !test ? el('button', { onclick: () => void this.game.switchMode('factory') }, 'Usine') : null,
       ),
     );
     this.hud.finish = box;

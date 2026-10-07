@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 
-export type ModeName = 'menu' | 'gallery' | 'factory' | 'garage' | 'editor' | 'race' | 'tracks';
+export type ModeName = 'menu' | 'gallery' | 'factory' | 'editor' | 'race' | 'tracks';
 
 export interface Mode {
   readonly name: ModeName;

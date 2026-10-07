@@ -38,7 +38,7 @@ Assets : les trois packs Kenney (CC0), en GLB, avec une texture `colormap.png` p
   - `FACTORY_CELL = 2` : une case d'usine fait 2 m.
   - `PLAYER_HEIGHT = 1.8`.
 - Cadences : physique à 60 Hz pour le personnage et le véhicule, simulation d'usine à 20 Hz en déterministe.
-- Gravité : -9,81 dans l'usine, -20 en course pour un rendu nerveux. Chaque mode a son propre monde physique.
+- Gravité : -9,81 dans l'usine, -20 en course pour un rendu nerveux. Chaque mode a son propre monde physique. Une voiture conduite dans l'usine garde la gravité de course (échelle de gravité de son corps ≈ 2,04).
 - Les touches utilisent `KeyboardEvent.code`, donc WASD devient ZQSD automatiquement sur un clavier AZERTY.
 - L'interface est en français (`src/ui/i18n/fr.ts`) et le code en anglais.
 
@@ -60,10 +60,11 @@ src/
   factory/sim/               FactorySim, Grid, Conveyor, Machine, Extractor, Hub, ports, serialize  (TS pur + tests)
   factory/view/              FactoryView, ConveyorRenderer + ItemRenderer (InstancedMesh), MachineAnimator
   factory/build/             BuildController (fantôme, rotation, tracé de convoyeur, démontage)
-  factory/                   FactoryMode, FactoryWorld (sol, gisements, colliders)
+  factory/                   FactoryMode, FactoryWorld (sol, gisements, colliders), collisionGroups (voitures ↔ convoyeurs)
+  factory/cars/              FactoryCars (voitures garées et conduites), carMath.ts (pur)
   player/                    CharacterController (Rapier KCC), PlayerAvatar (oopi), OrbitCamera
   car/                       stats.ts, tuning.ts (purs), CarModel.ts
-  garage/                    assembly.ts (pur), GarageMode, CarPreview
+  garage/                    assembly.ts, actions.ts, parking.ts (purs), GaragePanel (panneau dans l'usine)
   vehicle/                   Vehicle (DynamicRayCastVehicleController + aides arcade), VehicleInput, ChaseCamera
   track/                     TrackData, connectors.ts + validate.ts (purs), TrackBuilder (trimesh fusionné), gates,
                              editor/ (TrackEditorMode, EditorCamera, palette)
@@ -72,11 +73,11 @@ src/
   ui/                        dom.ts, hud/, menus/, styles/, i18n/fr.ts
 ```
 
-**Règle :** les modules purs n'importent jamais three ni Rapier. Ce sont `data/`, `factory/sim/`, `car/stats|tuning`, `garage/assembly`, `track/connectors|validate` et `race/RaceSession|crossing`. Une règle ESLint `no-restricted-imports` le garantit, et c'est sur eux que porte Vitest.
+**Règle :** les modules purs n'importent jamais three ni Rapier. Ce sont `data/`, `factory/sim/`, `factory/cars/carMath`, `car/stats|tuning`, `garage/assembly|actions|parking`, `track/connectors|validate` et `race/RaceSession|crossing`. Une règle ESLint `no-restricted-imports` le garantit, et c'est sur eux que porte Vitest.
 
 **Dépendances :** three, @types/three, @dimforge/rapier3d-compat (version épinglée), lil-gui, typescript, vite, vitest. Pas de framework d'interface : DOM et CSS directement.
 
-**Modes :** MainMenu, Factory, Garage, TrackEditor, Race et Gallery (en dev).
+**Modes :** MainMenu, Factory (garage compris), TrackSelect, TrackEditor, Race et Gallery (en dev). Depuis octobre 2026, le garage n'est plus un mode : c'est un bâtiment de l'usine (voir « Garage et stats »).
 - Chaque mode possède sa scène, sa caméra et son monde physique, et `exit()` les libère.
 - La simulation d'usine tourne dans `Game` et non dans un mode, donc la production continue pendant une course.
 - Des liens profonds facilitent le dev, par exemple `?mode=race&track=oval&debug=1`.
@@ -100,7 +101,7 @@ src/
 - **Hangar central (hub)** :
   - Occupe 4×4 cases et a 8 entrées.
   - Alimente un stock global qui paie les constructions ; il n'y a pas d'inventaire personnel dans la tranche.
-  - Le terminal Garage est accolé au hangar.
+- **Garage** : bâtiment creux à une place de voiture, sans port ni objet (voir « Garage et stats »).
 
 **Rendu**
 - Un InstancedMesh par type d'objet et par variante de convoyeur.
@@ -115,7 +116,8 @@ src/
 | Fonderie (2×1, 1→1) | `machine-connection-hole` + cœur en fusion, cheminée, vanne | Minerai → Lingot |
 | Constructeur (2×1, ex-presse) | `machine` + piston | 3 Lingots → 2 Plaques ; Lingot → Tige ; Tige → 4 Boulons ; 2 Latex → Pneu |
 | Assembleuse (2×1, 2 ou 3→1) | `machine-window` + `robot-arm-a` | Châssis, Moteur (plaques, tiges, boulons), Roue, Panneau, Aileron |
-| Hangar central (3×3) | `structure-*` + `hopper-high` + écran, établi sur la face sud | stockage, établi (fabrication à la main), paliers, terminal Garage |
+| Hangar central (3×3) | `structure-*` + `hopper-high` + écran, établi sur la face sud | stockage, établi (fabrication à la main), paliers |
+| Garage (3×4) | murs sur trois côtés, porte à l'avant entre deux `structure-yellow-tall`, linteau à enseigne, sol `top-large`, bandes `indicator-special-lines`, console au fond | une place de voiture : assemblage, pièces, voiture de course |
 | Convoyeur (1×1) | `conveyor`, `-corner`, `-junction-t` | — |
 
 **Visuels des objets**
@@ -134,7 +136,7 @@ src/
 | Panneau | `debris-door` |
 | Aileron | `debris-spoiler-a` |
 
-Départ (revu en octobre 2026) : aucun stock. Le fer se mine à la main et se travaille à l'établi du hangar, puis quatre paliers débloquent foreuses et convoyeurs, fonderie, constructeur et assembleuse (détails et chiffres dans `docs/DECISIONS.md`, « Progression façon Satisfactory »).
+Départ (revu en octobre 2026) : aucun stock. Le fer se mine à la main et se travaille à l'établi du hangar, puis cinq paliers débloquent foreuses et convoyeurs, fonderie, constructeur, assembleuse et garage (détails et chiffres dans `docs/DECISIONS.md`, « Progression façon Satisfactory »).
 
 ### Personnage TPS et mode construction
 
@@ -144,12 +146,22 @@ Départ (revu en octobre 2026) : aucun stock. Le fer se mine à la main et se tr
 - Avatar `oopi` avec rebond et squash procéduraux.
 
 **Construction**
-- Q ouvre le menu de construction ; 1 à 5 forment une hotbar.
+- A (touche physique Q) ouvre le menu de construction ; 1 à 6 forment une hotbar.
 - Un rayon depuis le centre de l'écran donne une case cible, avec un fantôme vert ou rouge (cases libres, gisement, coût).
 - R pour tourner, clic gauche pour poser. Pour les convoyeurs, le cliquer-glisser trace un L.
-- F active le démontage, avec remboursement. E interagit : panneau de recette d'une machine, ou terminal Garage.
+- F active le démontage, avec remboursement. E interagit avec le bâtiment visé : panneau de recette d'une machine, hangar, panneau du garage ; sinon, près d'une voiture garée, on monte dedans.
 
 ### Garage et stats
+
+**Garage dans l'usine** (octobre 2026, détails dans `docs/DECISIONS.md`, « Garage dans l'usine »)
+- Plus de touche G ni de scène Garage : le garage est un bâtiment (touche 6, palier 5 « Garage » : 80 plaques, 60 tiges, 160 boulons, 8 pneus ; le bâtiment : 40 plaques, 24 tiges, 80 boulons).
+- 3×4 cases, une seule place de voiture au centre, tournée vers la porte. La porte occupe toute la face avant ; une flèche bleue la marque sur le fantôme.
+- E sur un garage ouvre `GaragePanel` par-dessus l'usine : la caméra cadre la place depuis la porte, le brouillon s'y affiche en fantôme. On y assemble (place libre), change les pièces et démonte la voiture garée là, choisit la voiture de course et lance « Courir » (choix du circuit, retour vers l'usine).
+- Les voitures assemblées restent garées dans l'usine (`CarInstance.pose`, sauvegardée) et se conduisent :
+  - E près d'une voiture pour monter, Z/S/Q/D ou flèches, Espace frein à main ;
+  - E pour descendre sous 3 m/s, Retour arrière pour replacer la voiture, Entrée pour descendre et courir avec elle.
+- Le véhicule de course sert tel quel, avec trois options : gravité de course, vitesse plafonnée à 90 km/h environ, roues qui ignorent les convoyeurs. Des groupes de collision laissent la caisse traverser les lignes de convoyeurs (au sol) ; machines, murs et voitures garées restent solides.
+- Sauvegardes : les voitures sans place se garent dès le premier garage construit, une par garage ; une sauvegarde qui avait tous les paliers de sa version reçoit le palier 5 (`tierMax`).
 
 **Plans de voiture**
 - **Kart** (`kart-oopi`) : un châssis, un moteur et 4 roues.
@@ -271,7 +283,7 @@ Départ (revu en octobre 2026) : aucun stock. Le fer se mine à la main et se tr
    - Contenu : pose, rotation, niveaux, validation, sauvegarde, essai puis retour, temps auteur.
    - Terminé quand : on crée un circuit fermé avec une pente en moins de 5 minutes, on le pilote, et il survit au rechargement.
 6. **Boucle complète**
-   - Contenu : recettes de l'Assembleuse, mode Garage, stats → réglage, menu principal (Usine ↔ Garage → choix du circuit → Course).
+   - Contenu : recettes de l'Assembleuse, mode Garage, stats → réglage, menu principal (Usine ↔ Garage → choix du circuit → Course). Depuis octobre 2026, le garage est un bâtiment de l'usine : Usine (garage) → choix du circuit → Course.
    - Terminé quand : sur une nouvelle partie, on produit les pièces du kart, on l'assemble et on le fait courir, et ses stats diffèrent nettement de la Sport.
 7. **Finitions**
    - Contenu : objectifs d'accueil en français, réglages (sensibilité, inversion Y), passe de performance, chasse aux bugs.

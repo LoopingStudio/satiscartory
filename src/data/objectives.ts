@@ -97,9 +97,21 @@ export const OBJECTIVES: Objective[] = [
     done: (c) => c.cars > 0 || ((c.storage.wheel ?? 0) + (c.storage.wheel_racing ?? 0) >= 4 && (c.storage.chassis ?? 0) >= 1 && (c.storage.engine ?? 0) >= 1),
   },
   {
+    id: 'tier5',
+    text: 'Débloque le palier 5 (Garage)',
+    hint: 'E sur le hangar → Paliers. Les pneus viennent du constructeur « Pneu ».',
+    done: (c) => c.tier >= 5 || c.cars > 0,
+  },
+  {
+    id: 'garage',
+    text: 'Construis un garage',
+    hint: 'Touche 6, R pour tourner : la porte (flèche bleue) doit donner sur un espace libre pour sortir en voiture.',
+    done: (c) => c.buildings.some((b) => b.type === 'garage') || c.cars > 0,
+  },
+  {
     id: 'assembled',
     text: 'Assemble ton kart au garage',
-    hint: 'Touche G (ou le hangar avec E) pour ouvrir le garage.',
+    hint: 'E sur un garage, choisis le kart puis « Assembler ». Le sac paie d’abord, puis le hangar.',
     done: (c) => c.cars > 0,
   },
   {

@@ -40,9 +40,11 @@ describe('onboarding objectives', () => {
       { tier: 3, delivered: { plate: 40 }, crafted: { tire: 1 } }, // tires made by a constructor
       { tier: 4 },
       { tier: 4, storage: { wheel: 4, chassis: 1, engine: 1 } },
-      { tier: 4, cars: 1, blueprints: ['kart'] },
-      { tier: 4, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 },
-      { tier: 4, cars: 2, blueprints: ['kart', 'sport'], racesWithOwnCar: 1 },
+      { tier: 5, storage: { wheel: 4, chassis: 1, engine: 1 } }, // Garage tier
+      { tier: 5, buildings: [{ type: 'garage' }] },
+      { tier: 5, cars: 1, blueprints: ['kart'] },
+      { tier: 5, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 },
+      { tier: 5, cars: 2, blueprints: ['kart', 'sport'], racesWithOwnCar: 1 },
     ];
     expect(play(steps.map((s) => ({ ...base, ...s })))).toEqual(ids.map((id) => [id]));
   });
@@ -58,7 +60,8 @@ describe('onboarding objectives', () => {
 
   it('saves from before the tiers (everything unlocked) skip the bootstrap steps', () => {
     const old = { ...base, tier: TIERS.length };
-    expect(done(old)).toEqual(ids.slice(0, ids.indexOf('tier4') + 1));
+    // Everything but the steps that need cars, parts or a garage built.
+    expect(done(old)).toEqual(ids.filter((id) => !['car_parts', 'garage', 'assembled', 'race', 'sport'].includes(id)));
     expect(done({ ...old, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 })).toEqual(ids.filter((id) => id !== 'sport'));
   });
 

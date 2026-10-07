@@ -6,7 +6,7 @@ import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
-import { isMachine, isProducer, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck } from './types';
+import { isMachine, isProducer, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck } from './types';
 
 export interface SimEvents extends Record<string, unknown> {
   placed: Building;
@@ -265,6 +265,7 @@ export class FactorySim {
       case 'press':
       case 'assembler':
         return { type, id, x, z, rot, recipe: null, inBuf: {}, outBuf: [], progress: 0, status: 'noRecipe' };
+      case 'garage':
       case 'hub':
         return { type, id, x, z, rot };
     }
@@ -594,6 +595,7 @@ export class FactorySim {
         this.delivered[item] = (this.delivered[item] ?? 0) + 1;
         return true;
       case 'drill':
+      case 'garage':
         return false;
     }
   }
@@ -716,4 +718,4 @@ function structuredCloneJSON<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-export type { Building, ConveyorB, DrillB, MachineB, HubB };
+export type { Building, ConveyorB, DrillB, MachineB, GarageB, HubB };
