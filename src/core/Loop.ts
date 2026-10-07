@@ -1,6 +1,8 @@
 import { FACTORY_DT, MAX_FRAME_DT, MAX_PHYS_STEPS_PER_FRAME, PHYS_DT } from '../config/constants';
 
 export interface LoopCallbacks {
+  /** Start of every frame, before the fixed steps (gamepad polling, menu navigation). */
+  poll?(): void;
   /** 60 Hz fixed step (physics, character, vehicle, race timer). */
   physics(dt: number): void;
   /** 20 Hz fixed step (factory simulation). */
@@ -59,6 +61,7 @@ export class Loop {
     if (now < this.last) return;
     const dt = Math.min((now - this.last) / 1000, MAX_FRAME_DT);
     this.last = now;
+    this.cb.poll?.();
 
     this.fpsFrames++;
     this.fpsTime += dt;

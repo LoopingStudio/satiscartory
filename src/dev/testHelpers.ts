@@ -2,6 +2,83 @@ import * as THREE from 'three';
 import type { Game } from '../core/Game';
 import { FACTORY_CELL } from '../config/constants';
 import { Bot } from '../race/bot';
+import { PAD, type PadButton } from '../core/gamepad';
+
+/**
+ * A virtual standard gamepad served by navigator.getGamepads(), so automated checks go through the real
+ * polling path (Input.poll, PadNav, VehicleInput). Hold presses ≥ 2 frames: the pad is polled, not evented.
+ */
+function virtualPad() {
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+  const axes = [0, 0, 0, 0];
+  let installed = false;
+  const pad = {
+    id: 'Virtual Xbox Controller (STANDARD GAMEPAD Vendor: 045e Product: 0000)',
+    index: 0,
+    connected: true,
+    mapping: 'standard',
+    timestamp: 0,
+    buttons,
+    axes,
+  };
+  const install = () => {
+    if (installed) return;
+    installed = true;
+    Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad, null, null, null] });
+  };
+  const set = (b: PadButton, value: number) => {
+    install();
+    const s = buttons[PAD[b]]!;
+    s.value = value;
+    s.pressed = value > 0.5;
+    s.touched = value > 0;
+    pad.timestamp = performance.now();
+  };
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  return {
+    install,
+    /** Sets the pad's id (e.g. a DualSense one, for the ✕ ○ □ △ labels). */
+    setId(id: string) {
+      install();
+      pad.id = id;
+    },
+    down: (b: PadButton) => set(b, 1),
+    up: (b: PadButton) => set(b, 0),
+    trigger(side: 'left' | 'right', v: number) {
+      set(side === 'left' ? 'lt' : 'rt', v);
+    },
+    stick(side: 'left' | 'right', x: number, y: number) {
+      install();
+      const i = side === 'left' ? 0 : 2;
+      axes[i] = x;
+      axes[i + 1] = y;
+      pad.timestamp = performance.now();
+    },
+    async press(b: PadButton, ms = 120) {
+      set(b, 1);
+      await sleep(ms);
+      set(b, 0);
+      await sleep(80);
+    },
+    /** Holds a stick for `ms`, then centers it. */
+    async tilt(side: 'left' | 'right', x: number, y: number, ms = 300) {
+      this.stick(side, x, y);
+      await sleep(ms);
+      this.stick(side, 0, 0);
+      await sleep(60);
+    },
+    releaseAll() {
+      for (const b of Object.keys(PAD) as PadButton[]) set(b, 0);
+      axes.fill(0);
+    },
+    /** Removes the virtual pad (getGamepads back to the browser's). */
+    unplug() {
+      if (!installed) return;
+      installed = false;
+      delete (navigator as unknown as Record<string, unknown>).getGamepads;
+    },
+  };
+}
 
 /**
  * Dev-only automation helpers exposed as `window.T` (used to drive the game from
@@ -15,6 +92,12 @@ export function installTestHelpers(game: Game): void {
     sleep,
     game,
     mode,
+    pad: virtualPad(),
+    /** The control PadNav focuses (text), for pad-driven menu checks. */
+    padFocus() {
+      const f = game.padNav.focused;
+      return f ? (f.textContent ?? '').trim() || f.getAttribute('title') || f.tagName : null;
+    },
     async key(code: string, ms = 60) {
       window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
       await sleep(ms);

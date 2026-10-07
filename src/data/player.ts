@@ -13,4 +13,9 @@ export const PLAYER = {
   CAMERA_SHOULDER: 0.7,
   CAMERA_HEIGHT: 1.65,
   MOUSE_SENSITIVITY: 0.0022,
+  /** Right stick at full tilt, in rad/s (times the pad sensitivity setting). */
+  PAD_YAW_SPEED: 3.2,
+  PAD_PITCH_SPEED: 2.1,
+  /** Camera distances cycled by the pad (D-pad up). */
+  PAD_ZOOM_STEPS: [4, 6.5, 10],
 } as const;

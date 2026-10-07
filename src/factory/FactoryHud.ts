@@ -4,6 +4,8 @@ import { recipesFor, RECIPES_BY_ID, type Recipe } from '../data/recipes';
 import { DRILL, MACHINE } from '../data/balance';
 import { RESOURCES } from '../data/factoryMap';
 import { append, clear, createLayer, el } from '../ui/dom';
+import { dual, html, keyCap, padGlyph, renderTokens } from '../ui/padHints';
+import { setPadHandlers } from '../ui/padNav';
 import type { FactorySim } from './sim/FactorySim';
 import { isMachine, type DrillB, type MachineB } from './sim/types';
 import type { Tool } from './build/BuildController';
@@ -20,10 +22,12 @@ const BUILD_CATEGORIES: { name: string; types: BuildingType[] }[] = [
   { name: 'Production', types: ['smelter', 'press', 'assembler'] },
   { name: 'Véhicules', types: ['garage'] },
 ];
+/** The build menu's order, which the pad's ◀ ▶ follow. */
+export const BUILD_ORDER: BuildingType[] = BUILD_CATEGORIES.flatMap((c) => c.types);
 
-/** What a building is for, in the build menu's detail pane (machines also list their recipes). */
+/** What a building is for, in the build menu's detail pane (HTML; machines also list their recipes). */
 const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
-  conveyor: 'Transporte les objets à 2 m/s. Clic gauche maintenu : tracer une ligne.',
+  conveyor: `Transporte les objets à 2 m/s. ${dual('Clic gauche maintenu', `${padGlyph('rt')} maintenu`)} : tracer une ligne.`,
   splitter: 'Partage une ligne : ce qui entre par l’arrière sort tour à tour à l’avant, à gauche et à droite. Une sortie libre ou bouchée est sautée, rien ne se perd.',
   merger: 'Réunit jusqu’à trois lignes (arrière, gauche, droite) en une seule vers l’avant, chacune à son tour.',
   drill: 'À poser sur un gisement : minerai de fer ou latex selon la roche.',
@@ -74,6 +78,8 @@ export interface HudCallbacks {
 }
 
 type PanelKind = 'build' | 'machine' | 'drill' | 'hub' | 'inventory';
+/** Pad buttons that close a panel: B, plus the one that opened it (Y build menu, View backpack). */
+const CLOSE_PAD: Record<PanelKind, string> = { build: 'b y', machine: 'b', drill: 'b', hub: 'b', inventory: 'b view' };
 type HubTab = 'stock' | 'bench' | 'tiers';
 
 interface Drag {
@@ -98,7 +104,7 @@ export class FactoryHud {
   /** Building shown in the build menu's detail pane (hovered card). */
   private buildFocus: BuildingType | null = null;
   private crosshair = el('div', { class: 'crosshair' });
-  private overlay = el('div', { class: 'overlay center' });
+  private overlay = el('div', { class: 'overlay center', 'data-pad-scope': '' });
   private panel: HTMLElement | null = null;
   private panelKind: PanelKind | null = null;
   private panelTarget: number | null = null;
@@ -114,6 +120,9 @@ export class FactoryHud {
   private hubTab: HubTab | null = null;
   /** Hold-to-craft at the bench: recipe being crafted and time held (s). */
   private crafting: { recipe: Recipe; t: number } | null = null;
+  /** Pad: backpack slot picked up to be moved (the pad's drag and drop), and its ghost on the focus. */
+  private padCarry: number | null = null;
+  private carryGhost: HTMLElement | null = null;
   objectives = el('div', { class: 'panel top-left objectives' });
 
   constructor(
@@ -156,10 +165,10 @@ export class FactoryHud {
 
   // ------------------------------------------------------------------ tool / hints / storage
 
-  /** The active tool changed (the build menu marks it). */
+  /** The active tool changed (the build menu marks it; its content key includes the tool). */
   onToolChanged(tool: Tool): void {
     this.tool = tool;
-    if (this.panelKind === 'build') this.refreshPanel(true);
+    if (this.panelKind === 'build') this.refreshPanel();
   }
 
   /** Compact cost: icon + quantity per item (red when short), full text in the tooltip. */
@@ -215,7 +224,7 @@ export class FactoryHud {
     });
     this.bagPrev = row.map((s) => (s ? { ...s } : null));
     this.bagBar.appendChild(
-      el('div', { class: 'bag-bar-label' }, el('b', {}, `Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`), el('span', {}, el('kbd', {}, 'Tab'))),
+      el('div', { class: 'bag-bar-label' }, el('b', {}, `Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`), el('span', {}, html(dual(keyCap('Tab'), padGlyph('view'))))),
     );
   }
 
@@ -227,19 +236,28 @@ export class FactoryHud {
     }
     this.overlay.style.display = 'block';
     clear(this.overlay);
+    const g = padGlyph;
     this.overlay.appendChild(
       el('div', { class: 'panel overlay-card' },
         el('h2', {}, paused ? 'Pause' : 'Usine'),
-        el('p', { class: 'muted' }, 'Clique pour prendre le contrôle de la caméra.'),
-        el('div', { class: 'controls-help' },
+        el('p', { class: 'muted' }, html(dual('Clique pour prendre le contrôle de la caméra.', `${g('a')} pour jouer : la manette fonctionne partout, menus compris.`))),
+        el('div', { class: 'controls-help kbm-only' },
           el('div', {}, el('kbd', {}, 'Z Q S D'), ' se déplacer · ', el('kbd', {}, 'Maj'), ' courir · ', el('kbd', {}, 'Espace'), ' sauter'),
           el('div', {}, el('kbd', {}, 'A'), ' menu de construction (raccourcis ', el('kbd', {}, '1-8'), ') · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter'),
           el('div', {}, el('kbd', {}, 'E'), ' maintenu sur un gisement : miner · ', el('kbd', {}, 'E'), ' utiliser une machine / le hangar (établi, paliers)'),
           el('div', {}, el('kbd', {}, 'E'), ' sur un convoyeur : prendre ses objets (maintenu : toute la ligne)'),
           el('div', {}, el('kbd', {}, 'E'), ' près d’une voiture : monter / descendre · ', el('kbd', {}, 'Tab'), ' sac · ', el('kbd', {}, 'Échap'), ' pause'),
         ),
+        el('div', { class: 'controls-help pad-only' }, html([
+          `<div>${g('ls')} se déplacer (${g('l3')} courir) · ${g('rs')} caméra (${g('up')} zoom) · ${g('a')} sauter</div>`,
+          `<div>${g('y')} menu de construction · ${g('left')}${g('right')} bâtiment précédent / suivant · ${g('down')} démonter</div>`,
+          `<div>${g('rt')} poser (maintenu : tracer un convoyeur) · ${g('lb')}${g('rb')} tourner · ${g('b')} annuler</div>`,
+          `<div>${g('x')} maintenu sur un gisement : miner · ${g('x')} utiliser une machine / le hangar · sur un convoyeur : prendre (maintenu : toute la ligne)</div>`,
+          `<div>${g('x')} près d’une voiture : monter / descendre · ${g('view')} sac · ${g('start')} pause</div>`,
+          `<div>Menus : ${g('up')}${g('down')}${g('left')}${g('right')} choisir · ${g('a')} valider · ${g('b')} retour · ${g('lb')}${g('rb')} onglets</div>`,
+        ].join(''))),
         el('div', { class: 'row', style: 'margin-top:12px' },
-          el('button', { class: 'primary', onclick: () => this.cb.resume() }, paused ? 'Reprendre' : 'Jouer'),
+          el('button', { class: 'primary', onclick: () => this.cb.resume(), 'data-pad-btn': 'b start' }, paused ? 'Reprendre' : 'Jouer'),
           el('button', { onclick: () => this.cb.settings() }, 'Réglages'),
           el('button', { onclick: () => this.cb.menu() }, 'Menu principal'),
         ),
@@ -252,6 +270,7 @@ export class FactoryHud {
   closePanel(): void {
     this.cancelDrag();
     this.stopCraft();
+    this.endCarry();
     this.layer.classList.remove('panel-open', 'bag-panel-open');
     this.panel?.remove();
     this.panel = null;
@@ -267,15 +286,17 @@ export class FactoryHud {
     this.panelTarget = target;
     this.layer.classList.add('panel-open');
     if (kind === 'hub' || kind === 'inventory') this.layer.classList.add('bag-panel-open');
-    this.panel = el('div', { class: `panel center modal ${cls}` });
+    this.panel = el('div', { class: `panel center modal ${cls}`, 'data-pad-scope': '' });
+    if (kind === 'hub' || kind === 'inventory') setPadHandlers(this.panel, this.carryHandlers);
     this.layer.appendChild(this.panel);
     this.refreshPanel(true);
   }
 
+  /** Title row with « Fermer » (B closes, and the button that opened the panel); `sub` is HTML. */
   private header(title: string, sub?: string): HTMLElement[] {
     return [
-      el('div', { class: 'row' }, el('h2', {}, title), el('span', { class: 'spacer' }), el('button', { class: 'small', onclick: () => this.cb.closePanel() }, 'Fermer')),
-      sub ? el('div', { class: 'muted small' }, sub) : el('span', {}),
+      el('div', { class: 'row' }, el('h2', {}, title), el('span', { class: 'spacer' }), el('button', { class: 'small', onclick: () => this.cb.closePanel(), 'data-pad-btn': CLOSE_PAD[this.panelKind ?? 'machine'] }, 'Fermer')),
+      sub ? el('div', { class: 'muted small' }, html(sub)) : el('span', {}),
     ];
   }
 
@@ -305,7 +326,19 @@ export class FactoryHud {
     const key = this.contentKey();
     if (!force && key === this.panelKey) return;
     this.panelKey = key;
-    clear(this.panel);
+    // Re-rendering must not jump the panel and its lists back to the top.
+    const panel = this.panel;
+    const scrolls = [panel, ...panel.querySelectorAll<HTMLElement>('.hub-list, .bench-list, .tier-list')].map((e) => [e === panel ? '' : e.className, e.scrollTop] as const);
+    clear(panel);
+    this.renderPanel();
+    if (this.panel !== panel) return;
+    for (const [cls, top] of scrolls) {
+      const e = cls ? panel.querySelector<HTMLElement>(`[class="${cls}"]`) : panel;
+      if (e) e.scrollTop = top;
+    }
+  }
+
+  private renderPanel(): void {
     switch (this.panelKind) {
       case 'build':
         return this.renderBuild();
@@ -327,7 +360,8 @@ export class FactoryHud {
       return `build|${used.map((i) => this.wallet.count(i)).join(',')}|${this.cb.tier()}|${JSON.stringify(this.tool)}`;
     }
     const bag = this.inventory.slots.map((s) => (s ? `${s.item}${s.count}` : '-')).join(',');
-    const hub = ITEM_IDS.map((i) => this.sim.count(i)).join(',');
+    // The backpack panel shows no hub stock: production elsewhere must not re-render it.
+    const hub = this.panelKind === 'inventory' ? '' : ITEM_IDS.map((i) => this.sim.count(i)).join(',');
     const b = this.panelTarget !== null ? this.sim.buildings.get(this.panelTarget) : undefined;
     // Progress is animated in place (see tick) so it does not trigger re-renders.
     const bkey = b ? JSON.stringify({ ...b, items: undefined, progress: undefined }) : '';
@@ -348,12 +382,13 @@ export class FactoryHud {
     this.renderBuildDetail(detail, this.buildFocus);
     const dis = this.tool.kind === 'dismantle';
     this.panel!.append(
-      ...this.header('Construire', 'Clique un bâtiment pour le placer. Les coûts sont payés avec ton sac, puis avec le hangar.'),
+      ...this.header('Construire', `${dual('Clique un bâtiment pour le placer.', `${padGlyph('a')} sur un bâtiment pour le placer.`)} Les coûts sont payés avec ton sac, puis avec le hangar.`),
       el('div', { class: 'build-menu' }, list, detail),
       el('div', { class: 'row build-footer' },
-        el('button', { class: `small${dis ? ' danger' : ''}`, onclick: () => { this.cb.selectTool(dis ? { kind: 'none' } : { kind: 'dismantle' }); this.cb.closePanel(); } }, el('kbd', {}, 'F'), dis ? ' Arrêter de démonter' : ' Démonter (remboursé)'),
+        el('button', { class: `small${dis ? ' danger' : ''}`, 'data-action': 'dismantle', onclick: () => { this.cb.selectTool(dis ? { kind: 'none' } : { kind: 'dismantle' }); this.cb.closePanel(); } }, html(dual(keyCap('F'), padGlyph('down'))), dis ? ' Arrêter de démonter' : ' Démonter (remboursé)'),
         el('span', { class: 'spacer' }),
-        el('span', { class: 'muted small' }, 'Raccourcis : ', el('kbd', {}, '1'), ' à ', el('kbd', {}, String(BUILD_MENU.length)), ' · ', el('kbd', {}, 'R'), ' tourner'),
+        el('span', { class: 'muted small kbm-only' }, 'Raccourcis : ', el('kbd', {}, '1'), ' à ', el('kbd', {}, String(BUILD_MENU.length)), ' · ', el('kbd', {}, 'R'), ' tourner'),
+        el('span', { class: 'muted small pad-only' }, html(`En jeu : ${padGlyph('left')}${padGlyph('right')} bâtiment précédent / suivant · ${padGlyph('lb')}${padGlyph('rb')} tourner`)),
       ),
     );
   }
@@ -371,13 +406,16 @@ export class FactoryHud {
     const card = el('button',
       {
         class: `build-card${locked ? ' locked' : ''}${active ? ' active' : ''}${poor ? ' poor' : ''}${this.buildFocus === type ? ' focus' : ''}`,
+        'data-building': type,
+        // The pad starts on the card shown in the detail pane.
+        'data-pad-default': this.buildFocus === type,
         onclick: () => {
           if (locked) return;
           this.cb.selectTool({ kind: 'build', type });
           this.cb.closePanel();
         },
       },
-      el('kbd', { class: 'build-key' }, String(BUILD_MENU.indexOf(type) + 1)),
+      el('kbd', { class: 'build-key kbm-only' }, String(BUILD_MENU.indexOf(type) + 1)),
       this.buildingThumb(type, 'build-thumb'),
       el('b', { class: 'build-name' }, def.name),
       locked ? el('span', { class: 'build-lock small' }, `🔒 Palier ${tierOf(type)}`) : this.costIcons(def.cost),
@@ -411,14 +449,14 @@ export class FactoryHud {
     append(detail,
       this.buildingThumb(type, 'build-detail-thumb'),
       el('h2', {}, def.name),
-      el('div', { class: 'muted small' }, `${w} × ${h} cases (${w * FACTORY_CELL} × ${h * FACTORY_CELL} m) · touche ${BUILD_MENU.indexOf(type) + 1}`),
-      el('p', { class: 'small' }, BUILD_ROLE[type] ?? def.description),
+      el('div', { class: 'muted small' }, `${w} × ${h} cases (${w * FACTORY_CELL} × ${h * FACTORY_CELL} m)`, el('span', { class: 'kbm-only' }, ` · touche ${BUILD_MENU.indexOf(type) + 1}`)),
+      el('p', { class: 'small' }, BUILD_ROLE[type] ? html(BUILD_ROLE[type]) : def.description),
       makes ? el('div', { class: 'small' }, el('span', { class: 'muted' }, 'Fabrique : '), makes) : null,
       el('h3', { style: 'margin-top:10px' }, 'Coût'),
       cost,
       locked
-        ? el('div', { class: 'muted small', style: 'margin-top:8px' }, `🔒 Se débloque au palier ${tierOf(type)} (${TIERS[tierOf(type) - 1]?.name ?? ''}) : E sur le hangar → Paliers.`)
-        : el('button', { class: 'primary', style: 'margin-top:10px', onclick: () => { this.cb.selectTool({ kind: 'build', type }); this.cb.closePanel(); } }, missing ? 'Placer (il manque des pièces)' : 'Placer'),
+        ? el('div', { class: 'muted small', style: 'margin-top:8px' }, html(`🔒 Se débloque au palier ${tierOf(type)} (${TIERS[tierOf(type) - 1]?.name ?? ''}) : ${dual(keyCap('E'), padGlyph('x'))} sur le hangar → Paliers.`))
+        : el('button', { class: 'primary', style: 'margin-top:10px', 'data-action': 'place', onclick: () => { this.cb.selectTool({ kind: 'build', type }); this.cb.closePanel(); } }, missing ? 'Placer (il manque des pièces)' : 'Placer'),
     );
   }
 
@@ -443,8 +481,8 @@ export class FactoryHud {
       this.panel!.append(
         el('div', { class: 'row machine-io' }, ins, outs),
         el('div', { class: 'row', style: 'margin-top:6px;flex-wrap:wrap' },
-          el('button', { class: 'small primary', disabled: m.outBuf.length === 0, title: 'Met la production dans ton sac', onclick: () => this.cb.collect(m.id) }, `Prendre la production (${m.outBuf.length})`),
-          el('button', { class: 'small', disabled: !canLoad, title: 'Charge les entrées de la recette depuis ton sac, puis le hangar', onclick: () => this.cb.loadMachine(m.id) }, 'Charger (sac puis hangar)'),
+          el('button', { class: 'small primary', 'data-action': 'collect', disabled: m.outBuf.length === 0, title: 'Met la production dans ton sac', onclick: () => this.cb.collect(m.id) }, `Prendre la production (${m.outBuf.length})`),
+          el('button', { class: 'small', 'data-action': 'load', disabled: !canLoad, title: 'Charge les entrées de la recette depuis ton sac, puis le hangar', onclick: () => this.cb.loadMachine(m.id) }, 'Charger (sac puis hangar)'),
         ),
       );
     }
@@ -453,7 +491,7 @@ export class FactoryHud {
     for (const r of recipesFor(def.machine!)) {
       const active = r.id === m.recipe;
       list.appendChild(
-        el('button', { class: `recipe${active ? ' selected' : ''}`, onclick: () => { this.cb.setRecipe(m.id, r.id); this.refreshPanel(true); } },
+        el('button', { class: `recipe${active ? ' selected' : ''}`, 'data-recipe': r.id, 'data-pad-default': !m.recipe && r === recipesFor(def.machine!)[0], onclick: () => { this.cb.setRecipe(m.id, r.id); this.refreshPanel(true); } },
           el('span', { class: 'row', style: 'gap:6px' }, this.icon(r.outputs[0]!.item, 'item-icon tiny'), el('b', {}, r.name)),
           el('span', { class: 'small muted' }, `${itemLabel(r.inputs)} → ${itemLabel(r.outputs)} · ${(r.ticks / 20).toFixed(1)} s`),
         ),
@@ -517,7 +555,7 @@ export class FactoryHud {
       this.portStatus(d.id),
       el('div', { class: 'row', style: 'gap:6px' }, el('span', { class: 'muted small' }, `Sortie ${d.outBuf.length}/${DRILL.OUT_CAP}`), d.outBuf.length ? this.slotEl({ item: d.outBuf[0]!, count: d.outBuf.length }) : null),
       el('div', { class: 'row', style: 'margin-top:8px' },
-        el('button', { class: 'small primary', disabled: d.outBuf.length === 0, onclick: () => this.cb.collect(d.id) }, `Prendre (${d.outBuf.length})`),
+        el('button', { class: 'small primary', 'data-action': 'collect', disabled: d.outBuf.length === 0, onclick: () => this.cb.collect(d.id) }, `Prendre (${d.outBuf.length})`),
       ),
     );
   }
@@ -537,6 +575,11 @@ export class FactoryHud {
     const s = this.inventory.slots[i] ?? null;
     const node = this.slotEl(s, s && onSlot ? () => !this.dragJustEnded && onSlot(i) : undefined);
     node.dataset.slot = String(i);
+    // The pad can stand on every slot, empty ones included (a place to move a stack to); the backpack
+    // opens on its first stack.
+    node.dataset.padFocus = '';
+    if (this.panelKind === 'inventory' && s && this.inventory.slots.findIndex((x) => x) === i) node.dataset.padDefault = '';
+    if (this.padCarry === i) node.classList.add('drag-source');
     if (s) {
       node.classList.add('draggable');
       node.addEventListener('pointerdown', (e) => this.dragStart(e, i));
@@ -618,15 +661,80 @@ export class FactoryHud {
     window.removeEventListener('contextmenu', this.onDragCancel);
   }
 
+  // ------------------------------------------------------------------ pad: pick up and put down (backpack)
+
+  /** Pad buttons of the hub and backpack panels: X picks a stack up, A or X puts it down, B drops the move. */
+  private readonly carryHandlers = {
+    a: (f: HTMLElement | null) => {
+      if (this.padCarry !== null) return this.putDown(f), true;
+      // A slot without a click action (backpack away from the hub): A picks it up.
+      const slot = this.slotOf(f);
+      if (slot !== null && f?.tagName !== 'BUTTON' && this.inventory.slots[slot]) return this.pickUp(slot), true;
+      return false;
+    },
+    x: (f: HTMLElement | null) => {
+      if (this.padCarry !== null) return this.putDown(f), true;
+      const slot = this.slotOf(f);
+      if (slot !== null && this.inventory.slots[slot]) this.pickUp(slot);
+      return true;
+    },
+    b: () => {
+      if (this.padCarry === null) return false;
+      this.endCarry();
+      this.refreshPanel(true);
+      return true;
+    },
+  };
+
+  private slotOf(f: HTMLElement | null): number | null {
+    const s = f?.closest<HTMLElement>('[data-slot]')?.dataset.slot;
+    return s === undefined ? null : Number(s);
+  }
+
+  private pickUp(slot: number): void {
+    const s = this.inventory.slots[slot];
+    if (!s) return;
+    this.padCarry = slot;
+    this.carryGhost?.remove();
+    this.carryGhost = el('div', { class: 'drag-ghost' }, this.icon(s.item), el('span', { class: 'inv-count mono' }, s.count));
+    this.layer.appendChild(this.carryGhost);
+    // Placed now, on the slot (the re-render below replaces it in the same place).
+    this.placeGhost(this.panel?.querySelector(`[data-slot="${slot}"]`) ?? null);
+    this.refreshPanel(true);
+  }
+
+  /** On a backpack slot: move, merge or swap; on the hub column: deposit; elsewhere: nothing. */
+  private putDown(f: HTMLElement | null): void {
+    const from = this.padCarry;
+    this.endCarry();
+    if (from === null) return;
+    const to = this.slotOf(f);
+    if (to !== null) {
+      if (to !== from) this.cb.moveSlot(from, to);
+    } else if (f?.closest('[data-drop="hub"]')) this.cb.depositSlot(from);
+    this.updateBagBar();
+    this.refreshPanel(true);
+  }
+
+  private endCarry(): void {
+    this.padCarry = null;
+    this.carryGhost?.remove();
+    this.carryGhost = null;
+  }
+
   private renderHub(): void {
     const tab = this.hubTab ?? 'stock';
     const next = TIERS[this.cb.tier()];
     const tierReady = !!next && this.wallet.missingFor(next.cost) === null;
     const tabBtn = (id: HubTab, label: string, badge = false) =>
-      el('button', { class: `tab${tab === id ? ' selected' : ''}`, onclick: () => { this.stopCraft(); this.hubTab = id; this.refreshPanel(true); } }, label, badge ? el('span', { class: 'tab-badge' }, '!') : null);
+      el('button', { class: `tab${tab === id ? ' selected' : ''}`, 'data-tab': id, 'data-pad-tab': '', onclick: () => { this.stopCraft(); this.hubTab = id; this.refreshPanel(true); } }, label, badge ? el('span', { class: 'tab-badge' }, '!') : null);
+    const g = padGlyph;
     const subs: Record<HubTab, string> = {
-      stock: 'Clique un objet du hangar pour en prendre une pile. Clique une case du sac (ou glisse-la sur le hangar) pour la déposer.',
-      bench: 'Fabrication à la main : maintiens le bouton. Le sac paie d’abord, puis le hangar ; le résultat va dans le sac.',
+      stock: dual(
+        'Clique un objet du hangar pour en prendre une pile. Clique une case du sac (ou glisse-la sur le hangar) pour la déposer.',
+        `${g('a')} sur un objet du hangar : en prendre une pile. ${g('a')} sur une case du sac : la déposer. ${g('x')} : déplacer une case. ${g('lb')}${g('rb')} : onglets.`,
+      ),
+      bench: `${dual('Fabrication à la main : maintiens le bouton.', `Fabrication à la main : maintiens ${g('a')} sur le bouton.`)} Le sac paie d’abord, puis le hangar ; le résultat va dans le sac.`,
       tiers: 'Livre des pièces pour débloquer de nouveaux bâtiments. Le sac paie d’abord, puis le hangar.',
     };
     this.panel!.append(
@@ -637,7 +745,7 @@ export class FactoryHud {
         tab === 'stock' ? this.hubStock() : tab === 'bench' ? this.hubBench() : this.hubTiers(),
       ),
       el('div', { class: 'row', style: 'margin-top:10px' },
-        el('button', { disabled: this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer'),
+        el('button', { 'data-action': 'deposit-all', disabled: this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer'),
       ),
     );
   }
@@ -645,11 +753,12 @@ export class FactoryHud {
   private hubStock(): HTMLElement {
     const list = el('div', { class: 'hub-list' });
     const items = ITEM_IDS.filter((i) => this.sim.count(i) > 0);
-    if (!items.length) list.appendChild(el('div', { class: 'muted small' }, 'Le hangar est vide.'));
+    // Focusable for the pad: where a carried stack is put down when the hub is empty.
+    if (!items.length) list.appendChild(el('div', { class: 'muted small', 'data-pad-focus': '', 'data-action': 'hub-empty' }, 'Le hangar est vide.'));
     for (const id of items) {
       const room = this.inventory.room(id);
       list.appendChild(
-        el('button', { class: 'hub-row', disabled: room === 0, title: room ? `Prendre jusqu’à ${Math.min(room, ITEMS[id].stack, this.sim.count(id))}` : 'Sac plein', onclick: () => this.cb.takeFromHub(id) },
+        el('button', { class: 'hub-row', 'data-item': id, disabled: room === 0, title: room ? `${ITEMS[id].name} : prendre jusqu’à ${Math.min(room, ITEMS[id].stack, this.sim.count(id))}` : 'Sac plein', onclick: () => this.cb.takeFromHub(id) },
           this.icon(id, 'item-icon tiny'), el('span', {}, ITEMS[id].name), el('span', { class: 'spacer' }), el('b', { class: 'mono' }, this.sim.count(id))),
       );
     }
@@ -673,7 +782,7 @@ export class FactoryHud {
     for (const r of recipesFor('bench')) {
       const can = this.canCraft(r);
       const active = this.crafting?.recipe.id === r.id;
-      const btn = el('button', { class: `craft-btn${active ? ' active' : ''}`, disabled: !can, 'data-craft': r.id, title: `${(r.ticks / 20).toFixed(2).replace(/\.?0+$/, '')} s par fabrication` },
+      const btn = el('button', { class: `craft-btn${active ? ' active' : ''}`, disabled: !can, 'data-craft': r.id, 'data-pad-hold': '', title: `${(r.ticks / 20).toFixed(2).replace(/\.?0+$/, '')} s par fabrication` },
         el('span', { class: 'craft-fill', style: `width:${active ? Math.round((this.crafting!.t / (r.ticks / 20)) * 100) : 0}%` }),
         el('span', { class: 'craft-label' }, can ? 'Maintenir' : 'Manque'),
       );
@@ -708,7 +817,7 @@ export class FactoryHud {
           el('div', { class: 'row' }, el('b', {}, `${done ? '✓' : n}. ${t.name}`), el('span', { class: 'spacer' }), el('span', { class: 'muted small' }, names)),
           el('div', { class: 'muted small' }, t.description),
           cost,
-          isNext ? el('button', { class: 'small primary', disabled: !affordable, onclick: () => { this.cb.unlockTier(n); this.refreshPanel(true); } }, affordable ? 'Débloquer' : 'Il manque des pièces') : null,
+          isNext ? el('button', { class: 'small primary', 'data-action': `unlock-${n}`, disabled: !affordable, onclick: () => { this.cb.unlockTier(n); this.refreshPanel(true); } }, affordable ? 'Débloquer' : 'Il manque des pièces') : null,
         ),
       );
     });
@@ -747,8 +856,9 @@ export class FactoryHud {
     });
   }
 
-  /** Per-frame update (smooth hold-to-craft progress). */
+  /** Per-frame update (smooth hold-to-craft progress, the pad's carried stack). */
   frame(dt: number): void {
+    this.updateCarry();
     const c = this.crafting;
     if (!c) return;
     if (this.panelKind !== 'hub' || this.hubTab !== 'bench') return this.stopCraft();
@@ -769,14 +879,35 @@ export class FactoryHud {
     }
   }
 
+  /** The carried stack's ghost sits on the pad's focus; a stack that went away ends the move. */
+  private updateCarry(): void {
+    if (this.padCarry === null) return;
+    if (!this.panel || !this.inventory.slots[this.padCarry]) {
+      this.endCarry();
+      return void this.refreshPanel(true);
+    }
+    this.placeGhost(this.panel.querySelector('.pad-focus'));
+  }
+
+  private placeGhost(on: Element | null): void {
+    if (!on || !this.carryGhost) return;
+    const r = on.getBoundingClientRect();
+    this.carryGhost.style.left = `${r.left + r.width / 2 + 10}px`;
+    this.carryGhost.style.top = `${r.top + r.height / 2 - 10}px`;
+  }
+
   private renderInventory(): void {
     const near = this.cb.nearHub();
+    const g = padGlyph;
     this.panel!.append(
-      ...this.header(`Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`, 'Glisse une case pour la ranger : la dernière rangée est la barre du bas de l’écran. Constructions et chargements piochent d’abord dans le sac, puis dans le hangar.'),
+      ...this.header(
+        `Sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`,
+        `${dual('Glisse une case pour la ranger', `${near ? g('x') : `${g('a')} ou ${g('x')}`} sur une case pour la prendre, puis ${g('a')} sur sa nouvelle place pour la ranger`)} : la dernière rangée est la barre du bas de l’écran. Constructions et chargements piochent d’abord dans le sac, puis dans le hangar.`,
+      ),
       this.bagGrid(near ? (i) => this.cb.depositSlot(i) : undefined),
       el('div', { class: 'row', style: 'margin-top:10px' },
-        el('button', { disabled: !near || this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer au hangar'),
-        el('span', { class: 'muted small' }, near ? 'Clique une case pour la déposer.' : 'Approche-toi du hangar pour déposer.'),
+        el('button', { 'data-action': 'deposit-all', disabled: !near || this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer au hangar'),
+        el('span', { class: 'muted small' }, near ? html(dual('Clique une case pour la déposer.', `${g('a')} sur une case pour la déposer.`)) : 'Approche-toi du hangar pour déposer.'),
       ),
     );
   }
@@ -796,7 +927,7 @@ export class FactoryHud {
     this.objectives.appendChild(el('h3', {}, `Objectifs ${doneCount}/${items.length}`));
     const next = items.find((i) => !i.done)!;
     this.objectives.appendChild(el('div', { class: 'objective next' }, `○ ${next.text}`));
-    this.objectives.appendChild(el('div', { class: 'muted small objective-hint' }, next.hint));
+    this.objectives.appendChild(el('div', { class: 'muted small objective-hint' }, html(renderTokens(next.hint))));
     const later = items.filter((i) => !i.done && i !== next).length;
     if (later) this.objectives.appendChild(el('div', { class: 'muted small' }, `+ ${later} étape${later > 1 ? 's' : ''} ensuite`));
   }
@@ -811,6 +942,7 @@ export class FactoryHud {
   dispose(): void {
     this.cancelDrag();
     this.stopCraft();
+    this.endCarry();
     this.layer.remove();
   }
 }

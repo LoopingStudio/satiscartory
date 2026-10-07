@@ -7,6 +7,7 @@ import type { GameState } from '../state/GameState';
 import { SaveManager } from '../state/SaveManager';
 import { carStatsBlock } from '../ui/carStats';
 import { append, clear, el, toast } from '../ui/dom';
+import { html, padGlyph } from '../ui/padHints';
 import { bestChoices, checkAssembly, specOf, type CarInstance, type PartChoices } from './assembly';
 import { CAR_PARTS, assembleCar, carLocation, checkAssembleIn, disassembleCar, findCar, partStock, selectRaceCar, swapCarPart, type CarLocation } from './actions';
 import { bayOccupant, type BayBlocker, type GarageSpot } from './parking';
@@ -27,6 +28,11 @@ export interface GaragePanelCallbacks {
 }
 
 type View = { kind: 'car'; id: string | null } | { kind: 'draft'; blueprint: BlueprintId; choices: PartChoices } | { kind: 'build' };
+/**
+ * Who takes the pad focus when a click made the focused control go away: the view's main action (else its row),
+ * its row on the left (after a car was finished or taken apart: a second A press does nothing), or a button.
+ */
+type PadRefocus = 'main' | 'row' | 'disassemble' | 'abandon';
 
 const LOCATION_LABEL: Record<CarLocation, string> = { here: 'Dans ce garage', elsewhere: 'Garée ailleurs', driving: 'En route', unplaced: 'À ranger' };
 
@@ -44,6 +50,8 @@ function blueprintOf(car: CarInstance | null): Blueprint | undefined {
  * Garage panel over the factory (E on a garage): the cars and where they are, new-car drafts, part swaps
  * and dismantling for the car standing in this garage's bay, the race car and « Courir ».
  * Two side columns so the bay stays visible in the middle of the screen.
+ * Pad (PadNav scope): B closes (or cancels a pending confirmation), LB/RB step through the left list, the
+ * focus starts on the view's main action (« Assembler », the next « Poser », « Courir »).
  */
 export class GaragePanel {
   private root: HTMLElement | null = null;
@@ -54,6 +62,8 @@ export class GaragePanel {
   /** Car whose « Démonter » was clicked once (the second click confirms). */
   private confirming: string | null = null;
   private key = '';
+  /** Set by a click that changes the view, read by the next render (data-pad-autofocus). */
+  private padRefocus: PadRefocus | null = null;
   private previewMemo: { key: string; value: { spec: CarSpec } } | null = null;
 
   constructor(
@@ -76,7 +86,7 @@ export class GaragePanel {
     this.close();
     this.spot = { id: garage.id, x: garage.x, z: garage.z, rot: garage.rot };
     this.view = this.defaultView();
-    this.root = el('div', { class: 'garage-panel' }, this.left, this.right);
+    this.root = el('div', { class: 'garage-panel', 'data-pad-scope': '' }, this.left, this.right);
     this.layer.appendChild(this.root);
     // Hides the factory HUD parts that would sit under the columns (see main.css).
     this.layer.classList.add('garage-open');
@@ -89,6 +99,7 @@ export class GaragePanel {
     this.root = null;
     this.spot = null;
     this.confirming = null;
+    this.padRefocus = null;
     this.key = '';
     this.layer.classList.remove('garage-open');
   }
@@ -187,11 +198,27 @@ export class GaragePanel {
     if (!this.root || !this.spot) return;
     this.key = this.contentKey();
     const stock = partStock(this.state);
-    this.renderLeft(stock);
-    this.renderRight(stock);
+    const row = this.renderLeft(stock);
+    const main = this.renderRight(stock);
+    this.markPadFocus(main, row);
   }
 
-  private renderLeft(stock: ItemCounts): void {
+  /**
+   * Pad focus (PadNav): the view's main action (else its row on the left) is focused when the panel opens;
+   * after a click that changed the view, padRefocus takes the focus from the control that went away.
+   */
+  private markPadFocus(main: HTMLElement | null, row: HTMLElement | null): void {
+    (main ?? row)?.setAttribute('data-pad-default', '');
+    const refocus = this.padRefocus;
+    this.padRefocus = null;
+    // A pending confirmation's « Annuler » asks for the focus itself.
+    if (!refocus || this.confirming) return;
+    const target = refocus === 'main' ? (main ?? row) : refocus === 'row' ? row : this.right.querySelector(`[data-action="${refocus}"]`);
+    target?.setAttribute('data-pad-autofocus', '');
+  }
+
+  /** Returns the row of the current view (selected). */
+  private renderLeft(stock: ItemCounts): HTMLElement | null {
     const l = this.left;
     const scroll = l.scrollTop;
     clear(l);
@@ -199,22 +226,32 @@ export class GaragePanel {
     const build = this.build;
     const progress = build ? buildProgress(build) : null;
     l.append(
-      el('div', { class: 'row' }, el('h2', {}, 'Garage'), el('span', { class: 'spacer' }), el('button', { class: 'small', 'data-action': 'close', onclick: () => this.cb.close() }, 'Fermer')),
+      el('div', { class: 'row' }, el('h2', {}, 'Garage'), el('span', { class: 'spacer' }), el('button', { class: 'small', 'data-action': 'close', 'data-pad-btn': 'b', onclick: () => this.cb.close() }, 'Fermer')),
       el('div', { class: 'muted small' },
         occupant
           ? `Dans la place : ${occupant.name}`
           : build && progress
             ? `Dans la place : ${BLUEPRINTS[build.blueprint].name} en construction (${progress.done}/${progress.total} pièces)`
             : 'Place libre : assemble une voiture ici, ou pose ses pièces au fur et à mesure.'),
+      el('div', { class: 'muted small pad-only' }, html(`${padGlyph('lb')}${padGlyph('rb')} voiture précédente / suivante · ${padGlyph('b')} fermer`)),
       el('h3', { style: 'margin-top:10px' }, 'Mes voitures'),
     );
     const driven = this.driven;
+    // The rows are the views of the right column: LB/RB step through them (data-pad-tab, current = selected).
+    let selected: HTMLElement | null = null;
+    const pick = (b: HTMLElement, current: boolean) => {
+      if (current) selected = b;
+      return b;
+    };
     const row = (id: string | null, name: string, sub: HTMLElement) => {
       const viewing = this.view.kind === 'car' && this.view.id === id;
       const racing = (this.state.selectedCarId ?? null) === id;
-      return el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', onclick: () => this.show({ kind: 'car', id }) },
-        el('span', { class: 'car-star', title: racing ? 'Voiture de course' : '' }, racing ? '★' : '☆'),
-        el('span', { class: 'col', style: 'gap:0' }, el('b', {}, name), sub),
+      return pick(
+        el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', 'data-pad-tab': true, 'data-pad-tip': racing ? 'Voiture de course' : undefined, onclick: () => this.show({ kind: 'car', id }) },
+          el('span', { class: 'car-star', title: racing ? 'Voiture de course' : '' }, racing ? '★' : '☆'),
+          el('span', { class: 'col', style: 'gap:0' }, el('b', {}, name), sub),
+        ),
+        viewing,
       );
     };
     l.appendChild(row(null, BLUEPRINTS.loaner.name, el('span', { class: 'muted small' }, 'Prêt du circuit · courses seulement')));
@@ -230,10 +267,14 @@ export class GaragePanel {
 
     l.appendChild(el('h3', { style: 'margin-top:12px' }, 'Nouvelle voiture'));
     if (build && progress) {
+      const current = this.view.kind === 'build';
       l.appendChild(
-        el('button', { class: `car-row${this.view.kind === 'build' ? ' selected' : ''}`, 'data-action': 'build', onclick: () => this.show({ kind: 'build' }) },
-          el('span', { class: 'car-star' }, '🔧'),
-          el('span', { class: 'col', style: 'gap:0' }, el('b', {}, `${BLUEPRINTS[build.blueprint].name} (en construction)`), el('span', { class: 'muted small' }, `${progress.done}/${progress.total} pièces posées`)),
+        pick(
+          el('button', { class: `car-row${current ? ' selected' : ''}`, 'data-action': 'build', 'data-pad-tab': true, onclick: () => this.show({ kind: 'build' }) },
+            el('span', { class: 'car-star' }, '🔧'),
+            el('span', { class: 'col', style: 'gap:0' }, el('b', {}, `${BLUEPRINTS[build.blueprint].name} (en construction)`), el('span', { class: 'muted small' }, `${progress.done}/${progress.total} pièces posées`)),
+          ),
+          current,
         ),
       );
     }
@@ -243,9 +284,12 @@ export class GaragePanel {
       const drafting = this.view.kind === 'draft' && this.view.blueprint === id;
       const ok = checkAssembly(stock, id, bestChoices(bp, stock)).ok;
       l.appendChild(
-        el('button', { class: `car-row${drafting ? ' selected' : ''}`, 'data-blueprint': id, onclick: () => this.show(this.newDraft(id)) },
-          el('span', { class: 'car-star' }, '+'),
-          el('span', { class: 'col', style: 'gap:0' }, el('b', {}, bp.name), el('span', { class: ok ? 'good small' : 'muted small' }, ok ? 'Pièces disponibles !' : 'Pièces à produire')),
+        pick(
+          el('button', { class: `car-row${drafting ? ' selected' : ''}`, 'data-blueprint': id, 'data-pad-tab': true, onclick: () => this.show(this.newDraft(id)) },
+            el('span', { class: 'car-star' }, '+'),
+            el('span', { class: 'col', style: 'gap:0' }, el('b', {}, bp.name), el('span', { class: ok ? 'good small' : 'muted small' }, ok ? 'Pièces disponibles !' : 'Pièces à produire')),
+          ),
+          drafting,
         ),
       );
     }
@@ -257,34 +301,55 @@ export class GaragePanel {
     }
     l.appendChild(grid);
     l.scrollTop = scroll;
+    return selected;
   }
 
-  private renderRight(stock: ItemCounts): void {
+  /** Returns the view's main action when it can be done (null otherwise). */
+  private renderRight(stock: ItemCounts): HTMLElement | null {
     const r = this.right;
     const scroll = r.scrollTop;
     clear(r);
     const build = this.build;
-    if (this.view.kind === 'draft') this.renderDraft(r, this.view, stock);
-    else if (this.view.kind === 'build' && build) this.renderBuild(r, build, stock);
-    else if (this.view.kind === 'car') this.renderCar(r, findCar(this.state, this.view.id), stock);
+    let main: HTMLElement | null = null;
+    if (this.view.kind === 'draft') main = this.renderDraft(r, this.view, stock);
+    else if (this.view.kind === 'build' && build) main = this.renderBuild(r, build, stock);
+    else if (this.view.kind === 'car') main = this.renderCar(r, findCar(this.state, this.view.id), stock);
     r.scrollTop = scroll;
+    return main;
   }
 
-  private partButton(item: ItemId | null, label: string, attrs: { active: boolean; disabled?: boolean; slot: string; onclick: () => void }): HTMLElement {
+  /** `tip`: why it is disabled, for the pad (no hover). */
+  private partButton(item: ItemId | null, label: string, attrs: { active: boolean; disabled?: boolean; tip?: string; slot: string; onclick: () => void }): HTMLElement {
     return el('button', {
       class: `small part-btn${attrs.active ? ' selected' : ''}`,
       disabled: attrs.disabled,
       'data-part-slot': attrs.slot,
       'data-item': item ?? 'none',
+      // Part of the pad focus identity: the same part in another view (build → finished car) is another control.
+      'data-view': this.view.kind,
+      'data-pad-tip': attrs.disabled ? attrs.tip : undefined,
       onclick: attrs.onclick,
     }, item ? this.icon(item) : null, label);
   }
 
-  private renderDraft(r: HTMLElement, view: Extract<View, { kind: 'draft' }>, stock: ItemCounts): void {
+  /** « Annuler » of a pending confirmation: wins B over « Fermer », takes the focus from the button it replaced. */
+  private cancelButton(action: string, onclick: () => void): HTMLElement {
+    return el('button', { class: 'small', 'data-action': action, 'data-pad-btn': 'b', 'data-pad-prio': 1, 'data-pad-autofocus': true, onclick }, 'Annuler');
+  }
+
+  /** Main action: « Assembler ». */
+  private renderDraft(r: HTMLElement, view: Extract<View, { kind: 'draft' }>, stock: ItemCounts): HTMLElement | null {
     const bp = BLUEPRINTS[view.blueprint];
     const check = checkAssembleIn(this.state, view.blueprint, view.choices, this.spot!, this.cb.bayBlocker);
     // « Poser » starts building this car in the bay with what is in stock (the bay must be empty).
     const canPose = !check.occupant && !check.build;
+    let reason = '';
+    if (check.occupant) reason = `La place est prise par ${check.occupant.name} : sors-la du garage pour en assembler une autre ici.`;
+    else if (check.build) reason = 'Une voiture est en construction dans la place : termine-la ou abandonne-la (🔧 à gauche).';
+    else if (Object.keys(check.missing).length) {
+      const missing = Object.entries(check.missing).map(([i, n]) => countLabel(i as ItemId, n ?? 0));
+      reason = `Il manque : ${missing.join(', ')}. Produis-les à l’usine (assembleuse).`;
+    } else if (!check.ok) reason = 'Choisis toutes les pièces.';
     r.append(el('h2', {}, `Nouvelle voiture : ${bp.name}`), el('div', { class: 'muted small' }, bp.description));
     for (const slot of bp.slots) {
       const row = el('div', { class: 'slot-row' }, el('b', {}, `${slot.name}${slot.count > 1 ? ` ×${slot.count}` : ''}`));
@@ -316,6 +381,8 @@ export class GaragePanel {
             class: 'small',
             disabled: !canPose || n === 0,
             title: n ? `Poser ${countLabel(chosen, n)} dans la place, sans attendre le reste` : `Pas de ${ITEMS[chosen].name.toLowerCase()} en stock`,
+            // The title does not say why the bay refuses it.
+            'data-pad-tip': canPose ? undefined : reason,
             'data-action': 'pose',
             'data-part-slot': slot.id,
             onclick: () => this.doInstall(view.blueprint, slot.id, chosen),
@@ -332,23 +399,17 @@ export class GaragePanel {
       carStatsBlock(this.draftSpec(view), specOf(racing)),
     );
 
-    let reason = '';
-    if (check.occupant) reason = `La place est prise par ${check.occupant.name} : sors-la du garage pour en assembler une autre ici.`;
-    else if (check.build) reason = 'Une voiture est en construction dans la place : termine-la ou abandonne-la (🔧 à gauche).';
-    else if (Object.keys(check.missing).length) {
-      const missing = Object.entries(check.missing).map(([i, n]) => countLabel(i as ItemId, n ?? 0));
-      reason = `Il manque : ${missing.join(', ')}. Produis-les à l’usine (assembleuse).`;
-    } else if (!check.ok) reason = 'Choisis toutes les pièces.';
+    const assemble = el('button', { class: 'primary', disabled: !check.ok, title: reason, 'data-action': 'assemble', onclick: () => this.doAssemble() }, 'Assembler');
     r.append(
       el('div', { class: reason ? 'bad small' : 'muted small', style: 'margin-top:8px' }, reason || 'Le sac paie d’abord, puis le hangar. « Assembler » pose tout d’un coup ; « Poser maintenant » commence la voiture dans la place avec ce que tu as, le reste viendra plus tard.'),
-      el('div', { class: 'row', style: 'margin-top:10px' },
-        el('button', { class: 'primary', disabled: !check.ok, title: reason, 'data-action': 'assemble', onclick: () => this.doAssemble() }, 'Assembler'),
-      ),
+      el('div', { class: 'row', style: 'margin-top:10px' }, assemble),
     );
+    return check.ok ? assemble : null;
   }
 
-  /** The car under construction in the bay: what is installed, « Poser » / « Retirer » per slot, give up. */
-  private renderBuild(r: HTMLElement, build: CarBuild, stock: ItemCounts): void {
+  /** The car under construction in the bay: what is installed, « Poser » / « Retirer » per slot, give up. Main action: the first « Poser » in stock. */
+  private renderBuild(r: HTMLElement, build: CarBuild, stock: ItemCounts): HTMLElement | null {
+    let main: HTMLElement | null = null;
     const bp = BLUEPRINTS[build.blueprint];
     const { done, total } = buildProgress(build);
     r.append(
@@ -371,14 +432,15 @@ export class GaragePanel {
         // A slot holds one kind of part: once started, only that one.
         for (const item of cur ? [cur.item] : slot.accepts) {
           const have = stock[item] ?? 0;
-          opts.appendChild(
-            this.partButton(item, `Poser ${ITEMS[item].name} (${have} en stock)`, {
-              active: false,
-              disabled: have === 0,
-              slot: slot.id,
-              onclick: () => this.doInstall(build.blueprint, slot.id, item),
-            }),
-          );
+          const btn = this.partButton(item, `Poser ${ITEMS[item].name} (${have} en stock)`, {
+            active: false,
+            disabled: have === 0,
+            tip: `Pas de ${ITEMS[item].name.toLowerCase()} en stock`,
+            slot: slot.id,
+            onclick: () => this.doInstall(build.blueprint, slot.id, item),
+          });
+          if (have > 0) main ??= btn;
+          opts.appendChild(btn);
         }
       }
       if (n > 0) opts.appendChild(el('button', { class: 'small', 'data-action': 'remove', 'data-part-slot': slot.id, onclick: () => this.doRemove(slot.id) }, 'Retirer'));
@@ -400,14 +462,16 @@ export class GaragePanel {
           el('div', { class: 'small' }, `Abandonner ce ${bp.name} ? Les pièces posées vont dans ton sac (le surplus au hangar).`),
           el('div', { class: 'row', style: 'margin-top:6px' },
             el('button', { class: 'danger small', 'data-action': 'confirm-abandon', onclick: () => this.doAbandon() }, 'Oui, abandonner'),
-            el('button', { class: 'small', 'data-action': 'cancel-abandon', onclick: () => { this.confirming = null; this.render(); } }, 'Annuler'),
+            this.cancelButton('cancel-abandon', () => this.cancelConfirm('abandon')),
           ),
         ),
       );
     }
+    return main;
   }
 
-  private renderCar(r: HTMLElement, car: CarInstance | null, stock: ItemCounts): void {
+  /** Main action: « Courir ». */
+  private renderCar(r: HTMLElement, car: CarInstance | null, stock: ItemCounts): HTMLElement {
     const bp = blueprintOf(car);
     const loc = car ? carLocation(car, this.spot!, this.driven) : null;
     append(r,
@@ -433,6 +497,7 @@ export class GaragePanel {
             this.partButton(item, item ? `${ITEMS[item].name}${active ? '' : ` (${have} en stock)`}` : 'Aucun', {
               active,
               disabled: !active && item !== null && have < slot.count,
+              tip: `Pas assez en stock : il en faut ${slot.count}`,
               slot: slot.id,
               onclick: () => {
                 // Same part again (or not enough in stock): nothing changed, no message.
@@ -455,9 +520,10 @@ export class GaragePanel {
 
     const id = car?.id ?? null;
     const isRacing = (this.state.selectedCarId ?? null) === id;
+    const race = el('button', { class: 'primary', 'data-action': 'race', title: 'Choisir un circuit avec cette voiture', onclick: () => this.doRace(id) }, 'Courir');
     r.appendChild(
       el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' },
-        el('button', { class: 'primary', 'data-action': 'race', title: 'Choisir un circuit avec cette voiture', onclick: () => this.doRace(id) }, 'Courir'),
+        race,
         el('button', { class: isRacing ? 'selected' : '', disabled: isRacing, 'data-action': 'select', onclick: () => this.doSelect(id) }, isRacing ? '★ Voiture de course' : 'Choisir pour courir'),
         car && loc === 'here' && this.confirming !== car.id
           ? el('button', { class: 'danger', 'data-action': 'disassemble', onclick: () => { this.confirming = car.id; this.render(); } }, 'Démonter')
@@ -470,14 +536,22 @@ export class GaragePanel {
           el('div', { class: 'small' }, `Démonter « ${car.name} » ? Les pièces vont dans ton sac (le surplus au hangar).`),
           el('div', { class: 'row', style: 'margin-top:6px' },
             el('button', { class: 'danger small', 'data-action': 'confirm-disassemble', onclick: () => this.doDisassemble(car.id) }, 'Oui, démonter'),
-            el('button', { class: 'small', 'data-action': 'cancel-disassemble', onclick: () => { this.confirming = null; this.render(); } }, 'Annuler'),
+            this.cancelButton('cancel-disassemble', () => this.cancelConfirm('disassemble')),
           ),
         ),
       );
     }
+    return race;
   }
 
   // ------------------------------------------------------------------ actions
+
+  /** « Annuler »: the button that asked for the confirmation is back, and takes the pad focus again. */
+  private cancelConfirm(button: 'disassemble' | 'abandon'): void {
+    this.confirming = null;
+    this.padRefocus = button;
+    this.render();
+  }
 
   private doAssemble(): void {
     const view = this.view;
@@ -490,6 +564,8 @@ export class GaragePanel {
     }
     toast(`${car.name} assemblée !`, 'success');
     this.view = { kind: 'car', id: car.id };
+    // The new car's row, where a second A does nothing (« Courir » would leave the factory).
+    this.padRefocus = 'row';
     this.commit();
   }
 
@@ -508,6 +584,8 @@ export class GaragePanel {
       toast(`Posé : ${countLabel(item, res.n)}`, 'success', 1400);
       this.view = { kind: 'build' };
     }
+    // A full slot loses its « Poser »: the focus goes to the next part to pose.
+    this.padRefocus = res.car ? 'row' : 'main';
     this.commit();
   }
 
@@ -516,7 +594,10 @@ export class GaragePanel {
     const res = removeBuildPart(this.state, this.spot.id, slotId);
     if (!res.n) return this.render();
     toast(res.toHub ? `Retiré : ${res.n} pièce${res.n > 1 ? 's' : ''} (${res.toHub} au hangar, sac plein)` : `Retiré : ${res.n} pièce${res.n > 1 ? 's' : ''}, dans ton sac`, 'success', 1600);
-    if (!this.build) this.view = this.defaultView();
+    if (!this.build) {
+      this.view = this.defaultView();
+      this.padRefocus = 'row';
+    }
     this.commit();
   }
 
@@ -527,6 +608,7 @@ export class GaragePanel {
     if (!res) return this.render();
     toast(res.toHub ? `Chantier abandonné : pièces dans ton sac, ${res.toHub} au hangar (sac plein)` : 'Chantier abandonné : pièces dans ton sac', 'success', 2200);
     this.view = this.defaultView();
+    this.padRefocus = 'row';
     this.commit();
   }
 
@@ -537,6 +619,7 @@ export class GaragePanel {
     const n = res.toHub;
     toast(n ? `${res.car.name} démontée : pièces dans ton sac, ${n} au hangar (sac plein)` : `${res.car.name} démontée : pièces dans ton sac`, 'success', 2400);
     this.view = this.defaultView();
+    this.padRefocus = 'row';
     this.commit();
   }
 

@@ -5,6 +5,7 @@ import type { ModeName } from './core/ModeManager';
 import { AssetGalleryMode } from './dev/AssetGalleryMode';
 import { MenuMode, type MenuEntry } from './ui/menus/MenuMode';
 import { el } from './ui/dom';
+import { confirmDialog } from './ui/confirm';
 import { GameState } from './state/GameState';
 import { SaveManager } from './state/SaveManager';
 import { FactoryMode } from './factory/FactoryMode';
@@ -41,24 +42,30 @@ async function main() {
   game.icons = new ItemIcons(game.assets);
 
   const state = SaveManager.load() ?? new GameState();
+  /** A « Nouvelle partie » dialog is open: a second click (Space on the button behind it) opens no other. */
+  let confirmingNewGame = false;
+  const newGame = async () => {
+    if (confirmingNewGame) return;
+    if (SaveManager.hasSave()) {
+      confirmingNewGame = true;
+      const ok = await confirmDialog({ title: fr.menu.newGame, message: fr.menu.confirmNewGame, confirm: 'Effacer et recommencer', danger: true });
+      confirmingNewGame = false;
+      // Left the menu meanwhile (keyboard focus behind the dialog): the answer no longer applies.
+      if (!ok || game.modes.current?.name !== 'menu') return;
+    }
+    SaveManager.clear();
+    const settings = state.settings;
+    state.replaceWith(new GameState());
+    state.settings = settings;
+    void game.switchMode('factory');
+  };
   const menuEntries = (): MenuEntry[] => [
     { label: SaveManager.hasSave() ? fr.menu.continue : fr.menu.play, mode: 'factory', primary: true },
     { label: fr.menu.race, mode: 'tracks' },
     { label: fr.menu.editor, mode: 'editor' },
     { label: fr.menu.settings, action: () => openSettings(game, state) },
     { label: fr.menu.gallery, mode: 'gallery' },
-    {
-      label: fr.menu.newGame,
-      action: () => {
-        if (!SaveManager.hasSave() || window.confirm(fr.menu.confirmNewGame)) {
-          SaveManager.clear();
-          const settings = state.settings;
-          state.replaceWith(new GameState());
-          state.settings = settings;
-          void game.switchMode('factory');
-        }
-      },
-    },
+    { label: fr.menu.newGame, action: () => void newGame() },
   ];
   game.modes.register('menu', () => new MenuMode(game, menuEntries));
   game.modes.register('gallery', () => new AssetGalleryMode(game));

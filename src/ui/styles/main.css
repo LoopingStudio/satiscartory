@@ -388,3 +388,54 @@ button.inv-slot:hover { background: #343861; border-color: var(--accent); }
 @media (max-width: 420px) {
   .bag-bar-label { display: none; }
 }
+
+/* Gamepad: hints follow the device in use (body.pad-input), glyph labels follow the pad (body[data-pad]). */
+body:not(.pad-input) .pad-only, body.pad-input .kbm-only { display: none !important; }
+body.pad-input, body.pad-input * { cursor: none !important; }
+.pad-btn {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 10px; font-family: var(--font); font-size: 11px; font-weight: 800; line-height: 1; vertical-align: -3px;
+  background: #3a3e63; border: 1px solid var(--panel-border); border-bottom-width: 2px; color: var(--text);
+}
+.pad-btn::after { content: '?'; }
+.pad-a, .pad-b, .pad-x, .pad-y { width: 20px; min-width: 20px; padding: 0; border-radius: 50%; background: #23253c; }
+.pad-up, .pad-down, .pad-left, .pad-right { border-radius: 4px; width: 20px; padding: 0; }
+.pad-a::after { content: 'A'; } .pad-b::after { content: 'B'; } .pad-x::after { content: 'X'; } .pad-y::after { content: 'Y'; }
+.pad-a { color: #5ad35a; } .pad-b { color: #ff6b6b; } .pad-x { color: #5aa8ff; } .pad-y { color: #ffd166; }
+.pad-lb::after { content: 'LB'; } .pad-rb::after { content: 'RB'; } .pad-lt::after { content: 'LT'; } .pad-rt::after { content: 'RT'; }
+.pad-view::after { content: 'View'; } .pad-start::after { content: 'Menu'; }
+.pad-l3::after { content: 'L3'; } .pad-r3::after { content: 'R3'; } .pad-ls::after { content: 'LS'; } .pad-rs::after { content: 'RS'; }
+.pad-up::after { content: '↑'; } .pad-down::after { content: '↓'; } .pad-left::after { content: '←'; } .pad-right::after { content: '→'; }
+body[data-pad='ps'] .pad-a::after { content: '✕'; } body[data-pad='ps'] .pad-b::after { content: '○'; }
+body[data-pad='ps'] .pad-x::after { content: '□'; } body[data-pad='ps'] .pad-y::after { content: '△'; }
+body[data-pad='ps'] .pad-a { color: #7aa7ff; } body[data-pad='ps'] .pad-b { color: #ff6b6b; }
+body[data-pad='ps'] .pad-x { color: #f08ad0; } body[data-pad='ps'] .pad-y { color: #4fd6a8; }
+body[data-pad='ps'] .pad-lb::after { content: 'L1'; } body[data-pad='ps'] .pad-rb::after { content: 'R1'; }
+body[data-pad='ps'] .pad-lt::after { content: 'L2'; } body[data-pad='ps'] .pad-rt::after { content: 'R2'; }
+body[data-pad='ps'] .pad-view::after { content: 'Share'; } body[data-pad='ps'] .pad-start::after { content: 'Options'; }
+body[data-pad='ps'] .pad-ls::after { content: 'L'; } body[data-pad='ps'] .pad-rs::after { content: 'R'; }
+/* Nintendo layout by position: bottom B, right A, left Y, top X. */
+body[data-pad='nintendo'] .pad-a::after { content: 'B'; } body[data-pad='nintendo'] .pad-b::after { content: 'A'; }
+body[data-pad='nintendo'] .pad-x::after { content: 'Y'; } body[data-pad='nintendo'] .pad-y::after { content: 'X'; }
+body[data-pad='nintendo'] .pad-a, body[data-pad='nintendo'] .pad-b, body[data-pad='nintendo'] .pad-x, body[data-pad='nintendo'] .pad-y { color: var(--text); }
+body[data-pad='nintendo'] .pad-lb::after { content: 'L'; } body[data-pad='nintendo'] .pad-rb::after { content: 'R'; }
+body[data-pad='nintendo'] .pad-lt::after { content: 'ZL'; } body[data-pad='nintendo'] .pad-rt::after { content: 'ZR'; }
+body[data-pad='nintendo'] .pad-view::after { content: '−'; } body[data-pad='nintendo'] .pad-start::after { content: '+'; }
+
+/* Pad focus (menus): a ring distinct from the .selected outline, shown only while the pad is in use. */
+/* Inset too: scrolling lists clip what is drawn outside their items. */
+body.pad-input .pad-focus { box-shadow: inset 0 0 0 2px var(--author), 0 0 0 2px var(--author); }
+body.pad-input button.pad-focus:not(:disabled) { background: #4a4f80; }
+body.pad-input button.primary.pad-focus:not(:disabled) { background: #ffb347; }
+body.pad-input label:has(> input.pad-focus) { box-shadow: 0 0 0 2px var(--author); border-radius: 8px; }
+body.pad-input label:has(> input.pad-focus) > input { box-shadow: none; }
+.pad-tip {
+  position: fixed; z-index: 400; max-width: min(360px, 90vw); padding: 5px 9px; border-radius: 8px; pointer-events: none;
+  background: var(--panel-solid); border: 1px solid var(--author); font-size: 13px; font-weight: 600; display: none;
+}
+body.pad-input .pad-tip.show { display: block; }
+
+/* In-page confirmation (pad-friendly replacement for window.confirm). */
+.confirm-layer { pointer-events: auto; background: rgba(10, 12, 24, 0.55); z-index: 50; }
+.confirm-panel { width: min(420px, 92vw); }
+.confirm-panel p { margin: 4px 0 12px; }

@@ -15,6 +15,8 @@ const PURE = [
   'src/race/RaceSession.ts',
   'src/race/crossing.ts',
   'src/race/medals.ts',
+  'src/core/gamepad.ts',
+  'src/ui/spatialNav.ts',
 ];
 const FORBIDDEN = /from\s+['"](three|three\/.*|@dimforge\/.*)['"]/;
 

@@ -3,11 +3,15 @@ import type { Game } from '../../core/Game';
 import type { Mode } from '../../core/ModeManager';
 import { addLightRig, type LightRig } from '../../core/Renderer';
 import { LEVEL_H, TRACK_CELL } from '../../config/constants';
+import type { Action } from '../../config/keybinds';
+import { NavRepeat, stickCurve } from '../../core/gamepad';
 import { TRACK_PIECES, type PieceDef } from '../../data/trackPieces';
 import { DX, DZ, type Rot } from '../../factory/sim/dirs';
 import type { GameState } from '../../state/GameState';
 import { TrackStore } from '../../state/TrackStore';
+import { confirmDialog } from '../../ui/confirm';
 import { clear, createLayer, el, formatTime, toast } from '../../ui/dom';
+import { dual, html, keyCap, keyLabel, padGlyph, padLabel } from '../../ui/padHints';
 import { pieceCells, pieceConnectors, edgeKey } from '../connectors';
 import { History, MAX_LEVEL, inBounds, overlapping, pieceAt, placePiece, removeAt } from '../editing';
 import { SaveManager } from '../../state/SaveManager';
@@ -33,6 +37,23 @@ export interface EditorParams {
 type Tool = { kind: 'piece'; id: string } | { kind: 'erase' };
 
 const CATEGORIES: PieceDef['category'][] = ['spécial', 'route', 'virage', 'pente'];
+/** Palette order (as rendered), then the eraser: what the pad's ◀ ▶ step through. */
+const TOOL_ORDER: Tool[] = [
+  ...CATEGORIES.flatMap((cat) => Object.values(TRACK_PIECES).filter((d) => d.palette && d.category === cat).map((d): Tool => ({ kind: 'piece', id: d.id }))),
+  { kind: 'erase' },
+];
+const toolKey = (t: Tool) => (t.kind === 'erase' ? 'erase' : t.id);
+// Camera limits (shared by the mouse and the pad).
+const PITCH_MIN = 0.25;
+const PITCH_MAX = 1.45;
+const DIST_MIN = 25;
+const DIST_MAX = 600;
+/** Right stick at full tilt (rad/s, times the pad sensitivity setting). */
+const PAD_YAW_RATE = 2.2;
+const PAD_PITCH_RATE = 1.4;
+/** Full trigger zooms by a factor e^rate per second. */
+const PAD_ZOOM_RATE = 1.4;
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const ghostOk = new THREE.MeshStandardMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.55, depthWrite: false });
 const ghostReplace = new THREE.MeshStandardMaterial({ color: 0xffb347, transparent: true, opacity: 0.55, depthWrite: false });
 const ghostBad = new THREE.MeshStandardMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.5, depthWrite: false });
@@ -75,6 +96,10 @@ export class TrackEditorMode implements Mode {
   private rig!: LightRig;
   private dirty = false;
   private origin: TrackOrigin | undefined;
+  /** The « quit without saving » dialog is open: the editor ignores its input until it closes. */
+  private confirming = false;
+  /** Held D-pad ◀ ▶ keeps stepping through the palette. */
+  private readonly toolRepeat = new NavRepeat();
   // camera
   private target = new THREE.Vector3(48, 0, 24);
   private yaw = Math.PI * 0.75;
@@ -135,7 +160,7 @@ export class TrackEditorMode implements Mode {
 
   /** Shortcuts that depend on the typed character (Ctrl+Z / Ctrl+S work on every layout). */
   private onKey = (e: KeyboardEvent) => {
-    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if (this.confirming || (e.target as HTMLElement)?.tagName === 'INPUT') return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       this.undo();
@@ -241,20 +266,32 @@ export class TrackEditorMode implements Mode {
       this.dirty = true;
     });
     this.levelEl = el('span', { class: 'mono' });
+    // The editor is not a pad menu (the pad drives it directly): its buttons show their pad shortcut instead.
+    const padHint = (action: Action) => html(`<span class="pad-only" style="margin-left:6px">${padLabel(action, 'editor')}</span>`);
     const top = el('div', { class: 'panel editor-top' },
       el('b', {}, 'Éditeur'), this.nameInput,
-      el('button', { class: 'small', onclick: () => this.save() }, 'Enregistrer'),
-      el('button', { class: 'small primary', onclick: () => this.testDrive() }, 'Tester'),
-      el('button', { class: 'small', onclick: () => this.undo(), title: 'Ctrl+Z' }, 'Annuler'),
+      el('button', { class: 'small', onclick: () => this.save() }, 'Enregistrer', padHint('save')),
+      el('button', { class: 'small primary', onclick: () => this.testDrive() }, 'Tester', padHint('test')),
+      el('button', { class: 'small', onclick: () => this.undo(), title: 'Ctrl+Z' }, 'Annuler', padHint('undo')),
       el('button', { class: 'small', onclick: () => navigator.clipboard?.writeText(JSON.stringify(this.track)).then(() => toast('JSON copié', 'info')) }, 'Copier JSON'),
-      el('button', { class: 'small', onclick: () => this.leave() }, 'Circuits'),
+      el('button', { class: 'small', onclick: () => this.leave() }, 'Circuits', padHint('cancel')),
     );
     this.palette = el('div', { class: 'panel editor-palette' });
     this.status = el('div', { class: 'panel editor-status' });
-    const help = el('div', { class: 'editor-help muted small' },
-      'Clic gauche : poser · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'Pg↑/Pg↓'), ' niveau · ', el('kbd', {}, 'X'), ' / clic droit : effacer · ',
-      el('kbd', {}, 'ZQSD'), ' déplacer · clic droit glissé : pivoter · molette : zoom · Niveau ', this.levelEl);
-    this.layer.append(top, this.palette, this.status, help);
+    const pad = (a: Action) => padLabel(a, 'editor');
+    const kbmHelp = `Clic gauche : poser · ${keyLabel('rotate')} tourner · ${keyCap('Pg↑/Pg↓')} niveau · ${keyLabel('delete')} / clic droit : effacer · `
+      + `${keyCap('ZQSD')} déplacer · clic droit glissé : pivoter · molette : zoom · ${keyLabel('save')} enregistrer`;
+    const padHelp = `${pad('primary')} poser · ${pad('rotateBack')}/${pad('rotate')} tourner · ${pad('prevTool')}/${pad('nextTool')} pièce · `
+      + `${pad('levelUp')}/${pad('levelDown')} niveau · ${pad('delete')} effacer · ${padGlyph('ls')} déplacer · ${padGlyph('rs')} pivoter · ${padGlyph('lt')}/${padGlyph('rt')} zoom`;
+    const help = el('div', { class: 'editor-help muted small' }, html(dual(kbmHelp, padHelp)), ' · Niveau ', this.levelEl);
+    // Pad aim: the cell under the screen center (the hovered cell follows it while the pad is in use).
+    const reticle = el('div', {
+      class: 'pad-only',
+      style: 'position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;pointer-events:none;'
+        + 'border:2px solid rgba(255,255,255,0.9);box-shadow:0 0 0 1px rgba(0,0,0,0.45),inset 0 0 0 1px rgba(0,0,0,0.45);'
+        + 'background:radial-gradient(circle,#fff 0 2px,transparent 2.5px)',
+    });
+    this.layer.append(top, this.palette, this.status, help, reticle);
     this.renderPalette();
   }
 
@@ -274,6 +311,15 @@ export class TrackEditorMode implements Mode {
     this.palette.appendChild(el('button', { class: `small${erase ? ' selected danger' : ''}`, style: 'margin-top:8px', onclick: () => { this.tool = { kind: 'erase' }; this.renderPalette(); } }, 'Gomme'));
   }
 
+  /** Next or previous palette tool (pad ◀ ▶, wrapping, eraser included); the palette keeps it in view. */
+  private stepTool(dir: 1 | -1): void {
+    const n = TOOL_ORDER.length;
+    const i = TOOL_ORDER.findIndex((t) => toolKey(t) === toolKey(this.tool));
+    this.tool = TOOL_ORDER[i < 0 ? (dir > 0 ? 0 : n - 1) : (i + dir + n) % n]!;
+    this.renderPalette();
+    this.palette.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+  }
+
   private renderStatus(): void {
     if (!this.status) return;
     clear(this.status);
@@ -290,7 +336,18 @@ export class TrackEditorMode implements Mode {
   }
 
   private leave(): void {
-    if (this.dirty && this.track.pieces.length > 1 && !window.confirm('Quitter sans enregistrer ?')) return;
+    if (this.confirming) return;
+    if (!this.dirty || this.track.pieces.length <= 1) return this.goToTracks();
+    // In-page dialog (window.confirm freezes the loop and a pad cannot answer it).
+    this.confirming = true;
+    void confirmDialog({ message: 'Quitter sans enregistrer ?', confirm: 'Quitter', danger: true }).then((ok) => {
+      this.confirming = false;
+      // Modes are created fresh on each switch: only leave if this editor is still the one running.
+      if (ok && this.game.modes.current === this) this.goToTracks();
+    });
+  }
+
+  private goToTracks(): void {
     void this.game.switchMode('tracks', { selected: this.track.id, origin: this.origin } satisfies TrackSelectParams);
   }
 
@@ -303,27 +360,51 @@ export class TrackEditorMode implements Mode {
     return { t: this.tool.id, x: this.hover[0], z: this.hover[1], y: this.level, r: this.rot };
   }
 
+  /** Left click / pad A on the hovered cell: place the current piece, or erase with the eraser. */
+  private primary(): void {
+    if (!this.hover) return;
+    if (this.tool.kind === 'erase') this.apply(removeAt(this.track, this.hover[0], this.hover[1]));
+    else {
+      const p = this.currentPiece();
+      if (p) this.apply(placePiece(this.track, p));
+    }
+  }
+
   update(dt: number): void {
     const input = this.game.input;
+    input.padProfile = 'editor';
+    // The dialog owns the keys and the pad (PadNav) until it closes.
+    if (this.confirming) return;
     const typing = document.activeElement === this.nameInput;
+    // A pad cannot type: while the name field has focus, only its presses count.
+    const pressed = (a: Action) => input.wasPressed(a) && (!typing || input.padHas(a));
 
-    // Camera: pan with ZQSD/WASD, rotate with right-drag, zoom with the wheel.
-    if (!typing) {
-      const f = input.axis('back', 'forward');
-      const r = input.axis('left', 'right');
-      const speed = this.dist * 0.9 * dt;
-      const fx = -Math.sin(this.yaw);
-      const fz = -Math.cos(this.yaw);
-      // forward = (fx, fz), screen-right = (-fz, fx)
-      this.target.x += (fx * f - fz * r) * speed;
-      this.target.z += (fz * f + fx * r) * speed;
-    }
+    // Camera: pan with ZQSD/WASD or the left stick, rotate with right-drag or the right stick, zoom with the
+    // wheel or the triggers.
+    const ls = input.padStick('left');
+    const f = clamp((typing ? 0 : input.axis('back', 'forward')) - ls.y, -1, 1);
+    const r = clamp((typing ? 0 : input.axis('left', 'right')) + ls.x, -1, 1);
+    const speed = this.dist * 0.9 * dt;
+    const fx = -Math.sin(this.yaw);
+    const fz = -Math.cos(this.yaw);
+    // forward = (fx, fz), screen-right = (-fz, fx)
+    this.target.x += (fx * f - fz * r) * speed;
+    this.target.z += (fz * f + fx * r) * speed;
     if (input.isButtonDown(2)) {
       this.yaw -= input.mouseDX * 0.005;
-      this.pitch = Math.max(0.25, Math.min(1.45, this.pitch + input.mouseDY * 0.004));
+      this.pitch = clamp(this.pitch + input.mouseDY * 0.004, PITCH_MIN, PITCH_MAX);
       this.rmbMoved += Math.abs(input.mouseDX) + Math.abs(input.mouseDY);
     }
-    if (input.wheel) this.dist = Math.max(25, Math.min(600, this.dist * (1 + input.wheel * 0.12)));
+    const rs = input.padStick('right');
+    if (rs.x || rs.y) {
+      const k = this.state.settings.padSensitivity * dt;
+      this.yaw -= stickCurve(rs.x) * PAD_YAW_RATE * k;
+      this.pitch = clamp(this.pitch + stickCurve(rs.y) * PAD_PITCH_RATE * k, PITCH_MIN, PITCH_MAX);
+    }
+    if (input.wheel) this.dist = clamp(this.dist * (1 + input.wheel * 0.12), DIST_MIN, DIST_MAX);
+    // RT zooms in, LT out.
+    const zoom = input.padTrigger('left') - input.padTrigger('right');
+    if (zoom) this.dist = clamp(this.dist * Math.exp(zoom * PAD_ZOOM_RATE * dt), DIST_MIN, DIST_MAX);
     this.target.y = this.level * LEVEL_H;
     this.camera.position.set(
       this.target.x + Math.sin(this.yaw) * Math.cos(this.pitch) * this.dist,
@@ -334,29 +415,32 @@ export class TrackEditorMode implements Mode {
     this.rig.follow(this.target);
     this.grid.position.set(Math.round(this.target.x / TRACK_CELL) * TRACK_CELL, this.level * LEVEL_H + 0.05, Math.round(this.target.z / TRACK_CELL) * TRACK_CELL);
 
-    // Hovered cell on the current level plane.
-    this.raycaster.setFromCamera(new THREE.Vector2(input.ndcX, input.ndcY), this.camera);
+    // Hovered cell on the current level plane: under the cursor, or under the reticle (screen center) with the pad.
+    const padAim = input.device === 'pad';
+    this.raycaster.setFromCamera(new THREE.Vector2(padAim ? 0 : input.ndcX, padAim ? 0 : input.ndcY), this.camera);
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.level * LEVEL_H);
     const hit = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
     this.hover = hit ? [Math.floor(hit.x / TRACK_CELL), Math.floor(hit.z / TRACK_CELL)] : null;
 
-    if (!typing) {
-      if (input.wasPressed('rotate')) this.rot = ((this.rot + 1) & 3) as Rot;
-      if (input.wasPressed('levelUp')) this.level = Math.min(MAX_LEVEL, this.level + 1);
-      if (input.wasPressed('levelDown')) this.level = Math.max(0, this.level - 1);
-      if ((input.wasPressed('levelUp') || input.wasPressed('levelDown'))) this.renderStatus();
-      if (input.wasPressed('delete') && this.hover) this.apply(removeAt(this.track, this.hover[0], this.hover[1]));
-      if (input.wasPressed('cancel')) this.leave();
-    }
+    if (pressed('rotate')) this.rot = ((this.rot + 1) & 3) as Rot;
+    if (pressed('rotateBack')) this.rot = ((this.rot + 3) & 3) as Rot;
+    if (pressed('levelUp')) this.level = Math.min(MAX_LEVEL, this.level + 1);
+    if (pressed('levelDown')) this.level = Math.max(0, this.level - 1);
+    if (pressed('levelUp') || pressed('levelDown')) this.renderStatus();
+    if (pressed('delete') && this.hover) this.apply(removeAt(this.track, this.hover[0], this.hover[1]));
+    // Pad-only actions (the keyboard has Ctrl+Z / Ctrl+S, the mouse the palette and the top bar).
+    const toolStep = this.toolRepeat.update(input.isDown('nextTool') ? 'right' : input.isDown('prevTool') ? 'left' : null, performance.now());
+    if (toolStep) this.stepTool(toolStep === 'right' ? 1 : -1);
+    // A held A places once, like a held click (each placement rebuilds the track).
+    if (pressed('primary')) this.primary();
+    if (pressed('undo')) this.undo();
+    if (pressed('save')) this.save();
+    if (pressed('test')) return this.testDrive();
+    if (pressed('cancel')) this.leave();
+    // Mouse only: the pad aims at the screen center whatever the last cursor position.
     const overUi = (document.elementFromPoint(input.mouseX, input.mouseY) as HTMLElement | null)?.closest('.panel');
     if (!overUi) {
-      if (input.buttonWasPressed(0) && this.hover) {
-        if (this.tool.kind === 'erase') this.apply(removeAt(this.track, this.hover[0], this.hover[1]));
-        else {
-          const p = this.currentPiece();
-          if (p) this.apply(placePiece(this.track, p));
-        }
-      }
+      if (input.buttonWasPressed(0)) this.primary();
       if (input.buttonWasPressed(2)) this.rmbMoved = 0;
       if (input.buttonWasReleased(2) && this.rmbMoved < 6 && this.hover) this.apply(removeAt(this.track, this.hover[0], this.hover[1]));
     }
@@ -418,6 +502,8 @@ export class TrackEditorMode implements Mode {
       name: this.track.name,
       dirty: this.dirty,
       under: this.hover ? pieceAt(this.track, this.hover[0], this.hover[1]) : null,
+      confirming: this.confirming,
+      camera: { x: this.target.x, z: this.target.z, yaw: this.yaw, pitch: this.pitch, dist: this.dist },
     };
   }
 

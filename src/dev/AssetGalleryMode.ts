@@ -75,10 +75,11 @@ export class AssetGalleryMode implements Mode {
 
     this.layer = createLayer();
     this.layer.appendChild(this.labels.domElement);
+    // A pad menu, if only so that B leaves (the camera stays mouse-only).
     this.layer.appendChild(
       el(
         'div',
-        { class: 'panel top-left', style: 'max-width:420px' },
+        { class: 'panel top-left', style: 'max-width:420px', 'data-pad-scope': '' },
         el('h2', {}, fr.gallery.title),
         el('div', { class: 'muted' }, fr.gallery.hint),
         el('div', { class: 'row', style: 'margin-top:10px' },
@@ -86,7 +87,7 @@ export class AssetGalleryMode implements Mode {
           el('button', { class: 'small', onclick: () => this.focus(new THREE.Vector3(15, 0, 6), 45) }, 'Car kit'),
           el('button', { class: 'small', onclick: () => this.focus(new THREE.Vector3(15, 0, 30), 45) }, 'Roads'),
           el('button', { class: 'small', onclick: () => this.focus(new THREE.Vector3(15, 0, 60), 55) }, 'Factory'),
-          el('button', { class: 'small', onclick: () => this.game.switchMode('menu') }, fr.menu.back),
+          el('button', { class: 'small', 'data-pad-btn': 'b', onclick: () => this.game.switchMode('menu') }, fr.menu.back),
         ),
       ),
     );

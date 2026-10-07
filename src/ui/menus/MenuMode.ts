@@ -72,7 +72,9 @@ export class MenuMode implements Mode {
 
     this.layer = createLayer('menu-screen');
     this.layer.style.display = 'flex';
-    const card = el('div', { class: 'panel menu-card' }, el('h1', {}, fr.title), el('div', { class: 'subtitle' }, fr.subtitle));
+    // A pad menu that starts on the primary entry. No guard against a second A: a mode switch exits this
+    // mode (and removes its layer) synchronously in the click, so nothing is left to click twice.
+    const card = el('div', { class: 'panel menu-card', 'data-pad-scope': '' }, el('h1', {}, fr.title), el('div', { class: 'subtitle' }, fr.subtitle));
     for (const e of this.entries()) {
       const enabled = !e.mode || this.game.modes.has(e.mode);
       card.appendChild(
@@ -81,6 +83,7 @@ export class MenuMode implements Mode {
           {
             class: e.primary ? 'primary' : '',
             disabled: !enabled,
+            'data-pad-default': !!e.primary,
             onclick: () => {
               if (e.action) e.action();
               else if (e.mode) void this.game.switchMode(e.mode, e.params);

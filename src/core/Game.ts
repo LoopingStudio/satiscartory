@@ -6,6 +6,7 @@ import { AssetLoader } from './assets/AssetLoader';
 import { ModeManager, type ModeName } from './ModeManager';
 import { Loop } from './Loop';
 import { el } from '../ui/dom';
+import { PadNav } from '../ui/padNav';
 import type { ItemIcons } from './assets/IconRenderer';
 
 export interface DebugMode {
@@ -23,6 +24,8 @@ export class Game {
   readonly assets = new AssetLoader();
   readonly modes = new ModeManager();
   readonly loop: Loop;
+  /** Gamepad menu navigation (whatever the mode). */
+  readonly padNav: PadNav;
   debug = false;
   /** Item icons (rendered from the 3D models after loading). */
   icons: ItemIcons | null = null;
@@ -36,12 +39,17 @@ export class Game {
     this.renderer = new Renderer(canvas);
     this.input = new Input(canvas);
     this.pointer = new PointerLock(canvas);
+    this.padNav = new PadNav(this.input);
     this.modes.onSwitch = (name) => {
       this.input.reset();
       this.applyDebug();
       for (const fn of this.modeListeners) fn(name);
     };
     this.loop = new Loop({
+      poll: () => {
+        this.input.poll();
+        this.padNav.update(performance.now());
+      },
       physics: (dt) => this.modes.current?.fixedUpdate(dt),
       factory: () => {
         for (const t of this.factoryTickers) t();

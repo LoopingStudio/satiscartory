@@ -4,6 +4,7 @@ import type { Mode, ModeName } from '../core/ModeManager';
 import { addLightRig, type LightRig } from '../core/Renderer';
 import { PhysicsWorld } from '../core/physics/PhysicsWorld';
 import { GRAVITY_RACE, PHYS_DT } from '../config/constants';
+import type { Action } from '../config/keybinds';
 import type { GameState } from '../state/GameState';
 import { SaveManager } from '../state/SaveManager';
 import { buildTrack, type BuiltTrack, type Gate } from '../track/TrackBuilder';
@@ -20,6 +21,7 @@ import { RACE } from '../data/race';
 import { TuningPanel } from '../dev/TuningPanel';
 import { TEST_TRACK } from '../dev/testTrack';
 import { clear, createLayer, el, formatDelta, formatTime, toast } from '../ui/dom';
+import { dual, html, keyLabel, padGlyph, padLabel } from '../ui/padHints';
 import { RaceSession, type RaceEvent } from './RaceSession';
 import { crossGate } from './crossing';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
@@ -202,6 +204,8 @@ export class RaceMode implements Mode {
 
   update(dt: number, alpha: number): void {
     const input = this.game.input;
+    // PADBINDS.race: Menu quits like Échap, B respawns, View restarts, Y retries (the finish panel takes the pad).
+    input.padProfile = 'race';
     if (input.wasPressed('cancel')) {
       this.exitTo();
       return;
@@ -278,10 +282,19 @@ export class RaceMode implements Mode {
       h.countdown,
       el('div', { class: 'speedo-wrap bottom-right' }, h.speed, el('div', { class: 'speedo-unit' }, 'km/h')),
       h.info,
-      el('div', { class: 'bottom-left race-keys muted small' },
-        el('kbd', {}, 'Retour arrière'), ' respawn · ', el('kbd', {}, 'Suppr'), ' recommencer · ', el('kbd', {}, 'Échap'), ' quitter'),
+      el('div', { class: 'bottom-left race-keys muted small' }, html(this.keysHint())),
     );
     this.renderInfo();
+  }
+
+  /** Controls reminder: the race keys, or on the pad the driving controls too (on two lines, it is longer). */
+  private keysHint(): string {
+    const pad = (a: Action) => padLabel(a, 'race');
+    return dual(
+      `${keyLabel('respawn')} respawn · ${keyLabel('restart')} recommencer · ${keyLabel('cancel')} quitter`,
+      `${padGlyph('rt')} accélérer · ${padGlyph('lt')} freiner / marche arrière · ${padGlyph('ls')} tourner · ${pad('handbrake')} dérapage<br>` +
+        `${pad('respawn')} respawn · ${pad('restart')} recommencer · ${pad('cancel')} quitter`,
+    );
   }
 
   private renderInfo(): void {
@@ -323,7 +336,9 @@ export class RaceMode implements Mode {
 
   private showFinish(ms: number, medal: Medal | null, improved: boolean, previous: number | null): void {
     const test = !!this.params.test;
-    const box = el('div', { class: 'panel center finish-panel' },
+    // A pad scope: while it shows, the pad drives it (PadNav) and the race reads nothing from the pad.
+    // Passive: it pops up while driving; a handbrake or respawn tap just after the line must not answer it.
+    const box = el('div', { class: 'panel center finish-panel', 'data-pad-scope': '', 'data-pad-passive': '' },
       el('h2', {}, test ? 'Essai terminé' : 'Arrivée !'),
       el('div', { class: 'finish-time mono' }, formatTime(ms)),
       medal
@@ -334,8 +349,11 @@ export class RaceMode implements Mode {
       !improved && previous !== null ? el('div', { class: 'bad' }, `Record : ${formatTime(previous)} (${formatDelta(ms - previous)})`) : null,
       test ? el('div', { class: 'muted small' }, 'Ce temps devient le temps auteur du circuit.') : null,
       el('div', { class: 'row', style: 'margin-top:12px;justify-content:center' },
-        el('button', { class: 'primary', onclick: () => this.restart() }, 'Réessayer (Entrée)'),
-        el('button', { onclick: () => this.exitTo() }, test ? 'Retour à l’éditeur' : 'Circuits'),
+        // Same as the keys: Y (or View, like Suppr) retries, B (or Menu, like Échap) goes back.
+        el('button', { class: 'primary', onclick: () => this.restart(), 'data-pad-default': true, 'data-pad-btn': 'y view' },
+          'Réessayer ', html(dual('(Entrée)', padGlyph('y')))),
+        el('button', { onclick: () => this.exitTo(), 'data-pad-btn': 'b start' },
+          test ? 'Retour à l’éditeur' : 'Circuits', html(dual('', ` ${padGlyph('b')}`))),
         !test ? el('button', { onclick: () => void this.game.switchMode('factory') }, 'Usine') : null,
       ),
     );

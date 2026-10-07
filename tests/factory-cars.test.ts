@@ -98,6 +98,8 @@ function setup(state = new GameState()) {
   const input = {
     isDown: (a: Action) => held.has(a),
     axis: (neg: Action, pos: Action) => (held.has(pos) ? 1 : 0) - (held.has(neg) ? 1 : 0),
+    padStick: () => ({ x: 0, y: 0 }),
+    padTrigger: () => 0,
   } as unknown as Input;
   const step = () => {
     cars.fixedUpdate(PHYS_DT, input);

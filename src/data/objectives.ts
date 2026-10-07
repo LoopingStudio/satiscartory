@@ -20,6 +20,7 @@ export interface ObjectiveContext {
 export interface Objective {
   id: string;
   text: string;
+  /** Tokens such as {interact} or {hotkey2} become the key or the pad button (ui/padHints renderTokens). */
   hint: string;
   done(c: ObjectiveContext): boolean;
 }
@@ -33,25 +34,25 @@ export const OBJECTIVES: Objective[] = [
   {
     id: 'mine',
     text: 'Mine du minerai de fer à la main',
-    hint: 'Vise les roches rouille d’un gisement, tout près, et maintiens E. Le minerai va dans ton sac.',
+    hint: 'Vise les roches rouille d’un gisement, tout près, et maintiens {interact}. Le minerai va dans ton sac.',
     done: (c) => (c.storage.iron_ore ?? 0) >= 5 || c.tier >= 1,
   },
   {
     id: 'bench',
     text: 'Fabrique 10 tiges de fer à l’établi du hangar',
-    hint: 'E sur le hangar → Établi. Minerai → lingot, puis lingot → tige : maintiens le bouton pour fabriquer.',
+    hint: '{interact} sur le hangar → Établi. Minerai → lingot, puis lingot → tige : maintiens le bouton pour fabriquer.',
     done: (c) => (c.storage.iron_rod ?? 0) >= 10 || c.tier >= 1,
   },
   {
     id: 'tier1',
     text: 'Débloque le palier 1 (Extraction) au hangar',
-    hint: 'E sur le hangar → Paliers. Le sac paie d’abord, puis le hangar.',
+    hint: '{interact} sur le hangar → Paliers. Le sac paie d’abord, puis le hangar.',
     done: (c) => c.tier >= 1,
   },
   {
     id: 'drill_ore',
     text: 'Pose une foreuse sur le fer',
-    hint: 'A → Foreuse (touche 2), R pour tourner. A → Convoyeur (touche 1) : clic maintenu jusqu’au hangar ; en attendant, E sur la foreuse → « Prendre ».',
+    hint: '{buildMenu} → Foreuse {hotkey2}, {rotate} pour tourner. {buildMenu} → Convoyeur {hotkey1} : {hold} jusqu’au hangar ; en attendant, {interact} sur la foreuse → « Prendre ».',
     done: (c) => (c.crafted.iron_ore ?? 0) > 0 || (c.delivered.iron_ore ?? 0) > 0 || c.tier >= 2,
   },
   {
@@ -63,7 +64,7 @@ export const OBJECTIVES: Objective[] = [
   {
     id: 'smelt',
     text: 'Fais fondre le minerai dans une fonderie',
-    hint: 'A → Fonderie (touche 3), reliée à la foreuse par convoyeur. Une foreuse alimente exactement une fonderie.',
+    hint: '{buildMenu} → Fonderie {hotkey3}, reliée à la foreuse par convoyeur. Une foreuse alimente exactement une fonderie.',
     done: (c) => (c.crafted.iron_ingot ?? 0) > 0 || (c.delivered.iron_ingot ?? 0) > 0 || c.tier >= 3,
   },
   {
@@ -75,7 +76,7 @@ export const OBJECTIVES: Objective[] = [
   {
     id: 'plates',
     text: 'Produis des plaques avec un constructeur',
-    hint: 'A → Constructeur (touche 4), puis E pour choisir « Plaque ». 1 foreuse → 1 fonderie → 1 constructeur.',
+    hint: '{buildMenu} → Constructeur {hotkey4}, puis {interact} pour choisir « Plaque ». 1 foreuse → 1 fonderie → 1 constructeur.',
     done: (c) => (c.crafted.plate ?? 0) > 0 || (c.delivered.plate ?? 0) > 0 || c.tier >= 4,
   },
   {
@@ -87,31 +88,31 @@ export const OBJECTIVES: Objective[] = [
   {
     id: 'tier4',
     text: 'Débloque le palier 4 (Assemblage)',
-    hint: 'E sur le hangar → Paliers.',
+    hint: '{interact} sur le hangar → Paliers.',
     done: (c) => c.tier >= 4,
   },
   {
     id: 'car_parts',
     text: 'Produis 4 roues, 1 châssis et 1 moteur',
-    hint: 'A → Assembleuse (touche 5). Châssis et moteur demandent plaques, tiges et boulons ; la roue, un pneu et une plaque.',
+    hint: '{buildMenu} → Assembleuse {hotkey5}. Châssis et moteur demandent plaques, tiges et boulons ; la roue, un pneu et une plaque.',
     done: (c) => c.cars > 0 || ((c.storage.wheel ?? 0) + (c.storage.wheel_racing ?? 0) >= 4 && (c.storage.chassis ?? 0) >= 1 && (c.storage.engine ?? 0) >= 1),
   },
   {
     id: 'tier5',
     text: 'Débloque le palier 5 (Garage)',
-    hint: 'E sur le hangar → Paliers. Les pneus viennent du constructeur « Pneu ».',
+    hint: '{interact} sur le hangar → Paliers. Les pneus viennent du constructeur « Pneu ».',
     done: (c) => c.tier >= 5 || c.cars > 0,
   },
   {
     id: 'garage',
     text: 'Construis un garage',
-    hint: 'A → Garage (touche 6), R pour tourner : la porte (flèche bleue) doit donner sur un espace libre pour sortir en voiture.',
+    hint: '{buildMenu} → Garage {hotkey6}, {rotate} pour tourner : la porte (flèche bleue) doit donner sur un espace libre pour sortir en voiture.',
     done: (c) => c.buildings.some((b) => b.type === 'garage') || c.cars > 0,
   },
   {
     id: 'assembled',
     text: 'Assemble ton kart au garage',
-    hint: 'E sur un garage, choisis le kart puis « Assembler ». Le sac paie d’abord, puis le hangar.',
+    hint: '{interact} sur un garage, choisis le kart puis « Assembler ». Le sac paie d’abord, puis le hangar.',
     done: (c) => c.cars > 0,
   },
   {

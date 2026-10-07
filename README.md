@@ -77,8 +77,6 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Entrée | Réessayer après l'arrivée |
 | Échap | Quitter |
 
-La manette fonctionne aussi.
-
 ### Éditeur
 
 | Touche | Action |
@@ -94,6 +92,56 @@ La manette fonctionne aussi.
 | Ctrl+S | Enregistrer |
 
 « Tester » lance un essai, qui fixe le temps auteur et les médailles.
+
+### Manette
+
+Une manette (Xbox, PlayStation, Switch Pro… en mapping standard) marche partout, à tout moment : la première pression la prend en compte, et les indications à l'écran passent alors à ses boutons (✕ ○ □ △ sur une manette PlayStation). Toucher le clavier ou bouger la souris les remet. Noms ci-dessous : boutons Xbox (A en bas, B à droite, X à gauche, Y en haut).
+
+| Usine, à pied | |
+|---|---|
+| Stick gauche | Se déplacer (clic du stick : courir, jusqu'à ce qu'on le lâche) |
+| Stick droit | Caméra (sensibilité dans les Réglages) ; ↑ : zoom (proche, normal, loin) |
+| A | Sauter |
+| X | Comme E : utiliser une machine, le hangar, un garage, monter en voiture ; maintenu : miner, prendre toute une ligne de convoyeur |
+| Y | Menu de construction |
+| ← / → | Bâtiment précédent / suivant (dans l'ordre du menu, ceux débloqués) |
+| RT | Poser ; maintenu : tracer un convoyeur. En démontage : démonter |
+| LB / RB | Tourner |
+| B | Annuler le tracé, puis l'outil (comme le clic droit) |
+| ↓ | Démontage |
+| View | Sac |
+| Menu | Pause |
+
+| Voiture dans l'usine | Course |
+|---|---|
+| RT accélérer, LT freiner / marche arrière, stick gauche tourner, A frein à main | Pareil, A : dérapage |
+| X : descendre (sous 11 km/h) | B : respawn au checkpoint |
+| Y : choisir un circuit avec cette voiture | View : recommencer |
+| B : replacer la voiture | Menu : quitter |
+| Menu : pause | Arrivée : Réessayer (A ou Y), Circuits (B) |
+
+| Menus et panneaux | |
+|---|---|
+| Croix ou stick gauche | Choisir (un cadre bleu marque le bouton visé, une bulle dit ce que la souris montrerait au survol) |
+| A | Valider ; maintenu sur « Maintenir » à l'établi : fabriquer |
+| B | Retour, fermer, annuler une confirmation (Y ferme aussi le menu de construction, View le sac) |
+| LB / RB | Onglets du hangar ; circuit précédent / suivant ; voiture précédente / suivante dans un garage |
+| Stick droit | Faire défiler |
+| ← / → | Régler un curseur, changer de voiture au départ d'une course |
+| X | Sac (au hangar ou dans le sac) : prendre une case, puis A (ou X) sur sa nouvelle place pour la ranger, ou sur le hangar pour la déposer |
+
+| Éditeur | |
+|---|---|
+| Stick gauche, stick droit | Déplacer, pivoter la caméra |
+| LT / RT | Zoomer |
+| A, X | Poser, effacer (au réticule du centre de l'écran) |
+| LB / RB | Tourner |
+| ← / → | Pièce précédente / suivante |
+| ↑ / ↓ | Niveau |
+| View, Menu, Y | Annuler, enregistrer, tester |
+| B | Quitter (une confirmation demande si le circuit n'est pas enregistré) |
+
+Le navigateur ne donne pas le pointer lock à la manette : en jouant à la manette, la visée reste au centre de l'écran sans verrouiller la souris. Un clic sur le jeu rend la caméra à la souris.
 
 ## Progression
 
@@ -136,7 +184,7 @@ Le garage est un bâtiment de l’usine (touche 6, palier 5 ; 40 plaques, 24 tig
 
 ```
 src/
-  core/        boucle à pas fixe (physique 60 Hz, usine 20 Hz), rendu, entrées, assets GLTF, Rapier
+  core/        boucle à pas fixe (physique 60 Hz, usine 20 Hz), rendu, entrées (clavier, souris, manette), assets GLTF, Rapier
   data/        données de jeu : objets, recettes, bâtiments, paliers, carte, voitures, pièces, circuits, équilibrage
   factory/     sim/ (pure, déterministe, testée), view/ (instancing), build/ (construction), cars/ (voitures garées et conduites), FactoryMode
   player/      contrôleur de personnage, caméra orbitale, avatar
@@ -146,7 +194,7 @@ src/
   race/        session de course, franchissement, médailles, records, bot (purs), RaceMode, sélection
   garage/      assemblage, actions et places de garage (purs), GaragePanel (panneau dans l'usine)
   state/       état de jeu, sauvegarde (localStorage), circuits utilisateur
-  ui/          DOM, styles, textes FR, menus
+  ui/          DOM, styles, textes FR, menus, navigation des menus à la manette, confirmations
   dev/         galerie, panneau de réglages véhicule, outils de test (window.T)
 ```
 
@@ -163,4 +211,4 @@ Le plan de référence est dans `docs/PLAN.md`, les décisions dans `docs/DECISI
 | `?mode=factory&layout=stress` | 2 100 objets sur les convoyeurs |
 | `?mode=race&track=oval\|hill\|test\|drag\|pad&car=loaner\|kart\|kartr\|sport\|sportr` | Course directe |
 | `?tune=1` ou F3 | Debug physique et panneau de réglages du véhicule |
-| `window.T` | Automatisation par événements réels (`T.autopilot`, `T.drag`, `T.aimCell`…) |
+| `window.T` | Automatisation par événements réels (`T.autopilot`, `T.drag`, `T.aimCell`…) et manette virtuelle servie par `navigator.getGamepads()` (`T.pad.press('a')`, `T.pad.tilt('left', 0, -1, 500)`, `T.pad.trigger('right', 1)`, `T.padFocus()`) |

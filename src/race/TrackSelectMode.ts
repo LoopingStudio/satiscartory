@@ -10,6 +10,8 @@ import { buildTrack, type BuiltTrack } from '../track/TrackBuilder';
 import type { TrackData } from '../track/TrackData';
 import { analyzeTrack } from '../track/validate';
 import { clear, createLayer, el, formatTime, toast } from '../ui/dom';
+import { confirmDialog } from '../ui/confirm';
+import { dual, html, padGlyph } from '../ui/padHints';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor } from './medals';
 import { BLUEPRINTS } from '../data/blueprints';
 import { LOANER_SPEC, specOf } from '../garage/assembly';
@@ -45,6 +47,8 @@ export class TrackSelectMode implements Mode {
   private center = new THREE.Vector3();
   private radius = 60;
   private origin: TrackOrigin = 'menu';
+  /** The « Supprimer » dialog is open: a second click (Space on the button behind it) opens no other. */
+  private confirming = false;
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(50, 1, 4000);
@@ -57,6 +61,9 @@ export class TrackSelectMode implements Mode {
     this.tracks = TrackStore.all();
     this.origin = params?.origin === 'factory' ? 'factory' : 'menu';
     this.layer = createLayer('tracks-screen');
+    // Both panels are one pad menu. Every render rebuilds them: rows and buttons carry data-track-id /
+    // data-action so the pad focus finds its control again.
+    this.layer.setAttribute('data-pad-scope', '');
     this.listEl = el('div', { class: 'panel track-list' });
     this.detailEl = el('div', { class: 'panel track-detail' });
     this.layer.append(this.listEl, this.detailEl);
@@ -85,8 +92,12 @@ export class TrackSelectMode implements Mode {
 
   private renderList(): void {
     const list = this.listEl!;
+    // Selecting a track re-renders the list: keep its scroll, then bring the selected row into view (LB/RB).
+    const top = list.scrollTop;
     clear(list);
-    list.appendChild(el('div', { class: 'row' }, el('h2', {}, 'Circuits'), el('span', { class: 'spacer' }), el('button', { class: 'small', onclick: () => this.back() }, this.origin === 'factory' ? 'Usine' : 'Menu')));
+    const backBtn = el('button', { class: 'small', 'data-action': 'back', 'data-pad-btn': 'b', onclick: () => this.back() }, html(dual('', `${padGlyph('b')} `)), this.origin === 'factory' ? 'Usine' : 'Menu');
+    list.appendChild(el('div', { class: 'row' }, el('h2', {}, 'Circuits'), el('span', { class: 'spacer' }), backBtn));
+    list.appendChild(el('div', { class: 'muted small pad-only' }, html(`${padGlyph('lb')} ${padGlyph('rb')} circuit précédent / suivant`)));
     const section = (title: string, items: TrackData[]) => {
       list.appendChild(el('h3', { style: 'margin-top:10px' }, title));
       if (!items.length) list.appendChild(el('div', { class: 'muted small' }, 'Aucun pour l’instant — crée-en un dans l’éditeur.'));
@@ -94,7 +105,8 @@ export class TrackSelectMode implements Mode {
         const rec = this.state.records[t.id];
         const medal = medalFor(rec?.bestMs, t.medals);
         list.appendChild(
-          el('button', { class: `track-row${t.id === this.selected?.id ? ' selected' : ''}`, onclick: () => this.select(t) },
+          // Rows are pad tabs: LB/RB click the previous/next one (in list order, the selected one is current).
+          el('button', { class: `track-row${t.id === this.selected?.id ? ' selected' : ''}`, 'data-track-id': t.id, 'data-pad-tab': '', onclick: () => this.select(t) },
             el('span', { class: `medal ${medal ? `medal-${medal}` : 'medal-none'}` }),
             el('span', { class: 'track-name' }, t.name),
             el('span', { class: 'spacer' }),
@@ -105,7 +117,9 @@ export class TrackSelectMode implements Mode {
     };
     section('Officiels', this.tracks.filter((t) => t.builtin));
     section('Mes circuits', this.tracks.filter((t) => !t.builtin));
-    list.appendChild(el('button', { style: 'margin-top:10px', onclick: () => this.openEditor({}) }, '+ Nouveau circuit'));
+    list.appendChild(el('button', { style: 'margin-top:10px', 'data-action': 'new', onclick: () => this.openEditor({}) }, '+ Nouveau circuit'));
+    list.scrollTop = top;
+    list.querySelector('.track-row.selected')?.scrollIntoView({ block: 'nearest' });
   }
 
   private carOptions(): { id: string | null; label: string; spec: CarSpec }[] {
@@ -141,7 +155,9 @@ export class TrackSelectMode implements Mode {
 
     // Car choice
     const options = this.carOptions();
+    // The pad changes the car with left/right (PadNav dispatches 'change').
     const select = el('select', {
+      'data-action': 'car',
       onchange: (e: Event) => {
         const v = (e.target as HTMLSelectElement).value;
         selectRaceCar(this.state, v === '' ? null : v);
@@ -161,6 +177,8 @@ export class TrackSelectMode implements Mode {
       el('button', {
         class: 'primary',
         disabled: !analysis.ok,
+        'data-action': 'race',
+        'data-pad-default': true,
         onclick: () => {
           const back: TrackSelectParams = { selected: t.id, origin: this.origin };
           const p: RaceParams = { track: t, carId: this.state.selectedCar?.id ?? null, returnTo: 'tracks', returnParams: back };
@@ -169,25 +187,28 @@ export class TrackSelectMode implements Mode {
       }, analysis.ok ? 'Courir' : 'Circuit invalide'),
     );
     if (!t.builtin) {
-      buttons.appendChild(el('button', { onclick: () => this.openEditor({ trackId: t.id }) }, 'Modifier'));
-      buttons.appendChild(
-        el('button', {
-          class: 'danger',
-          onclick: () => {
-            if (!window.confirm(`Supprimer « ${t.name} » ?`)) return;
-            TrackStore.remove(t.id);
-            toast('Circuit supprimé', 'info');
-            this.tracks = TrackStore.all();
-            this.select(this.tracks[0] ?? null);
-          },
-        }, 'Supprimer'),
-      );
+      buttons.appendChild(el('button', { 'data-action': 'edit', onclick: () => this.openEditor({ trackId: t.id }) }, 'Modifier'));
+      buttons.appendChild(el('button', { class: 'danger', 'data-action': 'delete', onclick: () => void this.remove(t) }, 'Supprimer'));
     } else {
-      buttons.appendChild(el('button', { onclick: () => this.openEditor({ copyOf: t.id }) }, 'Copier dans l’éditeur'));
+      buttons.appendChild(el('button', { 'data-action': 'copy', onclick: () => this.openEditor({ copyOf: t.id }) }, 'Copier dans l’éditeur'));
     }
     // From the factory, the back button of the list already says « Usine ».
-    if (this.origin !== 'factory') buttons.appendChild(el('button', { onclick: () => void this.game.switchMode('factory') }, 'Usine'));
+    if (this.origin !== 'factory') buttons.appendChild(el('button', { 'data-action': 'factory', onclick: () => void this.game.switchMode('factory') }, 'Usine'));
     d.appendChild(buttons);
+  }
+
+  /** Deletes a custom track once confirmed (in-page dialog: a pad can answer it, the game keeps running). */
+  private async remove(t: TrackData): Promise<void> {
+    if (this.confirming) return;
+    this.confirming = true;
+    const ok = await confirmDialog({ message: `Supprimer « ${t.name} » ?`, confirm: 'Supprimer', danger: true });
+    this.confirming = false;
+    // The mode may have exited while the dialog was open.
+    if (!ok || !this.layer?.isConnected) return;
+    TrackStore.remove(t.id);
+    toast('Circuit supprimé', 'info');
+    this.tracks = TrackStore.all();
+    this.select(this.tracks[0] ?? null);
   }
 
   private openEditor(params: EditorParams): void {

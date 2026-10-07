@@ -13,11 +13,13 @@ import type { Inventory as ItemCounts } from '../data/items';
 
 export interface Settings {
   mouseSensitivity: number;
+  /** Camera speed of the pad's right stick (multiplier). */
+  padSensitivity: number;
   invertY: boolean;
   shadows: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { mouseSensitivity: 1, invertY: false, shadows: true };
+export const DEFAULT_SETTINGS: Settings = { mouseSensitivity: 1, padSensitivity: 1, invertY: false, shadows: true };
 
 export interface PlayerSave {
   x: number;

@@ -5,7 +5,7 @@ import { addLightRig, type LightRig } from '../core/Renderer';
 import type { GameState } from '../state/GameState';
 import { FactoryView } from './view/FactoryView';
 import { FactoryWorld } from './FactoryWorld';
-import { FactoryHud } from './FactoryHud';
+import { BUILD_ORDER, FactoryHud } from './FactoryHud';
 import { BuildController, describeError, describeLinks, type Tool } from './build/BuildController';
 import { CharacterController } from '../player/CharacterController';
 import { PlayerAvatar } from '../player/PlayerAvatar';
@@ -24,6 +24,8 @@ import type { Wallet } from '../state/Inventory';
 import { PLAYER } from '../data/player';
 import { OBJECTIVES, type ObjectiveContext } from '../data/objectives';
 import { toast } from '../ui/dom';
+import { keyFor, padGlyph, padText } from '../ui/padHints';
+import { stickCurve } from '../core/gamepad';
 import { openSettings } from '../ui/menus/SettingsPanel';
 import { FactorySim } from './sim/FactorySim';
 import { spawnDemoFactory, spawnStressLoops } from './sim/testLayouts';
@@ -60,7 +62,21 @@ export class FactoryMode implements Mode {
   private wallet!: Wallet;
   private hud!: FactoryHud;
   private freeCursor = false;
+  /** Played at least once (the overlay says « Reprendre » rather than « Jouer »). */
   private started = false;
+  /** The pause / start overlay is up. */
+  private paused = true;
+  /**
+   * Playing with the pad without pointer lock: a pad press is no user gesture, so the browser refuses
+   * the lock; the camera turns with the right stick and the aim stays at the screen center anyway.
+   */
+  private padPlay = false;
+  /** Sprint toggled by the left stick's click; ends when the stick comes back to rest. */
+  private padSprint = false;
+  /** The pad's place trigger went down while building (its release places, like the mouse button). */
+  private padPrimary = false;
+  /** Same for the left mouse button: a release whose press went elsewhere (the click that took the lock) places nothing. */
+  private mousePrimary = false;
   private hudTimer = 0;
   private unsub: (() => void)[] = [];
   private readonly renderPos = new THREE.Vector3();
@@ -240,10 +256,13 @@ export class FactoryMode implements Mode {
         if (locked) {
           this.lockWorked = true;
           this.resumeHint = false;
+          this.paused = false;
+          this.padPlay = false;
           this.hud.showOverlay(false, false);
           return;
         }
-        if (this.uiOpen || this.freeCursor) return;
+        // Released by a pause from the pad (Menu): the overlay is already up.
+        if (this.uiOpen || this.freeCursor || this.paused) return;
         // The browser always drops the pointer lock on Escape. With a tool active,
         // Escape only closes the tool; the pause menu needs a second Escape.
         if (this.build.cancel() || performance.now() - this.toolEscAt < ESC_GRACE_MS) {
@@ -252,6 +271,7 @@ export class FactoryMode implements Mode {
           this.hud.onToolChanged(this.build.tool);
           return;
         }
+        this.paused = true;
         this.hud.showOverlay(true, this.started);
       }),
       this.sim.events.on('placed', (b) => {
@@ -276,6 +296,7 @@ export class FactoryMode implements Mode {
   }
 
   private onCanvasClick = () => {
+    // Also while playing with the pad: a click hands the camera back to the mouse.
     if (!this.game.pointer.locked && !this.freeCursor && !this.uiOpen) void this.resume();
   };
 
@@ -336,6 +357,10 @@ export class FactoryMode implements Mode {
   private enterCar(id: string): void {
     if (!this.cars.enter(id)) return;
     this.eLatch = true;
+    // A held (jump → handbrake), RT held (place → throttle): nothing carries over to the car.
+    this.game.input.blockPadHeld();
+    this.padPrimary = false;
+    this.padSprint = false;
     this.build.setTool({ kind: 'none' });
     this.build.hideHighlights();
     this.hud.onToolChanged(this.build.tool);
@@ -353,6 +378,7 @@ export class FactoryMode implements Mode {
     const spot = this.cars.exit(this.player.collider);
     if (!spot) return false;
     this.eLatch = true;
+    this.game.input.blockPadHeld();
     this.player.collider.setEnabled(true);
     this.teleportPlayer(spot.position, spot.yaw);
     // Saved now: Enter-to-race switches mode before update() could record it.
@@ -365,6 +391,7 @@ export class FactoryMode implements Mode {
   }
 
   private openGarage(b: GarageSpot): void {
+    this.padPrimary = this.mousePrimary = false;
     this.build.setTool({ kind: 'none' });
     this.hud.onToolChanged(this.build.tool);
     this.garagePanel.open({ id: b.id, x: b.x, z: b.z, rot: b.rot });
@@ -374,7 +401,18 @@ export class FactoryMode implements Mode {
   private closeGarage(): void {
     this.garagePanel.close();
     this.setPreview(null);
-    if (!this.freeCursor) void this.game.pointer.request();
+    this.regainControl();
+  }
+
+  /**
+   * After a panel: the pointer lock again, or straight back to pad play when the pad closed it (a pad press
+   * is no user gesture: the lock would be refused). What closed it decides, not the last device: a pad
+   * nudged while clicking « Fermer » must not keep the mouse from its lock.
+   */
+  private regainControl(): void {
+    if (this.freeCursor) return;
+    if (this.game.input.padActivation) this.padPlay = true;
+    else void this.game.pointer.request();
   }
 
   /** Ghost of the drafted car in the open garage's bay (rebuilt when the draft changes). */
@@ -419,9 +457,16 @@ export class FactoryMode implements Mode {
 
   private async resume(): Promise<void> {
     this.started = true;
+    this.paused = false;
     this.resumeHint = false;
     this.hud.showOverlay(false, false);
     if (this.freeCursor) return;
+    // « Jouer » pressed with the pad (PadNav), not clicked.
+    if (this.game.input.padActivation) {
+      this.padPlay = true;
+      return;
+    }
+    this.padPlay = false;
     const ok = await this.game.pointer.request();
     if (!ok && this.lockWorked) {
       // Re-lock refused (browsers impose a short cooldown after Escape): click again.
@@ -437,7 +482,8 @@ export class FactoryMode implements Mode {
 
   private selectTool(t: Tool): void {
     if (t.kind === 'build' && !this.state.isUnlocked(t.type)) {
-      toast(`${BUILDINGS[t.type].name} : débloque le palier ${tierOf(t.type)} au hangar (E → Paliers)`, 'error', 2200);
+      const e = this.game.input.device === 'pad' ? padText('x', this.game.input.pad.style) : 'E';
+      toast(`${BUILDINGS[t.type].name} : débloque le palier ${tierOf(t.type)} au hangar (${e} → Paliers)`, 'error', 2200);
       return;
     }
     this.build.setTool(t);
@@ -445,6 +491,7 @@ export class FactoryMode implements Mode {
   }
 
   private openPanel(kind: 'build' | 'machine' | 'hub' | 'inventory', id?: number): void {
+    this.dropDrag();
     if (kind === 'build') this.hud.openBuildMenu();
     else if (kind === 'machine' && id !== undefined) this.hud.openMachine(id);
     else if (kind === 'hub') this.hud.openHub();
@@ -463,11 +510,33 @@ export class FactoryMode implements Mode {
 
   private closePanel(): void {
     this.hud.closePanel();
-    if (!this.freeCursor) void this.game.pointer.request();
+    this.regainControl();
+  }
+
+  /** A conveyor being traced stops (the tool stays): its release would be lost behind a menu. */
+  private dropDrag(): void {
+    this.padPrimary = this.mousePrimary = false;
+    if (!this.build.dragging) return;
+    this.build.cancel();
+    this.hud.onToolChanged(this.build.tool);
+  }
+
+  /** Pause overlay (Menu on the pad, Escape without pointer lock); the lock, if any, is let go. */
+  private pause(): void {
+    this.dropDrag();
+    this.paused = true;
+    this.resumeHint = false;
+    this.hud.showOverlay(true, true);
+    this.game.pointer.release();
   }
 
   private get controlling(): boolean {
-    return (this.game.pointer.locked || (this.freeCursor && this.started)) && !this.uiOpen;
+    return !this.paused && !this.uiOpen && (this.game.pointer.locked || this.freeCursor || this.padPlay);
+  }
+
+  /** The aim follows the cursor (free-cursor mode with the mouse), else the screen center. */
+  private get cursorAim(): boolean {
+    return this.freeCursor && this.game.input.device !== 'pad';
   }
 
   fixedUpdate(dt: number): void {
@@ -483,8 +552,10 @@ export class FactoryMode implements Mode {
     let sprint = false;
     let jump = false;
     if (this.controlling) {
-      const f = input.axis('back', 'forward');
-      const r = input.axis('left', 'right');
+      // Keys and the left stick (analog: a light tilt walks slowly; +y is the stick pulled back).
+      const stick = input.padStick('left');
+      const f = input.axis('back', 'forward') - stick.y;
+      const r = input.axis('left', 'right') + stick.x;
       this.orbit.forward(this.fwd);
       // forward = (sin yaw, cos yaw) → screen-right = (-cos yaw, sin yaw)
       const rx = -this.fwd.z;
@@ -496,7 +567,7 @@ export class FactoryMode implements Mode {
         dirX /= len;
         dirZ /= len;
       }
-      sprint = input.isDown('sprint');
+      sprint = input.isDown('sprint') || this.padSprint;
       jump = input.consume('jump');
     }
     this.player.step(dt, { dirX, dirZ, sprint, jump }, GRAVITY_FACTORY);
@@ -505,6 +576,13 @@ export class FactoryMode implements Mode {
 
   update(dt: number, alpha: number): void {
     const input = this.game.input;
+    input.padProfile = this.driving ? 'drive' : 'foot';
+    // A pad user left without control (pointer lock refused after a panel, Escape with a tool): any pad
+    // input takes it back.
+    if (!this.controlling && !this.paused && !this.uiOpen && !this.freeCursor && input.device === 'pad' && input.pad.active) {
+      this.padPlay = true;
+      this.resumeHint = false;
+    }
     const controlling = this.controlling;
     if (this.eLatch && !input.isDown('interact')) this.eLatch = false;
     if (this.driving) return this.updateDriving(dt, alpha, controlling);
@@ -515,6 +593,15 @@ export class FactoryMode implements Mode {
       this.orbit.rotate(input.mouseDX, input.mouseDY);
       this.rmbDragged += Math.abs(input.mouseDX) + Math.abs(input.mouseDY);
     }
+    if (controlling) {
+      const rs = input.padStick('right');
+      const k = this.state.settings.padSensitivity * dt;
+      if (rs.x || rs.y) this.orbit.turn(stickCurve(rs.x) * PLAYER.PAD_YAW_SPEED * k, stickCurve(rs.y) * PLAYER.PAD_PITCH_SPEED * k);
+      // The stick's click starts a sprint that lasts until the stick is let go.
+      const ls = input.padStick('left');
+      if (input.wasPressed('sprint') && input.device === 'pad') this.padSprint = true;
+      if (Math.hypot(ls.x, ls.y) < 0.2) this.padSprint = false;
+    } else this.padSprint = false;
     if (controlling && input.wheel) this.orbit.zoom(input.wheel);
 
     this.renderPos.lerpVectors(this.player.prev, this.player.cur, alpha);
@@ -541,7 +628,7 @@ export class FactoryMode implements Mode {
     // Aim: screen center when locked, cursor in free mode (none while the garage camera frames the bay).
     if (this.garagePanel.isOpen) this.build.hideHighlights();
     else {
-      if (this.freeCursor) this.raycaster.setFromCamera(new THREE.Vector2(input.ndcX, input.ndcY), this.camera);
+      if (this.cursorAim) this.raycaster.setFromCamera(new THREE.Vector2(input.ndcX, input.ndcY), this.camera);
       else this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
       this.build.updateAim(this.raycaster.ray.origin, this.raycaster.ray.direction, this.renderPos, this.player.collider);
       this.build.update();
@@ -550,10 +637,7 @@ export class FactoryMode implements Mode {
     if (controlling) this.handleActions();
     else if (this.resumeHint && !this.hud.panelOpen) {
       // Second Escape (tool already closed): open the pause menu.
-      if (input.wasPressed('cancel') && performance.now() - this.toolEscAt > ESC_GRACE_MS) {
-        this.resumeHint = false;
-        this.hud.showOverlay(true, true);
-      }
+      if (input.wasPressed('cancel') && performance.now() - this.toolEscAt > ESC_GRACE_MS) this.pause();
     } else if (this.garagePanel.isOpen && input.wasPressed('cancel')) this.closeGarage();
     else if (this.hud.openPanelKind === 'build' && HOTKEYS.some((a) => input.wasPressed(a))) {
       // Shortcut while the build menu is open: pick and place right away.
@@ -567,7 +651,7 @@ export class FactoryMode implements Mode {
     this.updateBeltPickup(dt, controlling && !this.eLatch);
     this.hud.frame(dt);
 
-    this.hud.setCrosshair(this.game.pointer.locked && !this.uiOpen);
+    this.hud.setCrosshair(!this.uiOpen && (this.game.pointer.locked || (controlling && !this.cursorAim)));
     this.updateHint();
 
     this.rig.follow(this.renderPos);
@@ -589,15 +673,10 @@ export class FactoryMode implements Mode {
       else if (input.wasPressed('retry')) {
         const id = this.cars.drivingId;
         if (this.exitCar()) this.goRace(id);
-      } else if (this.freeCursor && input.wasPressed('cancel')) {
-        // No pointer lock to drop: Escape pauses directly (as on foot).
-        this.hud.showOverlay(true, true);
-        this.started = false;
-      }
-    } else if (this.resumeHint && input.wasPressed('cancel') && performance.now() - this.toolEscAt > ESC_GRACE_MS) {
-      this.resumeHint = false;
-      this.hud.showOverlay(true, true);
-    }
+      } else if (input.wasPressed('pause')) this.pause();
+      // No pointer lock to drop: Escape pauses directly (as on foot).
+      else if (!this.game.pointer.locked && input.wasPressed('cancel')) this.pause();
+    } else if (this.resumeHint && input.wasPressed('cancel') && performance.now() - this.toolEscAt > ESC_GRACE_MS) this.pause();
     this.hud.setCrosshair(false);
     this.updateHint();
     this.rig.follow(this.renderPos);
@@ -701,6 +780,7 @@ export class FactoryMode implements Mode {
 
   private handleActions(): void {
     const input = this.game.input;
+    if (input.wasPressed('pause')) return this.pause();
     HOTKEYS.forEach((a, i) => {
       if (input.wasPressed(a)) {
         const type = BUILD_MENU[i]!;
@@ -709,6 +789,10 @@ export class FactoryMode implements Mode {
       }
     });
     if (input.wasPressed('rotate')) this.build.rotate(input.isKeyDown('ShiftLeft') ? -1 : 1);
+    if (input.wasPressed('rotateBack')) this.build.rotate(-1);
+    if (input.wasPressed('prevTool')) this.cycleTool(-1);
+    if (input.wasPressed('nextTool')) this.cycleTool(1);
+    if (input.wasPressed('zoomCycle')) this.orbit.cycleZoom(PLAYER.PAD_ZOOM_STEPS);
     if (input.wasPressed('dismantle')) {
       this.build.toggleDismantle();
       this.hud.onToolChanged(this.build.tool);
@@ -733,13 +817,36 @@ export class FactoryMode implements Mode {
       } else if (car) this.enterCar(car);
     }
     if (input.wasPressed('cancel')) {
-      // Escape closes the active tool first; only without a tool does it pause.
+      // Escape closes the active tool first; only without a tool does it pause (with the pointer
+      // locked, the browser's lock loss does).
       if (this.build.cancel()) this.toolEscAt = performance.now();
-      else if (this.freeCursor) this.hud.showOverlay(true, true), (this.started = false);
+      else if (!this.game.pointer.locked) return this.pause();
       this.hud.onToolChanged(this.build.tool);
     }
-    if (input.buttonWasPressed(0)) this.build.primaryDown();
-    if (input.buttonWasReleased(0)) this.build.primaryUp();
+    // Pad: B cancels like the right button (the drag, then the tool), never pauses; RT is the left button.
+    if (input.wasPressed('secondary')) {
+      this.build.cancel();
+      this.padPrimary = false;
+      this.hud.onToolChanged(this.build.tool);
+    }
+    if (input.wasPressed('primary')) {
+      this.padPrimary = true;
+      this.build.primaryDown();
+    }
+    if (input.wasReleased('primary') && this.padPrimary) {
+      this.padPrimary = false;
+      this.build.primaryUp();
+    }
+    // The mouse builds only when it aims (locked, or free cursor); during pad play a click takes the lock.
+    if (!this.game.pointer.locked && !this.freeCursor) return;
+    if (input.buttonWasPressed(0)) {
+      this.mousePrimary = true;
+      this.build.primaryDown();
+    }
+    if (input.buttonWasReleased(0) && this.mousePrimary) {
+      this.mousePrimary = false;
+      this.build.primaryUp();
+    }
     if (input.buttonWasPressed(2)) this.rmbDragged = 0;
     if (input.buttonWasReleased(2) && (this.game.pointer.locked || this.rmbDragged < 6)) {
       this.build.cancel();
@@ -747,26 +854,47 @@ export class FactoryMode implements Mode {
     }
   }
 
+  /** Pad ◀ ▶: previous / next unlocked building in the build menu's order (from none: the first / last). */
+  private cycleTool(dir: 1 | -1): void {
+    const open = BUILD_ORDER.filter((t) => this.state.isUnlocked(t));
+    if (!open.length) {
+      toast(`Aucun bâtiment débloqué : ${padText('x', this.game.input.pad.style)} sur le hangar → Paliers`, 'error', 2200);
+      return;
+    }
+    const t = this.build.tool;
+    const i = t.kind === 'build' ? open.indexOf(t.type) : -1;
+    const next = i < 0 ? open[dir > 0 ? 0 : open.length - 1]! : open[(i + dir + open.length) % open.length]!;
+    this.selectTool({ kind: 'build', type: next });
+  }
+
+  /** Bottom hint, for the device in use (pad buttons, or AZERTY keys and mouse buttons). */
   private updateHint(): void {
     const t = this.build.tool;
+    const device = this.game.input.device;
+    const pad = device === 'pad';
+    const k = (a: Action) => keyFor(device, a, this.driving ? 'drive' : 'foot');
     let html = '';
     if (!this.controlling) html = this.resumeHint && !this.uiOpen ? 'Clic : reprendre · <kbd>Échap</kbd> pause' : '';
     else if (this.driving) {
       const car = this.state.cars.find((c) => c.id === this.cars.drivingId);
-      const exit = this.cars.canExit() ? '<kbd>E</kbd> descendre' : '<span class="muted">ralentis pour descendre</span>';
-      html = `<b>${car?.name ?? 'Voiture'}</b> · ${Math.round(this.cars.speedKmh())} km/h · ${exit} · <kbd>Entrée</kbd> courir · <kbd>Retour arrière</kbd> replacer`;
+      const exit = this.cars.canExit() ? `${k('interact')} descendre` : '<span class="muted">ralentis pour descendre</span>';
+      html = `<b>${car?.name ?? 'Voiture'}</b> · ${Math.round(this.cars.speedKmh())} km/h · ${exit} · ${k('retry')} courir · ${k('respawn')} replacer`;
     } else if (t.kind === 'build') {
       const check = this.build.lastCheck;
       const err = check && !check.ok ? `<span class="bad">${describeError(check)}</span> · ` : '';
       const links = describeLinks(this.build.lastLinks);
       const name = BUILDINGS[t.type].name;
       const status = `${err}<b>${name}</b>${links ? ` · ${links}` : ''}`;
-      html =
-        t.type === 'conveyor'
-          ? `${status} · clic gauche maintenu : tracer · <kbd>R</kbd> tourner · clic droit : annuler`
-          : `${status} · clic gauche : poser · <kbd>R</kbd> tourner · clic droit : annuler`;
+      const place = t.type === 'conveyor'
+        ? pad ? `${padGlyph('rt')} maintenu : tracer` : 'clic gauche maintenu : tracer'
+        : pad ? `${padGlyph('rt')} poser` : 'clic gauche : poser';
+      html = pad
+        ? `${status} · ${place} · ${padGlyph('lb')}${padGlyph('rb')} tourner · ${padGlyph('b')} annuler · ${padGlyph('left')}${padGlyph('right')} bâtiment`
+        : `${status} · ${place} · <kbd>R</kbd> tourner · clic droit : annuler`;
     } else if (t.kind === 'dismantle') {
-      html = 'Démontage · clic gauche : démonter (remboursé) · <kbd>F</kbd> quitter';
+      html = pad
+        ? `Démontage · ${padGlyph('rt')} démonter (remboursé) · ${padGlyph('b')} quitter`
+        : 'Démontage · clic gauche : démonter (remboursé) · <kbd>F</kbd> quitter';
     } else {
       const id = this.build.interactTarget();
       const b = id !== null ? this.sim.buildings.get(id) : undefined;
@@ -774,21 +902,24 @@ export class FactoryMode implements Mode {
       const belt = b ? null : this.build.beltTarget();
       const load = belt !== null ? this.build.beltLoad(belt) : null;
       const car = b || mine || load?.line ? null : this.cars.carNear(this.player.cur);
-      if (b) html = `<kbd>E</kbd> ${b.type === 'hub' ? 'hangar : établi, paliers, stock' : b.type === 'garage' ? 'garage : assembler, pièces, voiture de course' : `configurer : ${BUILDINGS[b.type].name}`}`;
+      const e = k('interact');
+      if (b) html = `${e} ${b.type === 'hub' ? 'hangar : établi, paliers, stock' : b.type === 'garage' ? 'garage : assembler, pièces, voiture de course' : `configurer : ${BUILDINGS[b.type].name}`}`;
       else if (load?.line) {
         const pct = Math.round((this.build.beltProgress ?? 0) * 100);
         html = this.beltHold
           ? `Ramassage de la ligne (${load.line}) <span class="mine-bar"><i style="width:${pct}%"></i></span>`
           : load.tile
-            ? `<kbd>E</kbd> prendre (${load.tile}) · maintenir : toute la ligne (${load.line})`
-            : `<kbd>E</kbd> maintenir : prendre toute la ligne (${load.line})`;
-      } else if (car) html = `<kbd>E</kbd> monter dans ${this.state.cars.find((c) => c.id === car)?.name ?? 'la voiture'}`;
+            ? `${e} prendre (${load.tile}) · maintenir : toute la ligne (${load.line})`
+            : `${e} maintenir : prendre toute la ligne (${load.line})`;
+      } else if (car) html = `${e} monter dans ${this.state.cars.find((c) => c.id === car)?.name ?? 'la voiture'}`;
       else if (mine) {
         const pct = Math.round((this.mineT / HAND.MINE_SECONDS) * 100);
         html = this.mineT > 0
           ? `Minage : ${RESOURCES[mine.resource].name} <span class="mine-bar"><i style="width:${pct}%"></i></span>`
-          : `<kbd>E</kbd> maintenir : miner (${RESOURCES[mine.resource].name})`;
-      } else html = '<kbd>A</kbd> construire · <kbd>F</kbd> démonter';
+          : `${e} maintenir : miner (${RESOURCES[mine.resource].name})`;
+      } else html = pad
+        ? `${padGlyph('y')} construire · ${padGlyph('left')}${padGlyph('right')} bâtiment · ${padGlyph('down')} démonter · ${padGlyph('view')} sac · ${padGlyph('start')} pause`
+        : '<kbd>A</kbd> construire · <kbd>F</kbd> démonter';
     }
     this.hud.setHint(html);
   }

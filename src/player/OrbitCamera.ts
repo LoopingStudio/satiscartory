@@ -23,6 +23,19 @@ export class OrbitCamera {
     this.pitch = Math.max(-1.35, Math.min(0.9, this.pitch));
   }
 
+  /** Turns by angles (rad), e.g. a stick's rate times dt; invertY applies as for the mouse. */
+  turn(dYaw: number, dPitch: number): void {
+    this.yaw -= dYaw;
+    this.pitch -= dPitch * (this.invertY ? -1 : 1);
+    this.pitch = Math.max(-1.35, Math.min(0.9, this.pitch));
+  }
+
+  /** Next of the given distances after the current one (wraps to the first). */
+  cycleZoom(steps: readonly number[]): void {
+    const next = steps.find((d) => d > this.distance + 0.25) ?? steps[0];
+    if (next !== undefined) this.distance = Math.max(PLAYER.CAMERA_MIN, Math.min(PLAYER.CAMERA_MAX, next));
+  }
+
   zoom(delta: number): void {
     this.distance = Math.max(PLAYER.CAMERA_MIN, Math.min(PLAYER.CAMERA_MAX, this.distance + delta * 0.8));
   }
