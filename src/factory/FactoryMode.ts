@@ -14,7 +14,7 @@ import { FACTORY_CELL, GRAVITY_FACTORY, PLAYER_RADIUS } from '../config/constant
 import { RAPIER } from '../core/physics/PhysicsWorld';
 import { FACTORY_MAP } from '../data/factoryMap';
 import { BUILDINGS, BUILD_MENU } from '../data/buildings';
-import { ITEMS, ITEM_IDS, countLabel, type ItemId } from '../data/items';
+import { ITEMS, ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { RECIPES_BY_ID, recipesFor } from '../data/recipes';
 import { TIERS, tierOf } from '../data/tiers';
 import { HAND } from '../data/balance';
@@ -86,7 +86,7 @@ export class FactoryMode implements Mode {
   /** E pressed to get in/out of a car: ignore it (mining) until released. */
   private eLatch = false;
   /** E held on a belt: seconds held and the line it picks up when HAND.BELT_LINE_SECONDS is reached. */
-  private beltHold: { t: number; ids: Set<number> } | null = null;
+  private beltHold: { t: number; ids: Set<number>; taken: ItemCounts } | null = null;
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(62, 0.1, 1500);
@@ -654,21 +654,28 @@ export class FactoryMode implements Mode {
     if (h.t < HAND.BELT_LINE_SECONDS) return;
     this.beltHold = null;
     this.build.beltProgress = null;
-    this.takeFromBelts(this.sim.beltLine(aimed));
+    // The message counts the whole gesture: the tile taken by the press, then the rest of the line.
+    this.takeFromBelts(this.sim.beltLine(aimed), h.taken);
   }
 
-  /** Belt items into the backpack, with a message saying what was taken (or that the backpack is full). */
-  private takeFromBelts(ids: number[]): void {
+  /**
+   * Belt items into the backpack, with a message saying what was taken (plus `before`, taken earlier in the
+   * same gesture) or that the backpack is full. Returns what this call took.
+   */
+  private takeFromBelts(ids: number[], before: ItemCounts = {}): ItemCounts {
     const taken = this.sim.takeFromBelts(ids, this.state.inventory);
     const left = ids.reduce((n, id) => {
       const b = this.sim.buildings.get(id);
       return n + (b?.type === 'conveyor' ? b.items.length : 0);
     }, 0);
-    const labels = (Object.entries(taken) as [ItemId, number][]).map(([i, n]) => countLabel(i, n));
+    const all: ItemCounts = { ...before };
+    for (const [i, n] of Object.entries(taken) as [ItemId, number][]) all[i] = (all[i] ?? 0) + n;
+    const labels = (Object.entries(all) as [ItemId, number][]).map(([i, n]) => countLabel(i, n));
     if (labels.length) {
-      toast(`Pris : ${labels.join(', ')}${left ? ' · sac plein, le reste reste sur le convoyeur' : ''}`, left ? 'info' : 'success', 1800);
+      toast(`Pris : ${labels.join(', ')}${left ? ' · sac plein, le reste attend sur le convoyeur' : ''}`, left ? 'info' : 'success', 1800);
       this.hud.updateStorage();
     } else if (left) toast('Sac plein : dépose des objets au hangar', 'error', 1800);
+    return taken;
   }
 
   private updateObjectives(): void {
@@ -723,8 +730,8 @@ export class FactoryMode implements Mode {
       else if (b) this.openPanel('machine', b.id);
       else if (belt !== null && load?.line) {
         // A press takes the aimed tile; holding on goes on to the whole line.
-        if (load.tile) this.takeFromBelts([belt]);
-        this.beltHold = { t: 0, ids: new Set(load.ids) };
+        const taken = load.tile ? this.takeFromBelts([belt]) : {};
+        this.beltHold = { t: 0, ids: new Set(load.ids), taken };
       } else if (car) this.enterCar(car);
     }
     if (input.wasPressed('cancel')) {

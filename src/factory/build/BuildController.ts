@@ -34,7 +34,9 @@ const arrowGeo = new THREE.ConeGeometry(0.28, 0.6, 12).rotateX(Math.PI / 2); // 
 const highlightMat = new THREE.MeshBasicMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.35, depthWrite: false });
 const hoverMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, depthWrite: false });
 /** The rest of an aimed belt's line (what holding E picks up), brighter as the hold progresses. */
-const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.09, depthWrite: false });
+const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.13, depthWrite: false });
+/** Unit box of the line highlight, shared by its instanced mesh as it grows (never disposed). */
+const lineBox = new THREE.BoxGeometry(1, 1, 1);
 /** Hollow buildings (garage) get edges + a floor tint instead of a box that would tint the view from inside. */
 const outlineMats = {
   dismantle: { edges: new THREE.LineBasicMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.9, depthWrite: false }), floor: highlightMat },
@@ -632,7 +634,7 @@ export class BuildController {
     if (!mesh || mesh.instanceMatrix.count < ids.length) {
       mesh?.removeFromParent();
       mesh?.dispose();
-      mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), lineMat, Math.max(32, 2 ** Math.ceil(Math.log2(ids.length))));
+      mesh = new THREE.InstancedMesh(lineBox, lineMat, Math.max(32, 2 ** Math.ceil(Math.log2(ids.length))));
       mesh.renderOrder = 5;
       mesh.frustumCulled = false;
       this.scene.add(mesh);
@@ -647,7 +649,7 @@ export class BuildController {
     });
     mesh.count = ids.length;
     mesh.instanceMatrix.needsUpdate = true;
-    lineMat.opacity = this.beltProgress === null ? 0.09 : 0.1 + 0.2 * this.beltProgress;
+    lineMat.opacity = this.beltProgress === null ? 0.13 : 0.14 + 0.2 * this.beltProgress;
   }
 
   /**
@@ -800,7 +802,6 @@ export class BuildController {
     this.deadMark.removeFromParent();
     if (this.lineMesh) {
       this.lineMesh.removeFromParent();
-      this.lineMesh.geometry.dispose();
       this.lineMesh.dispose();
     }
     this.highlight.removeFromParent();
