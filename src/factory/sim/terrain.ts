@@ -147,9 +147,13 @@ class Shape {
       const e = out - wobble;
       if (e > 0) {
         h += m.cliff * Math.min(e, m.cliffWidth);
-        const rest = m.height - m.cliff * m.cliffWidth;
-        if (e > m.cliffWidth) h += (rest * (e - m.cliffWidth)) / (e - m.cliffWidth + m.knee);
-        h += m.ridgeAmp * valueNoise(xm / m.ridgeWl, zm / m.ridgeWl, d.seed + 47) * Math.min(1, e / 40);
+        if (e > m.cliffWidth) {
+          const f = e - m.cliffWidth;
+          const peaks = 0.55 + 0.45 * valueNoise(xm / m.peakWl, zm / m.peakWl, d.seed + 53);
+          h += (m.height * peaks * f) / (f + m.knee);
+        }
+        const r = 1 - Math.abs(valueNoise(xm / m.ridgeWl, zm / m.ridgeWl, d.seed + 47));
+        h += m.ridgeAmp * r * r * Math.min(1, e / 40);
       }
     }
     return h;

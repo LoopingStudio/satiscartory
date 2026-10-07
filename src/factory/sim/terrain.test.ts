@@ -36,7 +36,7 @@ describe('vallonne-1 generator', () => {
   it('is pinned (any change to the map is deliberate)', () => {
     expect(t.nx).toBe(161);
     expect(t.nz).toBe(161);
-    expect(fnv(t.base)).toBe('211188a0');
+    expect(fnv(t.base)).toBe('b4efe555');
   });
 
   it('uses exact arithmetic only (bit-identical in every engine)', () => {
@@ -186,8 +186,17 @@ describe('vallonne-1 generator', () => {
       }
       return lo;
     };
-    expect(side(24)).toBeGreaterThanOrEqual(15);
-    expect(side(100)).toBeGreaterThanOrEqual(40);
+    // A cliff the player cannot climb (≥ 9 m at 24 m out everywhere), mountains of 30 m and more on
+    // average 100 m out, with saddles between the peaks.
+    expect(side(24)).toBeGreaterThanOrEqual(9);
+    expect(side(100)).toBeGreaterThanOrEqual(12);
+    let sum = 0;
+    let n = 0;
+    for (let k = 0; k <= 256; k += 4) {
+      sum += t.farHeight(-100, k) + t.farHeight(356, k) + t.farHeight(k, -100) + t.farHeight(k, 356);
+      n += 4;
+    }
+    expect(sum / n).toBeGreaterThanOrEqual(30);
     // No cliff inside the grid: the edge rises no faster than the hills.
     for (let k = 0; k <= W; k++) {
       for (const [a, b] of [[[0, k], [1, k]], [[W, k], [W - 1, k]], [[k, 0], [k, 1]], [[k, H], [k, H - 1]]] as const) {

@@ -34,9 +34,10 @@ export interface TerrainDef {
   /** Lake: ellipse centered on (x, z) cells with radii (rx, rz) cells. Its level is the relief at the
    * center minus `below` m; the bed goes `depth` m under it; the shore rises `shore` m above it. */
   lake: { x: number; z: number; rx: number; rz: number; below: number; depth: number; shore: number } | null;
-  /** Mountains beyond the grid edge: a cliff of slope `cliff` (m per m) over `cliffWidth` m, then rising
-   * toward `height` m (half way after `knee` m), with ridges and a wobbly foot. */
-  mountains: { cliff: number; cliffWidth: number; height: number; knee: number; ridgeAmp: number; ridgeWl: number; wobble: number; wobbleWl: number };
+  /** Mountains beyond the grid edge: a rocky cliff of slope `cliff` (m per m) over `cliffWidth` m (the
+   * player cannot climb it), then slopes rising toward `height` m (half way after `knee` m) scaled by a
+   * peak noise of wavelength `peakWl`, with ridged crests and a wobbly foot. */
+  mountains: { cliff: number; cliffWidth: number; height: number; knee: number; peakWl: number; ridgeAmp: number; ridgeWl: number; wobble: number; wobbleWl: number };
 }
 
 export const TERRAINS: Record<Exclude<TerrainId, 'flat'>, TerrainDef> = {
@@ -52,7 +53,7 @@ export const TERRAINS: Record<Exclude<TerrainId, 'flat'>, TerrainDef> = {
     crests: { amp: 7, wl: 70, coverWl: 150, cover: [0.4, 0.68] },
     nodeFlat: { margin: 2, blend: 4, roundCm: 25 },
     lake: { x: 40, z: 118, rx: 11, rz: 7, below: 0.6, depth: 1.4, shore: 0.4 },
-    mountains: { cliff: 1.5, cliffWidth: 14, height: 80, knee: 60, ridgeAmp: 10, ridgeWl: 120, wobble: 8, wobbleWl: 90 },
+    mountains: { cliff: 1.7, cliffWidth: 6, height: 85, knee: 140, peakWl: 160, ridgeAmp: 14, ridgeWl: 60, wobble: 12, wobbleWl: 70 },
   },
 };
 

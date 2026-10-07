@@ -31,6 +31,8 @@ function axis(cells: number, margin: number): { coords: Float64Array; first: num
 interface Static {
   index: THREE.BufferAttribute;
   colors: THREE.BufferAttribute;
+  /** Positions with the natural ground (the far bands are costly to sample: computed once per map). */
+  positions: Float32Array;
 }
 
 /** Index and natural colors per map (never change; shared by every factory visit). */
@@ -100,33 +102,30 @@ export function buildTerrainGeometry(t: Terrain, ax = axis(t.width, t.margin), a
   const zs = az.coords;
   const nx = xs.length;
   const nz = zs.length;
-  const pos = new Float32Array(nx * nz * 3);
-  for (let j = 0; j < nz; j++) {
-    for (let i = 0; i < nx; i++) {
-      const a = i - ax.first;
-      const b = j - az.first;
-      const inside = a >= 0 && b >= 0 && a < t.nx && b < t.nz;
-      const k = (i + j * nx) * 3;
-      pos[k] = xs[i]!;
-      pos[k + 1] = inside ? t.eff[a + b * t.nx]! / 100 : t.farHeight(xs[i]!, zs[j]!);
-      pos[k + 2] = zs[j]!;
-    }
-  }
   const key = `${t.id}|${t.width}|${t.height}|${t.margin}`;
   let st = statics.get(key);
   if (!st || !t.generated) {
-    // Colors from the natural ground (pads and banks come and go; the shader paints them).
+    // The natural ground everywhere (lattice: base; far bands: the height function).
     const natural = new Float32Array(nx * nz * 3);
     for (let j = 0; j < nz; j++) {
       for (let i = 0; i < nx; i++) {
         const a = i - ax.first;
         const b = j - az.first;
         const inside = a >= 0 && b >= 0 && a < t.nx && b < t.nz;
-        natural[(i + j * nx) * 3 + 1] = inside ? t.base[a + b * t.nx]! / 100 : pos[(i + j * nx) * 3 + 1]!;
+        const k = (i + j * nx) * 3;
+        natural[k] = xs[i]!;
+        natural[k + 1] = inside ? t.base[a + b * t.nx]! / 100 : t.farHeight(xs[i]!, zs[j]!);
+        natural[k + 2] = zs[j]!;
       }
     }
-    st = { index: buildIndex(nx, nz), colors: buildColors(t, xs, zs, natural) };
+    // Colors from the natural ground (pads and banks come and go; the shader paints them).
+    st = { index: buildIndex(nx, nz), colors: buildColors(t, xs, zs, natural), positions: natural };
     if (t.generated) statics.set(key, st);
+  }
+  // This sim's ground over the lattice (its pads and banks).
+  const pos = st.positions.slice();
+  for (let b = 0; b < t.nz; b++) {
+    for (let a = 0; a < t.nx; a++) pos[(a + ax.first + (b + az.first) * nx) * 3 + 1] = t.eff[a + b * t.nx]! / 100;
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -176,12 +175,14 @@ function buildColors(t: Terrain, xs: Float64Array, zs: Float64Array, pos: Float3
       const dz = (y(i, j + 1) - y(i, j - 1)) / ((zs[Math.min(nz - 1, j + 1)]! - zs[Math.max(0, j - 1)]!) || 1);
       const deg = (Math.atan(Math.hypot(dx, dz)) * 180) / Math.PI;
       const n = (valueNoise(x / 37, z / 37, 101) + 1) / 2;
+      const outside = Math.max(-x, x - W, -z, z - H, 0);
       c.copy(GREENS[0]!).lerp(GREENS[1]!, smoothstep(0.2, 0.5, n)).lerp(GREENS[2]!, smoothstep(0.55, 0.85, n));
       c.lerp(DRY, 0.6 * smoothstep(4, 9, h));
-      const outside = Math.max(-x, x - W, -z, z - H, 0);
-      c.lerp(DIRT, smoothstep(17, 26, deg));
-      c.lerp(ROCK, Math.max(smoothstep(27, 36, deg), smoothstep(6, 30, outside) * smoothstep(8, 25, h)));
-      c.lerp(SNOW, smoothstep(50, 62, h));
+      // Dirt on steep slopes of the grid (the mountains past it stay green up to their rocks).
+      c.lerp(DIRT, smoothstep(17, 26, deg) * (1 - smoothstep(0, 10, outside)));
+      // Rock on steep ground (the cliff band) and toward the summits, snow on the highest.
+      c.lerp(ROCK, Math.max(smoothstep(27, 36, deg), smoothstep(36, 50, h) * smoothstep(0, 20, outside)));
+      c.lerp(SNOW, smoothstep(50, 60, h));
       if (lake) {
         const ex = (x / FACTORY_CELL - lake.x) / lake.rx;
         const ez = (z / FACTORY_CELL - lake.z) / lake.rz;
