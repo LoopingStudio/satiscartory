@@ -1,12 +1,12 @@
-import { BELT, DRILL, MACHINE, START_STORAGE } from '../../data/balance';
-import { BUILDINGS, type BuildingType, type Side } from '../../data/buildings';
+import { BELT, DRILL, MACHINE, NODE, START_STORAGE } from '../../data/balance';
+import { BUILDINGS, isBelt, type BuildingType, type Side } from '../../data/buildings';
 import { FACTORY_MAP, LEGACY_MAP_OFFSET, RESOURCES, type ResourceId, type ResourceNode } from '../../data/factoryMap';
 import { FACTORY_GRID_H, FACTORY_GRID_W } from '../../config/constants';
 import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
-import { isMachine, isProducer, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
+import { isMachine, isNode, isProducer, type NodeB, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
 
 export interface SimEvents extends Record<string, unknown> {
   placed: Building;
@@ -61,6 +61,9 @@ export class FactorySim {
   private feeders = new Map<number, { id: number; side: Side }[]>();
   /** Per target building: the links that feed it (any building type). */
   private inbound = new Map<number, { id: number; link: Link }[]>();
+  /** Splitters: the link of each output port (null where nothing takes items), in port order. */
+  private multiLinks = new Map<number, (Link | null)[]>();
+  private logistics: NodeB[] = [];
   private readonly occupantAt: OccupantAt = (x, z) => this.at(x, z);
   private convOrder: ConveyorB[] = [];
   private producers: (DrillB | MachineB)[] = [];
@@ -210,32 +213,48 @@ export class FactorySim {
    */
   takeFromBelts(ids: readonly number[], sink: ItemSink): Inventory {
     const taken: Inventory = {};
+    const take = (item: ItemId) => {
+      if (sink.add(item, 1) !== 1) return false;
+      taken[item] = (taken[item] ?? 0) + 1;
+      return true;
+    };
     for (const id of ids) {
-      const c = this.buildings.get(id);
-      if (c?.type !== 'conveyor' || !c.items.length) continue;
-      c.items = c.items.filter((it) => {
-        if (sink.add(it.item, 1) !== 1) return true;
-        taken[it.item] = (taken[it.item] ?? 0) + 1;
-        return false;
-      });
+      const b = this.buildings.get(id);
+      if (b?.type === 'conveyor') b.items = b.items.filter((it) => !take(it.item));
+      else if (isNode(b)) {
+        b.out = b.out.map((it) => (it && take(it) ? null : it));
+        b.buf = b.buf.filter((it) => !take(it));
+      }
     }
     return taken;
   }
 
+  /** Items lying on a belt piece (conveyor, splitter, merger). */
+  itemsOn(id: number): number {
+    const b = this.buildings.get(id);
+    if (b?.type === 'conveyor') return b.items.length;
+    return isNode(b) ? b.buf.length + b.out.filter((it) => it).length : 0;
+  }
+
   /**
-   * Conveyors connected to conveyor `id` belt to belt, downstream (its output link) and upstream (belts
-   * feeding it, through merges), in id order. Machines and the hub end it. [] if `id` is not a conveyor.
+   * Belt pieces (conveyors, splitters, mergers) connected to `id` without a machine in between, downstream
+   * (its outputs) and upstream (what feeds it, through merges), in id order. Machines and the hub end it.
+   * [] if `id` is not a belt piece.
    */
   beltLine(id: number): number[] {
-    if (this.buildings.get(id)?.type !== 'conveyor') return [];
+    const start = this.buildings.get(id);
+    if (!start || !isBelt(start.type)) return [];
     this.syncTopology();
     const seen = new Set<number>([id]);
     const todo = [id];
     while (todo.length) {
       const cur = todo.pop()!;
-      const next = [this.outLinks.get(cur)?.target, ...(this.feeders.get(cur) ?? []).map((f) => f.id)];
+      const outs = this.multiLinks.get(cur) ?? [this.outLinks.get(cur) ?? null];
+      const next = [...outs.map((l) => l?.target), ...(this.inbound.get(cur) ?? []).map((f) => f.id)];
       for (const n of next) {
-        if (n === undefined || seen.has(n) || this.buildings.get(n)?.type !== 'conveyor') continue;
+        if (n === undefined || seen.has(n)) continue;
+        const b = this.buildings.get(n);
+        if (!b || !isBelt(b.type)) continue;
         seen.add(n);
         todo.push(n);
       }
@@ -309,6 +328,9 @@ export class FactorySim {
     switch (type) {
       case 'conveyor':
         return { type, id, x, z, rot, items: [], lastFrom: -1 };
+      case 'splitter':
+      case 'merger':
+        return { type, id, x, z, rot, buf: [], out: this.outSlots(type), lastOut: -1, lastFrom: -1 };
       case 'drill':
         return { type, id, x, z, rot, resource, progress: 0, outBuf: [] };
       case 'smelter':
@@ -319,6 +341,11 @@ export class FactorySim {
       case 'hub':
         return { type, id, x, z, rot };
     }
+  }
+
+  /** Empty output slots of a splitter (one per output port); none for a merger. */
+  private outSlots(type: 'splitter' | 'merger'): null[] {
+    return type === 'splitter' ? BUILDINGS.splitter.ports.filter((p) => p.dir === 'out').map(() => null) : [];
   }
 
   private insert(b: Building): void {
@@ -343,6 +370,7 @@ export class FactorySim {
 
   private refundContents(b: Building, sink?: ItemSink): void {
     if (b.type === 'conveyor') for (const it of b.items) this.refund(it.item, 1, sink);
+    if (isNode(b)) for (const it of [...b.buf, ...b.out]) if (it) this.refund(it, 1, sink);
     if (b.type === 'drill') for (const it of b.outBuf) this.refund(it, 1, sink);
     if (isMachine(b)) {
       for (const [item, n] of Object.entries(b.inBuf) as [ItemId, number][]) this.refund(item, n, sink);
@@ -432,6 +460,12 @@ export class FactorySim {
 
   /** Output link of `b` among the occupants given by `at`: its output ports in order, the first one that links wins. */
   private findLink(b: Occupant, at: OccupantAt): Link | null {
+    return this.findLinks(b, at, true).find((l) => l) ?? null;
+  }
+
+  /** The link of each output port of `b`, in port order (null where nothing takes items); `first` stops at the first link. */
+  private findLinks(b: Occupant, at: OccupantAt, first = false): (Link | null)[] {
+    const links: (Link | null)[] = [];
     for (const out of BUILDINGS[b.type].ports) {
       if (out.dir !== 'out') continue;
       const w = this.portWorld(b, out.cell, out.side);
@@ -439,9 +473,16 @@ export class FactorySim {
       const nz = w.cz + DZ[w.side];
       const t = at(nx, nz);
       const entry = opposite(w.side);
-      if (t && t.id !== b.id && this.acceptsAt(t, nx, nz, entry, at)) return { target: t.id, cx: nx, cz: nz, entry };
+      const link = t && t.id !== b.id && this.acceptsAt(t, nx, nz, entry, at) ? { target: t.id, cx: nx, cz: nz, entry } : null;
+      links.push(link);
+      if (link && first) break;
     }
-    return null;
+    return links;
+  }
+
+  /** Every output link a building makes: all of a splitter's, the first one of anything else. */
+  private outputLinks(b: Occupant, at: OccupantAt): (Link | null)[] {
+    return BUILDINGS[b.type].multiOut ? this.findLinks(b, at) : [this.findLink(b, at)];
   }
 
   private rebuildTopology(): void {
@@ -450,12 +491,15 @@ export class FactorySim {
     this.outLinks.clear();
     this.feeders.clear();
     this.inbound.clear();
+    this.multiLinks.clear();
     const sorted = [...this.buildings.values()].sort((a, b) => a.id - b.id);
     for (const b of sorted) {
-      const link = this.findLink(b, this.occupantAt);
-      if (link) {
+      const links = this.outputLinks(b, this.occupantAt);
+      for (const link of links) {
+        if (!link) continue;
         const t = this.buildings.get(link.target)!;
-        if (t.type === 'conveyor') {
+        // Round-robin merging (conveyors, mergers) looks at the feeders by local side.
+        if (t.type === 'conveyor' || t.type === 'merger') {
           let list = this.feeders.get(t.id);
           if (!list) this.feeders.set(t.id, (list = []));
           list.push({ id: b.id, side: unrotateSide(link.entry, t.rot) });
@@ -464,7 +508,8 @@ export class FactorySim {
         if (!ins) this.inbound.set(t.id, (ins = []));
         ins.push({ id: b.id, link });
       }
-      this.outLinks.set(b.id, link);
+      this.outLinks.set(b.id, links.find((l) => l) ?? null);
+      if (BUILDINGS[b.type].multiOut) this.multiLinks.set(b.id, links);
     }
 
     // Conveyors downstream-first so that space frees up before upstream items move.
@@ -483,6 +528,7 @@ export class FactorySim {
       for (let i = chain.length - 1; i >= 0; i--) this.convOrder.push(chain[i]!);
     }
     this.producers = sorted.filter(isProducer);
+    this.logistics = sorted.filter(isNode);
     this.events.emit('topology', undefined);
   }
 
@@ -519,19 +565,22 @@ export class FactorySim {
     const b = this.buildings.get(id);
     if (!b) return [];
     const link = this.outLinks.get(id) ?? null;
+    const multi = this.multiLinks.get(id);
     const ins = this.inbound.get(id) ?? [];
     return BUILDINGS[b.type].ports.map((p) => {
       const w = this.portWorld(b, p.cell, p.side);
       const nx = w.cx + DX[w.side];
       const nz = w.cz + DZ[w.side];
+      const own = (l: Link | null) => !!l && l.cx === nx && l.cz === nz && l.entry === opposite(w.side);
       const linked =
         p.dir === 'out'
-          ? !!link && link.cx === nx && link.cz === nz && link.entry === opposite(w.side)
+          ? multi ? multi.some(own) : own(link)
           : ins.some((f) => f.link.cx === w.cx && f.link.cz === w.cz && f.link.entry === w.side);
       const neighbor = this.at(nx, nz);
       // A building outputs through one port only (the first that links): with an output linked, its other
       // outputs are unused even with nothing in front (a belt there would get nothing, or steal the output).
-      const state = linked ? 'linked' : !this.inBounds(nx, nz) || neighbor ? 'blocked' : p.dir === 'out' && link ? 'unused' : 'free';
+      // A splitter uses them all.
+      const state = linked ? 'linked' : !this.inBounds(nx, nz) || neighbor ? 'blocked' : p.dir === 'out' && link && !multi ? 'unused' : 'free';
       return { cx: w.cx, cz: w.cz, side: w.side, dir: p.dir, state, neighbor: neighbor?.id ?? null };
     });
   }
@@ -564,16 +613,18 @@ export class FactorySim {
     const cells = new Map<number, Occupant>();
     for (const p of planned) for (const [cx, cz] of this.cellsFor(p.type, p.x, p.z, p.rot)) if (this.inBounds(cx, cz)) cells.set(this.idx(cx, cz), p);
     const at: OccupantAt = (x, z) => (this.inBounds(x, z) ? (cells.get(this.idx(x, z)) ?? this.at(x, z)) : undefined);
-    const res: PlanLinks[] = planned.map(() => ({ out: null, in: [] }));
+    const res: PlanLinks[] = planned.map(() => ({ out: null, outs: [], in: [] }));
     const feed = (from: Occupant) => {
-      const l = this.findLink(from, at);
-      if (l && l.target < 0) res[-1 - l.target]!.in.push({ id: from.id, link: l });
-      return l;
+      const links = this.outputLinks(from, at).filter((l): l is Link => !!l);
+      for (const l of links) if (l.target < 0) res[-1 - l.target]!.in.push({ id: from.id, link: l });
+      return links;
     };
     // Existing neighbors of planned cells may link into them (in id order, as the topology would).
     const neighbors = new Map<number, Building>();
     for (const p of planned) {
-      res[-1 - p.id]!.out = feed(p);
+      const outs = feed(p);
+      res[-1 - p.id]!.outs = outs;
+      res[-1 - p.id]!.out = outs[0] ?? null;
       for (const [cx, cz] of this.cellsFor(p.type, p.x, p.z, p.rot)) {
         for (let s = 0; s < 4; s++) {
           const n = this.at(cx + DX[s], cz + DZ[s]);
@@ -601,6 +652,8 @@ export class FactorySim {
       if (link && this.tryInsert(link, b.outBuf[0]!, b.id, 0)) b.outBuf.shift();
     }
     for (const c of this.convOrder) this.stepConveyor(c);
+    // After the belts: an output belt has already moved this tick, so a node keeps up with a full line.
+    for (const n of this.logistics) this.stepNode(n);
     this.fresh.clear();
   }
 
@@ -652,6 +705,37 @@ export class FactorySim {
     m.progress = 0;
   }
 
+  /**
+   * Passes items on, one per tick and per output (more than a belt carries). A merger pushes its front item.
+   * A splitter hands its front item to the next linked output (from the one after the last served) whose
+   * slot is free, then every slot pushes into its target: an output whose target is busy keeps its item
+   * waiting there (it counts as ready for that target's merge turns) while the others go on.
+   */
+  private stepNode(n: NodeB): void {
+    if (n.type === 'merger') {
+      const item = n.buf[0];
+      const link = this.outLinks.get(n.id);
+      if (item !== undefined && link && this.tryInsert(link, item, n.id, 0)) n.buf.shift();
+      return;
+    }
+    const links = this.multiLinks.get(n.id) ?? [];
+    const item = n.buf[0];
+    if (item !== undefined) {
+      for (let k = 1; k <= links.length; k++) {
+        const i = (n.lastOut + k + links.length) % links.length;
+        if (links[i] && !n.out[i]) {
+          n.out[i] = n.buf.shift()!;
+          n.lastOut = i;
+          break;
+        }
+      }
+    }
+    n.out.forEach((it, i) => {
+      const link = links[i];
+      if (it && link && this.tryInsert(link, it, n.id, 0)) n.out[i] = null;
+    });
+  }
+
   private stepConveyor(c: ConveyorB): void {
     const items = c.items;
     let limit: number = BELT.SEG;
@@ -679,11 +763,17 @@ export class FactorySim {
     }
   }
 
-  /** Is `feederId` about to push an item into its link target? */
-  private isReady(feederId: number): boolean {
+  /** Is `feederId` about to push an item into `targetId`? (merge turns) */
+  private isReady(feederId: number, targetId: number): boolean {
     const f = this.buildings.get(feederId);
     if (!f) return false;
     if (f.type === 'conveyor') return (f.items[0]?.pos ?? -1) >= BELT.SEG - BELT.SPEED;
+    if (f.type === 'splitter') {
+      // The slot of the output that feeds this target.
+      const links = this.multiLinks.get(f.id) ?? [];
+      return f.out.some((it, i) => !!it && links[i]?.target === targetId);
+    }
+    if (isNode(f)) return f.buf.length > 0;
     if (isProducer(f)) return f.outBuf.length > 0;
     return false;
   }
@@ -700,7 +790,7 @@ export class FactorySim {
         // Round-robin merge: the side right after the last accepted one has priority.
         const mine = mergePriority(from, t.lastFrom);
         for (const f of this.feeders.get(t.id) ?? []) {
-          if (f.id !== fromId && f.side !== from && mergePriority(f.side, t.lastFrom) < mine && this.isReady(f.id)) return false;
+          if (f.id !== fromId && f.side !== from && mergePriority(f.side, t.lastFrom) < mine && this.isReady(f.id, t.id)) return false;
         }
         const entry: BeltItem = { item, pos: 0, prev, from };
         t.items.push(entry);
@@ -718,6 +808,21 @@ export class FactorySim {
         const cur = t.inBuf[item] ?? 0;
         if (cur >= need.count * MACHINE.IN_CAP_FACTOR) return false;
         t.inBuf[item] = cur + 1;
+        return true;
+      }
+      case 'splitter':
+      case 'merger': {
+        if (t.buf.length >= NODE.CAP) return false;
+        const from = unrotateSide(link.entry, t.rot);
+        if (t.type === 'merger') {
+          // Round-robin like a conveyor merge: an input whose turn comes first and that is ready goes first.
+          const mine = mergePriority(from, t.lastFrom);
+          for (const f of this.feeders.get(t.id) ?? []) {
+            if (f.id !== fromId && f.side !== from && mergePriority(f.side, t.lastFrom) < mine && this.isReady(f.id, t.id)) return false;
+          }
+        }
+        t.buf.push(item);
+        t.lastFrom = from;
         return true;
       }
       case 'hub':
@@ -784,6 +889,13 @@ export class FactorySim {
       const cells = sim.cellsFor(b.type, b.x, b.z, b.rot);
       if (cells.some(([cx, cz]) => !sim.inBounds(cx, cz) || sim.grid[sim.idx(cx, cz)])) continue;
       if (b.type === 'conveyor') b.items = b.items.filter((it) => isItemId(it.item));
+      if (isNode(b)) {
+        b.buf = (b.buf ?? []).filter((it) => isItemId(it));
+        const slots = sim.outSlots(b.type);
+        b.out = slots.map((_, i) => (isItemId(b.out?.[i]) ? b.out[i]! : null));
+        if (!Number.isInteger(b.lastOut)) b.lastOut = -1;
+        if (!Number.isInteger(b.lastFrom)) b.lastFrom = -1;
+      }
       if (isMachine(b)) {
         const r = b.recipe ? RECIPES_BY_ID[b.recipe] : undefined;
         if (b.recipe && (!r || r.machine !== b.type)) {

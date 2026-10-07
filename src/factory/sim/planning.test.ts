@@ -98,7 +98,7 @@ describe('ports', () => {
 
 describe('planLinks', () => {
   it('predicts exactly the links that placing the plan makes (random layouts)', () => {
-    const types: BuildingType[] = ['conveyor', 'conveyor', 'conveyor', 'drill', 'smelter', 'press', 'assembler'];
+    const types: BuildingType[] = ['conveyor', 'conveyor', 'conveyor', 'splitter', 'merger', 'drill', 'smelter', 'press', 'assembler'];
     const rnd = mulberry32(7);
     const pick = <T>(a: readonly T[]) => a[Math.floor(rnd() * a.length)]!;
     let checked = 0;

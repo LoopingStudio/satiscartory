@@ -48,6 +48,22 @@ export interface MachineB extends Base {
   status: MachineStatus;
 }
 
+/**
+ * Splitter / merger: items wait in a small buffer (NODE.CAP) between the belts. A splitter hands them to
+ * its outputs in turn, into one waiting slot per output (an output whose slot is still taken is skipped);
+ * a merger takes its inputs in turn.
+ */
+export interface NodeB extends Base {
+  type: 'splitter' | 'merger';
+  buf: ItemId[];
+  /** Splitter: the item waiting at each output (in output port order); [] for a merger. */
+  out: (ItemId | null)[];
+  /** Index (among the output ports) of the last output handed an item; -1 = none. */
+  lastOut: number;
+  /** Local side of the last accepted input (merger round-robin); -1 = none. */
+  lastFrom: number;
+}
+
 export interface HubB extends Base {
   type: 'hub';
 }
@@ -57,7 +73,7 @@ export interface GarageB extends Base {
   type: 'garage';
 }
 
-export type Building = ConveyorB | DrillB | MachineB | GarageB | HubB;
+export type Building = ConveyorB | NodeB | DrillB | MachineB | GarageB | HubB;
 
 export interface Link {
   target: number;
@@ -78,7 +94,10 @@ export interface Placement {
 
 /** Links a planned building would make (FactorySim.planLinks); planned buildings have ids -1, -2… */
 export interface PlanLinks {
+  /** Its output link (a splitter: the first of `outs`). */
   out: Link | null;
+  /** Every output link (several for a splitter). */
+  outs: Link[];
   /** Buildings that would feed it, with their link. */
   in: { id: number; link: Link }[];
 }
@@ -131,6 +150,11 @@ export type BuildingTypeOf<T extends BuildingType> = Extract<Building, { type: T
 /** Recipe machines (smelter, constructor, assembler). */
 export function isMachine(b: Building | undefined): b is MachineB {
   return b !== undefined && (b.type === 'smelter' || b.type === 'press' || b.type === 'assembler');
+}
+
+/** Splitters and mergers. */
+export function isNode(b: Building | undefined): b is NodeB {
+  return b !== undefined && (b.type === 'splitter' || b.type === 'merger');
 }
 
 /** Buildings with an output buffer (drills and recipe machines). */

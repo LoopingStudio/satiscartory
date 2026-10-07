@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { AssetLoader } from '../../core/assets/AssetLoader';
-import { BUILDINGS, type BuildingType } from '../../data/buildings';
+import { BUILDINGS, isBelt, type BuildingType } from '../../data/buildings';
+import { DX, DZ } from '../sim/dirs';
+import { BELT_TOP_Y, PORT_COLORS, smallArrowGeometry } from './portMarkers';
 import { ITEMS } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { FACTORY_CELL } from '../../config/constants';
@@ -213,9 +215,12 @@ function screenMaterial(): THREE.Material {
   return garageScreenMaterial;
 }
 
+/** Arrows painted on splitter / merger tops (shared, never disposed). */
+const topArrowMaterial = new THREE.MeshBasicMaterial({ color: PORT_COLORS.out, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+
 /** Height of a building's model (highlight boxes, marks floated over it). */
 export function buildingHeight(type: BuildingType): number {
-  return type === 'conveyor' ? 1.0 : type === 'hub' || type === 'smelter' ? 4.2 : type === 'drill' ? 4.1 : type === 'garage' ? GARAGE.height + 0.05 : 3.0;
+  return isBelt(type) ? 1.0 : type === 'hub' || type === 'smelter' ? 4.2 : type === 'drill' ? 4.1 : type === 'garage' ? GARAGE.height + 0.05 : 3.0;
 }
 
 /** World position of the center of a footprint. */
@@ -250,6 +255,21 @@ export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group
     case 'conveyor':
       add('factory-kit/conveyor', [0, 0, 0], FACTORY_CELL);
       break;
+    case 'splitter':
+    case 'merger': {
+      // The kit's crossing belt, with orange arrows on top: from the center to the three outputs
+      // (splitter), from the three inputs to the center (merger).
+      add('factory-kit/conveyor-cross', [0, 0, 0], FACTORY_CELL);
+      const sides = BUILDINGS[type].ports.filter((p) => p.dir === (type === 'splitter' ? 'out' : 'in')).map((p) => p.side);
+      for (const s of sides) {
+        const a = new THREE.Mesh(smallArrowGeometry, topArrowMaterial);
+        const toward = type === 'splitter' ? s : (s + 2) % 4;
+        a.position.set(DX[s] * 0.55, BELT_TOP_Y + 0.02, DZ[s] * 0.55);
+        a.rotation.y = Math.atan2(DX[toward]!, DZ[toward]!);
+        g.add(a);
+      }
+      break;
+    }
     case 'smelter': {
       // Foundry: the machine with a round hole in its roof over a glowing molten core, a slim round
       // chimney at one end and an orange valve at the other (press: plain roof + square piston;
@@ -407,7 +427,7 @@ export class BuildingVisual {
       this.benchPiece = model.getObjectByName('bench-piece') ?? null;
       this.benchPieceY = this.benchPiece?.position.y ?? 0;
     }
-    if (type !== 'conveyor' && type !== 'hub' && type !== 'garage') {
+    if (!isBelt(type) && type !== 'hub' && type !== 'garage') {
       this.lamp = new THREE.Mesh(lampGeometry, statusMaterial('noRecipe'));
       if (type === 'drill') this.lamp.position.set(-1, 3.95, 0);
       else this.lamp.position.set(1.1, 2.45, -0.6);

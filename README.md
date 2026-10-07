@@ -37,7 +37,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | ZQSD | Se déplacer |
 | Maj | Courir |
 | Espace | Sauter |
-| 1 à 6 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage (une fois leur palier débloqué) |
+| 1 à 8 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage, répartiteur, fusionneur (une fois leur palier débloqué) |
 | R | Tourner (sur le fantôme d'un garage, une flèche bleue marque la porte). Un convoyeur posé contre une machine s'oriente seul pour s'y raccorder ; R l'oriente autrement sur cette case |
 | Clic gauche | Poser (maintenu : tracer des convoyeurs ; viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée) |
 | F | Démonter |
@@ -101,7 +101,7 @@ Une nouvelle partie démarre avec un hangar vide et aucun bâtiment débloqué. 
 
 | Palier | Coût | Débloque |
 |---|---|---|
-| 1. Extraction | 10 tiges | Foreuse, convoyeur |
+| 1. Extraction | 10 tiges | Foreuse, convoyeur, répartiteur, fusionneur |
 | 2. Fonderie | 10 plaques, 10 tiges | Fonderie |
 | 3. Constructeur | 30 plaques, 20 tiges, 40 boulons | Constructeur |
 | 4. Assemblage | 60 plaques, 40 tiges, 120 boulons, 10 pneus | Assembleuse |
@@ -116,9 +116,11 @@ Chaque machine montre où brancher un convoyeur : devant chaque **sortie**, une 
 - **Poser un convoyeur** : sur la case d'une flèche, ou en visant la machine, le fantôme s'oriente seul (il reçoit la sortie, ou alimente l'entrée). Une flèche verte montre chaque liaison et l'indication du bas dit « ✓ reçoit : Foreuse · alimente : Fonderie ». Un clic sans bouger pose exactement le fantôme affiché.
 - **Tracer** : viser une machine part de sa sortie ; viser le bout d'un convoyeur le prolonge ; finir sur une machine s'arrête devant son entrée la plus proche et y tourne la dernière tuile. Le sens suit les ports : un convoyeur va toujours d'une sortie vers une entrée, même tracé dans l'autre sens (partir de la flèche bleue d'une entrée trace un convoyeur qui y arrive). Le tracé en L contourne les bâtiments quand l'autre ordre est libre.
 - Une machine ne sort que par **une** sortie à la fois : dès qu'une est reliée, l'autre n'est plus marquée.
+- **Répartiteur** (touche 7) : ce qui entre par l'arrière sort tour à tour à l'avant, à gauche et à droite ; une sortie sans convoyeur ou bouchée est sautée, rien ne s'arrête tant qu'une sortie reste libre. Pour alimenter plusieurs machines depuis une seule ligne.
+- **Fusionneur** (touche 8) : jusqu'à trois arrivées (arrière, gauche, droite) réunies en une seule vers l'avant, chacune à son tour. Un convoyeur qui arrive sur le flanc d'un autre fusionne aussi, comme avant.
 - **Cul-de-sac** : une croix rouge marque un convoyeur qui bute contre un bâtiment qui refuse ses objets (une sortie, un mur de machine, un convoyeur en face), et les sorties d'une machine qui donnent toutes sur un bâtiment.
 - Le panneau d'une foreuse ou d'une machine (E) dit si son entrée et sa sortie sont reliées.
-- **Ramasser sur un convoyeur** : E prend les objets de la case visée ; maintenir E (0,5 s) prend ceux de toute la ligne, en surbrillance pendant qu'on vise. Pratique pour vider une ligne bouchée ou se servir au passage.
+- **Ramasser sur un convoyeur** : E prend les objets de la case visée ; maintenir E (0,5 s) prend ceux de toute la ligne, en surbrillance pendant qu'on vise. Ça marche aussi sur un répartiteur ou un fusionneur, et la ligne les traverse. Pratique pour vider une ligne bouchée ou se servir au passage.
 
 ## Garage et voitures
 

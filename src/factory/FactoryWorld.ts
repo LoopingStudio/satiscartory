@@ -1,6 +1,6 @@
 import { PhysicsWorld, RAPIER } from '../core/physics/PhysicsWorld';
 import { FACTORY_CELL, GRAVITY_FACTORY } from '../config/constants';
-import { BUILDINGS } from '../data/buildings';
+import { BUILDINGS, isBelt } from '../data/buildings';
 import { CONVEYOR_GROUPS } from './collisionGroups';
 import { PLAYER } from '../data/player';
 import { rotatedSize } from './sim/dirs';
@@ -11,7 +11,7 @@ import type { FactorySim } from './sim/FactorySim';
 import type { Building } from './sim/types';
 
 /** Collider heights per building type (meters). Conveyors are low enough to step onto. */
-const HEIGHTS = { conveyor: 0.8, drill: 3.6, smelter: 2.1, press: 2.1, assembler: 2.1 } as const;
+const HEIGHTS = { conveyor: 0.8, splitter: 0.8, merger: 0.8, drill: 3.6, smelter: 2.1, press: 2.1, assembler: 2.1 } as const;
 
 /** Rapier world of the factory: ground + one static collider set per building, kept in sync with the sim. */
 export class FactoryWorld {
@@ -66,10 +66,10 @@ export class FactoryWorld {
       }
     } else {
       const half = HEIGHTS[b.type] / 2;
-      const inset = b.type === 'conveyor' ? 0 : 0.06;
+      const inset = isBelt(b.type) ? 0 : 0.06;
       const d = RAPIER.ColliderDesc.cuboid((rw * FACTORY_CELL) / 2 - inset, half, (rh * FACTORY_CELL) / 2 - inset).setTranslation(cx, half, cz);
-      // Cars drive across belt lines.
-      descs.push(b.type === 'conveyor' ? d.setCollisionGroups(CONVEYOR_GROUPS) : d);
+      // Cars drive across belt lines (splitters and mergers included).
+      descs.push(isBelt(b.type) ? d.setCollisionGroups(CONVEYOR_GROUPS) : d);
     }
     const list = descs.map((d) => this.physics.world.createCollider(d.setFriction(0.8)));
     this.colliders.set(b.id, list);

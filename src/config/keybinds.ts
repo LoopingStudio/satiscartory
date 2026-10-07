@@ -18,6 +18,8 @@ export const KEYBINDS = {
   hotbar4: ['Digit4'],
   hotbar5: ['Digit5'],
   hotbar6: ['Digit6'],
+  hotbar7: ['Digit7'],
+  hotbar8: ['Digit8'],
   // vehicle
   throttle: ['KeyW', 'ArrowUp'],
   brake: ['KeyS', 'ArrowDown'],

@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import type { AssetLoader } from '../../core/assets/AssetLoader';
 import { BELT } from '../../data/balance';
+import { BUILDINGS } from '../../data/buildings';
 import { RESOURCES, type ResourceId } from '../../data/factoryMap';
 import { FACTORY_CELL, FACTORY_MODEL_SCALE } from '../../config/constants';
 import type { FactorySim, ConveyorShape } from '../sim/FactorySim';
-import type { Building, ConveyorB } from '../sim/types';
+import { isNode, type Building, type ConveyorB } from '../sim/types';
 import { mulberry32 } from '../../core/rng';
 import { BuildingVisual, buildingHeight } from './BuildingVisuals';
 import { ItemRenderer } from './ItemRenderer';
@@ -334,6 +335,21 @@ export class FactoryView {
     const r2 = this.tmp2;
     items.begin();
     for (const b of this.sim.buildings.values()) {
+      if (isNode(b)) {
+        // Splitter / merger: the item passing through in the middle of the crossing, and a splitter's items
+        // waiting at its outputs, toward each output.
+        const cx = (b.x + 0.5) * FACTORY_CELL;
+        const cz = (b.z + 0.5) * FACTORY_CELL;
+        const it = b.buf[0];
+        if (it) items.add(it, cx, BELT_TOP, cz, b.rot * (Math.PI / 2));
+        const outs = BUILDINGS[b.type].ports.filter((p) => p.dir === 'out');
+        b.out.forEach((o, i) => {
+          if (!o) return;
+          const s = (outs[i]!.side + b.rot) % 4;
+          items.add(o, cx + DX[s] * 0.32 * FACTORY_CELL, BELT_TOP, cz + DZ[s] * 0.32 * FACTORY_CELL, s * (Math.PI / 2));
+        });
+        continue;
+      }
       if (b.type !== 'conveyor') continue;
       const cx = (b.x + 0.5) * FACTORY_CELL;
       const cz = (b.z + 0.5) * FACTORY_CELL;

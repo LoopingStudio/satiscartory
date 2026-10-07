@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { AssetLoader } from '../../core/assets/AssetLoader';
 import { RAPIER } from '../../core/physics/PhysicsWorld';
-import { BUILDINGS, type BuildingType } from '../../data/buildings';
+import { BUILDINGS, isBelt, type BuildingType } from '../../data/buildings';
 import { PLAYER } from '../../data/player';
 import { FACTORY_CELL } from '../../config/constants';
 import { DX, DZ, opposite, rotatedSize, type Rot } from '../sim/dirs';
@@ -326,10 +326,11 @@ export class BuildController {
     }
     // Machine ghost: outputs green when they would link (the others hidden, a building outputs through one
     // port only); when every output faces a building or the map edge, a red cross over its output face.
-    const outLinked = !!links[0]!.out;
+    // A splitter outputs through all its ports: none is hidden for another.
+    const outLinked = !!links[0]!.out && !BUILDINGS[type].multiOut;
     let blocked: BuildingType | 'edge' | null = null;
     const faces: [number, number][] = [];
-    if (!outLinked) {
+    if (!links[0]!.out) {
       const fronts = ports.filter((p) => p.dir === 'out').map((p) => {
         const w = this.sim.portWorld(plan[0]!, p.cell, p.side);
         faces.push([(w.cx + 0.5 + DX[w.side] * 0.3) * FACTORY_CELL, (w.cz + 0.5 + DZ[w.side] * 0.3) * FACTORY_CELL]);
@@ -342,8 +343,11 @@ export class BuildController {
     this.ghostPorts.forEach((marker, i) => {
       const p = ports[i]!;
       const linked = portLinked(this.sim, plan[0]!, i, links[0]!);
-      // Blocked outputs: their markers would sit inside the blocking building, the cross shows instead.
-      marker.visible = !(p.dir === 'out' && ((outLinked && !linked) || blocked));
+      // Blocked outputs: their markers would sit inside the blocking building, the cross shows instead
+      // (a splitter: each unlinked output facing a building).
+      const w = this.sim.portWorld(plan[0]!, p.cell, p.side);
+      const faced = !!this.sim.at(w.cx + DX[w.side], w.cz + DZ[w.side]);
+      marker.visible = !(p.dir === 'out' && ((outLinked && !linked) || blocked || (!linked && faced && BUILDINGS[type].multiOut)));
       marker.setColor(linked ? 'linked' : p.dir);
     });
     if (blocked && this.lastLinks) {
@@ -392,9 +396,11 @@ export class BuildController {
       m.visible = true;
     };
     links.forEach((l, i) => {
-      if (l.out && l.out.target >= 0) {
-        mark(l.out.cx, l.out.cz, l.out.entry);
-        summary.to.push(this.sim.buildings.get(l.out.target)!.type);
+      // Every output link (a splitter has several).
+      for (const o of l.outs) {
+        if (o.target < 0) continue;
+        mark(o.cx, o.cz, o.entry);
+        summary.to.push(this.sim.buildings.get(o.target)!.type);
       }
       for (const f of l.in) {
         if (f.id < 0) continue;
@@ -594,24 +600,25 @@ export class BuildController {
     }
     if (id === null) return;
     const b = this.sim.buildings.get(id);
-    if (b?.type === 'conveyor') {
-      // A belt carrying items (on it or along its line): E picks them up.
+    if (b && isBelt(b.type)) {
+      // A belt piece carrying items (on it or along its line): E picks them up.
       const load = this.beltLoad(id);
       if (load.line > 0) {
         this.boxAround(id, 'hover');
         this.showLine(load.ids);
       }
-    } else if (b) this.boxAround(id, 'hover');
+    } else if (b && !isBelt(b.type)) this.boxAround(id, 'hover');
   }
 
-  /** Conveyor aimed at without a tool (picking up items off belts). */
+  /** Belt piece (conveyor, splitter, merger) aimed at without a tool (picking up items off belts). */
   beltTarget(): number | null {
     const id = this.aim.buildingId;
     if (this.tool.kind !== 'none' || id === null) return null;
-    return this.sim.buildings.get(id)?.type === 'conveyor' ? id : null;
+    const b = this.sim.buildings.get(id);
+    return b && isBelt(b.type) ? id : null;
   }
 
-  /** Items on a belt tile and on its whole line (connected belts), with the line's conveyors. */
+  /** Items on a belt piece and on its whole line (connected belt pieces), with the line's pieces. */
   beltLoad(id: number): { ids: number[]; tile: number; line: number } {
     this.sim.syncTopology(); // a building placed or removed since the last tick bumps the version
     const c = this.lineCache;
@@ -620,8 +627,7 @@ export class BuildController {
     let line = 0;
     let tile = 0;
     for (const k of ids) {
-      const b = this.sim.buildings.get(k);
-      const n = b?.type === 'conveyor' ? b.items.length : 0;
+      const n = this.sim.itemsOn(k);
       line += n;
       if (k === id) tile = n;
     }
@@ -680,7 +686,7 @@ export class BuildController {
     const id = this.aim.buildingId;
     if (id === null) return null;
     const b = this.sim.buildings.get(id);
-    return b && b.type !== 'conveyor' ? id : null;
+    return b && !isBelt(b.type) ? id : null;
   }
 
   // ------------------------------------------------------------ actions
@@ -820,7 +826,7 @@ function cellsFree(check: BuildCheck): boolean {
 function portLinked(sim: FactorySim, p: Placement, i: number, links: PlanLinks): boolean {
   const port = BUILDINGS[p.type].ports[i]!;
   const w = sim.portWorld(p, port.cell, port.side);
-  if (port.dir === 'out') return !!links.out && links.out.cx === w.cx + DX[w.side] && links.out.cz === w.cz + DZ[w.side] && links.out.entry === opposite(w.side);
+  if (port.dir === 'out') return links.outs.some((o) => o.cx === w.cx + DX[w.side] && o.cz === w.cz + DZ[w.side] && o.entry === opposite(w.side));
   return links.in.some((f) => f.link.cx === w.cx && f.link.cz === w.cz && f.link.entry === w.side);
 }
 

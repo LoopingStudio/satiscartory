@@ -31,7 +31,9 @@ function feedsMachine(sim: FactorySim, l: PlanLinks): boolean {
  * now (a machine outputs through one port only): placing the belt cuts the line that works.
  */
 export function steals(sim: FactorySim, feeder: { id: number }): boolean {
-  return feeder.id >= 0 && !!sim.linkOf(feeder.id);
+  const b = feeder.id >= 0 ? sim.buildings.get(feeder.id) : undefined;
+  // A splitter feeds every output that takes items: a new one takes nothing away.
+  return !!b && !BUILDINGS[b.type].multiOut && !!sim.linkOf(feeder.id);
 }
 
 /** Runs into a building that refuses its items (front onto a machine's wall or output, head-on belt). */

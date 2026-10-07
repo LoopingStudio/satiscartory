@@ -13,7 +13,7 @@ import { OrbitCamera } from '../player/OrbitCamera';
 import { FACTORY_CELL, GRAVITY_FACTORY, PLAYER_RADIUS } from '../config/constants';
 import { RAPIER } from '../core/physics/PhysicsWorld';
 import { FACTORY_MAP } from '../data/factoryMap';
-import { BUILDINGS, BUILD_MENU } from '../data/buildings';
+import { BUILDINGS, BUILD_MENU, isBelt, type BuildingType } from '../data/buildings';
 import { ITEMS, ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { RECIPES_BY_ID, recipesFor } from '../data/recipes';
 import { TIERS, tierOf } from '../data/tiers';
@@ -39,7 +39,7 @@ export interface FactoryModeParams {
   layout?: 'demo' | 'stress';
 }
 
-const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4', 'hotbar5', 'hotbar6'];
+const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4', 'hotbar5', 'hotbar6', 'hotbar7', 'hotbar8'];
 /** The Escape keydown and the pointer-lock change arrive in either order: treat them as one press. */
 const ESC_GRACE_MS = 400;
 
@@ -116,7 +116,7 @@ export class FactoryMode implements Mode {
     // A saved position inside a building (e.g. where the hub's bench now stands) falls back to the spawn.
     const saved = this.state.player;
     const inside = saved ? this.sim.at(Math.floor(saved.x / FACTORY_CELL), Math.floor(saved.z / FACTORY_CELL)) : undefined;
-    const spawn = saved && (!inside || inside.type === 'conveyor' || BUILDINGS[inside.type].hollow)
+    const spawn = saved && (!inside || isBelt(inside.type) || BUILDINGS[inside.type].hollow)
       ? new THREE.Vector3(saved.x, saved.y, saved.z)
       : new THREE.Vector3(FACTORY_MAP.spawn.x * FACTORY_CELL, 0.1, FACTORY_MAP.spawn.z * FACTORY_CELL);
     this.player = new CharacterController(this.world.physics, spawn);
@@ -126,7 +126,8 @@ export class FactoryMode implements Mode {
       ground: this.world.ground,
       isConveyor: (c) => {
         const id = this.world.buildingOf(c);
-        return id !== null && this.sim.buildings.get(id)?.type === 'conveyor';
+        const type = id !== null ? this.sim.buildings.get(id)?.type : undefined;
+        return !!type && isBelt(type);
       },
     });
     this.avatar = new PlayerAvatar(this.game.assets);
@@ -301,7 +302,7 @@ export class FactoryMode implements Mode {
   }
 
   /** Build placement: not over a car, nor (except belts) over the player. */
-  private placementBlocker(cells: [number, number][], type: string): string | null {
+  private placementBlocker(cells: [number, number][], type: BuildingType): string | null {
     let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
     for (const [x, z] of cells) {
       minX = Math.min(minX, x);
@@ -312,7 +313,7 @@ export class FactoryMode implements Mode {
     const [x0, z0, x1, z1] = [minX * FACTORY_CELL, minZ * FACTORY_CELL, maxX * FACTORY_CELL, maxZ * FACTORY_CELL];
     if (this.cars.overlapsArea(x0, z0, x1, z1)) return 'Une voiture gêne';
     const p = this.player.cur;
-    if (type !== 'conveyor' && p.x > x0 - PLAYER_RADIUS && p.x < x1 + PLAYER_RADIUS && p.z > z0 - PLAYER_RADIUS && p.z < z1 + PLAYER_RADIUS) return 'Tu es dans le chemin';
+    if (!isBelt(type) && p.x > x0 - PLAYER_RADIUS && p.x < x1 + PLAYER_RADIUS && p.z > z0 - PLAYER_RADIUS && p.z < z1 + PLAYER_RADIUS) return 'Tu es dans le chemin';
     return null;
   }
 
@@ -664,10 +665,7 @@ export class FactoryMode implements Mode {
    */
   private takeFromBelts(ids: number[], before: ItemCounts = {}): ItemCounts {
     const taken = this.sim.takeFromBelts(ids, this.state.inventory);
-    const left = ids.reduce((n, id) => {
-      const b = this.sim.buildings.get(id);
-      return n + (b?.type === 'conveyor' ? b.items.length : 0);
-    }, 0);
+    const left = ids.reduce((n, id) => n + this.sim.itemsOn(id), 0);
     const all: ItemCounts = { ...before };
     for (const [i, n] of Object.entries(taken) as [ItemId, number][]) all[i] = (all[i] ?? 0) + n;
     const labels = (Object.entries(all) as [ItemId, number][]).map(([i, n]) => countLabel(i, n));

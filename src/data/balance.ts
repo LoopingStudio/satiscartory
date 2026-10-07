@@ -10,6 +10,11 @@ export const BELT = {
   SPACING: 40,
 } as const;
 
+/** Splitter / merger: items wait in a small buffer between the belts (passed on at one per tick). */
+export const NODE = {
+  CAP: 2,
+} as const;
+
 export const DRILL = {
   /** Ticks per extracted item (40 = 2 s). */
   PERIOD: 40,

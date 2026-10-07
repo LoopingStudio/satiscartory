@@ -13,9 +13,9 @@ import { INVENTORY } from '../data/inventory';
 import { TIERS, tierOf } from '../data/tiers';
 import { FACTORY_CELL } from '../config/constants';
 
-/** Build menu sections, in BUILD_MENU order (the 1-6 shortcuts follow BUILD_MENU). */
+/** Build menu sections (the 1-8 shortcuts follow BUILD_MENU). */
 const BUILD_CATEGORIES: { name: string; types: BuildingType[] }[] = [
-  { name: 'Logistique', types: ['conveyor'] },
+  { name: 'Logistique', types: ['conveyor', 'splitter', 'merger'] },
   { name: 'Extraction', types: ['drill'] },
   { name: 'Production', types: ['smelter', 'press', 'assembler'] },
   { name: 'Véhicules', types: ['garage'] },
@@ -24,6 +24,8 @@ const BUILD_CATEGORIES: { name: string; types: BuildingType[] }[] = [
 /** What a building is for, in the build menu's detail pane (machines also list their recipes). */
 const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
   conveyor: 'Transporte les objets à 2 m/s. Clic gauche maintenu : tracer une ligne.',
+  splitter: 'Partage une ligne : ce qui entre par l’arrière sort tour à tour à l’avant, à gauche et à droite. Une sortie libre ou bouchée est sautée, rien ne se perd.',
+  merger: 'Réunit jusqu’à trois lignes (arrière, gauche, droite) en une seule vers l’avant, chacune à son tour.',
   drill: 'À poser sur un gisement : minerai de fer ou latex selon la roche.',
   garage: 'Une place pour une voiture : assemblage, pièces, départ des courses. Porte à l’avant.',
 };
@@ -231,7 +233,7 @@ export class FactoryHud {
         el('p', { class: 'muted' }, 'Clique pour prendre le contrôle de la caméra.'),
         el('div', { class: 'controls-help' },
           el('div', {}, el('kbd', {}, 'Z Q S D'), ' se déplacer · ', el('kbd', {}, 'Maj'), ' courir · ', el('kbd', {}, 'Espace'), ' sauter'),
-          el('div', {}, el('kbd', {}, 'A'), ' menu de construction (raccourcis ', el('kbd', {}, '1-6'), ') · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter'),
+          el('div', {}, el('kbd', {}, 'A'), ' menu de construction (raccourcis ', el('kbd', {}, '1-8'), ') · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter'),
           el('div', {}, el('kbd', {}, 'E'), ' maintenu sur un gisement : miner · ', el('kbd', {}, 'E'), ' utiliser une machine / le hangar (établi, paliers)'),
           el('div', {}, el('kbd', {}, 'E'), ' sur un convoyeur : prendre ses objets (maintenu : toute la ligne)'),
           el('div', {}, el('kbd', {}, 'E'), ' près d’une voiture : monter / descendre · ', el('kbd', {}, 'Tab'), ' sac · ', el('kbd', {}, 'Échap'), ' pause'),

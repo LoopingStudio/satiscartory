@@ -56,9 +56,10 @@ describe('hub tiers', () => {
     const unlocked = TIERS.flatMap((t) => t.unlocks);
     expect(new Set(unlocked).size).toBe(unlocked.length);
     for (const type of unlocked) expect(BUILD_MENU, type).toContain(type);
-    // hotkeys 1-5 follow the unlock order
-    const order = BUILD_MENU.map(tierOf);
+    // hotkeys 1-6 follow the unlock order; splitter and merger (tier 1) were appended as 7 and 8
+    const order = BUILD_MENU.slice(0, 6).map(tierOf);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(BUILD_MENU.slice(6)).toEqual(['splitter', 'merger']);
   });
 
   it('tiers have names, at least one unlock and a valid cost', () => {

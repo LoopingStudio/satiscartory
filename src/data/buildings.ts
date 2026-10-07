@@ -4,7 +4,7 @@ import type { MachineType } from './recipes';
 /** Grid sides: 0 = +Z, 1 = +X, 2 = -Z, 3 = -X (local, before rotation). */
 export type Side = 0 | 1 | 2 | 3;
 
-export type BuildingType = 'conveyor' | 'drill' | 'smelter' | 'press' | 'assembler' | 'garage' | 'hub';
+export type BuildingType = 'conveyor' | 'splitter' | 'merger' | 'drill' | 'smelter' | 'press' | 'assembler' | 'garage' | 'hub';
 
 export interface PortDef {
   /** Local cell offset inside the footprint (rotation 0). */
@@ -30,6 +30,10 @@ export interface BuildingDef {
   acceptsAllEdges?: boolean;
   /** Walk-in / drive-in building (garage): walls around an open floor, aim falls back to its cells. */
   hollow?: boolean;
+  /** Outputs through every linked output port, in turn (splitter); others use the first one that links. */
+  multiOut?: boolean;
+  /** Belt-height logistics piece (conveyor, splitter, merger): walked over, driven across, no panel. */
+  belt?: boolean;
 }
 
 /**
@@ -61,6 +65,38 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     ],
     cost: { plate: 1 },
     buildable: true,
+    belt: true,
+  },
+  splitter: {
+    type: 'splitter',
+    name: 'Répartiteur',
+    description: 'Partage un convoyeur en trois : entrée à l’arrière, sorties à l’avant, à gauche et à droite, chacune à son tour.',
+    footprint: [1, 1],
+    ports: [
+      { cell: [0, 0], side: 2, dir: 'in' },
+      { cell: [0, 0], side: 0, dir: 'out' },
+      { cell: [0, 0], side: 3, dir: 'out' },
+      { cell: [0, 0], side: 1, dir: 'out' },
+    ],
+    cost: { plate: 2, iron_rod: 2 },
+    buildable: true,
+    multiOut: true,
+    belt: true,
+  },
+  merger: {
+    type: 'merger',
+    name: 'Fusionneur',
+    description: 'Réunit jusqu’à trois arrivées (arrière, gauche, droite) en un seul convoyeur vers l’avant, chacune à son tour.',
+    footprint: [1, 1],
+    ports: [
+      { cell: [0, 0], side: 2, dir: 'in' },
+      { cell: [0, 0], side: 3, dir: 'in' },
+      { cell: [0, 0], side: 1, dir: 'in' },
+      { cell: [0, 0], side: 0, dir: 'out' },
+    ],
+    cost: { plate: 2, iron_rod: 2 },
+    buildable: true,
+    belt: true,
   },
   drill: {
     type: 'drill',
@@ -125,4 +161,13 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   },
 };
 
-export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'press', 'assembler', 'garage'];
+/**
+ * Build menu order = shortcut keys 1-8. The production chain keeps 1-6 in unlock order; splitter and
+ * merger (tier 1, added later) come last as 7 and 8 so that the older keys did not move.
+ */
+export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'press', 'assembler', 'garage', 'splitter', 'merger'];
+
+/** Belt-height logistics piece (conveyor, splitter, merger). */
+export function isBelt(type: BuildingType): boolean {
+  return !!BUILDINGS[type].belt;
+}

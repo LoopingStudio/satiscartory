@@ -36,6 +36,9 @@ function flatArrow(half: number): THREE.BufferGeometry {
   return new THREE.ShapeGeometry(s).rotateX(-Math.PI / 2).rotateY(Math.PI);
 }
 
+/** Small flat arrow pointing +Z (splitter / merger tops). */
+export const smallArrowGeometry = flatArrow(0.3);
+
 /** Pad: a frame along the edges of the cell and a flat arrow in it, pointing +Z. */
 export const padGeometry = (() => {
   const c = FACTORY_CELL * 0.92;
