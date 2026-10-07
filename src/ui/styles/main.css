@@ -168,6 +168,10 @@ kbd {
   font-size: 14px; font-weight: 700; background: rgba(20, 22, 40, 0.7); border-radius: 8px; padding: 5px 12px; white-space: nowrap;
 }
 .hint:empty { display: none; }
+.port-status { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 6px; }
+.port-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.port-dot.port-in { background: #5ad1ff; }
+.port-dot.port-out { background: #ffa31a; }
 .storage-panel { min-width: 210px; max-height: 70vh; overflow: auto; }
 .storage-row { font-size: 14px; }
 .modal { width: min(560px, 92vw); max-height: 80vh; overflow: auto; }

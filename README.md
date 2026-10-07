@@ -38,8 +38,8 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Maj | Courir |
 | Espace | Sauter |
 | 1 à 6 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage (une fois leur palier débloqué) |
-| R | Tourner (sur le fantôme d'un garage, une flèche bleue marque la porte) |
-| Clic gauche | Poser (maintenu : tracer des convoyeurs) |
+| R | Tourner (sur le fantôme d'un garage, une flèche bleue marque la porte). Un convoyeur posé contre une machine s'oriente seul pour s'y raccorder ; R l'oriente autrement sur cette case |
+| Clic gauche | Poser (maintenu : tracer des convoyeurs ; viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée) |
 | F | Démonter |
 | Maintenir E sur un gisement | Miner à la main : un minerai toutes les 0,75 s dans le sac (case libre, à 6 m au plus) |
 | E | Utiliser une machine ou une foreuse : recette, « Charger » (sac puis hangar), « Prendre » (production vers le sac) |
@@ -107,6 +107,16 @@ Une nouvelle partie démarre avec un hangar vide et aucun bâtiment débloqué. 
 | 5. Garage | 80 plaques, 60 tiges, 160 boulons, 8 pneus | Garage |
 
 Ensuite, la chaîne du fer prend le relais : foreuse → fonderie (lingots) → constructeur (plaques, tiges, boulons). Une foreuse alimente exactement une fonderie, qui alimente exactement un constructeur (30 minerais, puis 30 lingots par minute). Les sauvegardes d’avant les paliers gardent tout débloqué, et une sauvegarde qui avait tous les paliers de sa version reçoit ceux ajoutés depuis (le garage).
+
+## Raccorder les machines
+
+Chaque machine montre où brancher un convoyeur : devant chaque **sortie**, une flèche **orange** flotte au-dessus d'un cadre au sol ; devant chaque **entrée**, une flèche **bleue** pointe vers la machine. Une foreuse n'a que des sorties, sur sa face avant ; fonderie, constructeur et assembleuse reçoivent par l'arrière et rendent par l'avant. Hors construction, seuls les côtés encore libres sont marqués ; avec un outil de construction en main, tous les ports libres clignotent.
+
+- **Poser un convoyeur** : sur la case d'une flèche, ou en visant la machine, le fantôme s'oriente seul (il reçoit la sortie, ou alimente l'entrée). Une flèche verte montre chaque liaison et l'indication du bas dit « ✓ reçoit : Foreuse · alimente : Fonderie ». Un clic sans bouger pose exactement le fantôme affiché.
+- **Tracer** : viser une machine part de sa sortie ; viser le bout d'un convoyeur le prolonge ; finir sur une machine s'arrête devant son entrée la plus proche et y tourne la dernière tuile. Le sens suit les ports : un convoyeur va toujours d'une sortie vers une entrée, même tracé dans l'autre sens (partir de la flèche bleue d'une entrée trace un convoyeur qui y arrive). Le tracé en L contourne les bâtiments quand l'autre ordre est libre.
+- Une machine ne sort que par **une** sortie à la fois : dès qu'une est reliée, l'autre n'est plus marquée.
+- **Cul-de-sac** : une croix rouge marque un convoyeur qui bute contre un bâtiment qui refuse ses objets (une sortie, un mur de machine, un convoyeur en face), et les sorties d'une machine qui donnent toutes sur un bâtiment.
+- Le panneau d'une foreuse ou d'une machine (E) dit si son entrée et sa sortie sont reliées.
 
 ## Garage et voitures
 

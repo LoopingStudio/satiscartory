@@ -4,13 +4,15 @@ import { RAPIER } from '../../core/physics/PhysicsWorld';
 import { BUILDINGS, type BuildingType } from '../../data/buildings';
 import { PLAYER } from '../../data/player';
 import { FACTORY_CELL } from '../../config/constants';
-import { DX, DZ, rotatedSize, type Rot } from '../sim/dirs';
+import { DX, DZ, opposite, rotatedSize, type Rot } from '../sim/dirs';
 import type { FactorySim } from '../sim/FactorySim';
 import type { FactoryWorld } from '../FactoryWorld';
-import { buildModel, footprintCenter } from '../view/BuildingVisuals';
+import { buildModel, buildingHeight, footprintCenter } from '../view/BuildingVisuals';
 import { GARAGE } from '../view/garageLayout';
 import { GARAGE_DOOR_SIDE } from '../../garage/parking';
-import type { Building, PlaceCheck } from '../sim/types';
+import type { Building, PlaceCheck, Placement, PlanLinks } from '../sim/types';
+import { endCell, planDrag, snapConveyorRot, startCell, steals, type DragEnd } from '../sim/planning';
+import { POINTER_Y, PORT_COLORS, crossGeometry, pointerGeometry, portMarker, sharedPointer, yawOf } from '../view/portMarkers';
 import type { Wallet } from '../../state/Inventory';
 import { countLabel, type Inventory, type ItemId } from '../../data/items';
 import { HAND } from '../../data/balance';
@@ -26,8 +28,8 @@ export interface Aim {
 
 const ghostOk = new THREE.MeshStandardMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.55, emissive: 0x1d6b3f, depthWrite: false });
 const ghostBad = new THREE.MeshStandardMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.55, emissive: 0x6b1d1d, depthWrite: false });
-const arrowOut = new THREE.MeshBasicMaterial({ color: 0xffa31a });
-const arrowIn = new THREE.MeshBasicMaterial({ color: 0x5ad1ff });
+const arrowOut = new THREE.MeshBasicMaterial({ color: PORT_COLORS.out });
+const arrowIn = new THREE.MeshBasicMaterial({ color: PORT_COLORS.in });
 const arrowGeo = new THREE.ConeGeometry(0.28, 0.6, 12).rotateX(Math.PI / 2); // points +Z
 const highlightMat = new THREE.MeshBasicMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.35, depthWrite: false });
 const hoverMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, depthWrite: false });
@@ -51,6 +53,30 @@ function setGhostMaterial(root: THREE.Object3D, mat: THREE.Material): void {
 
 /** A placement check, possibly vetoed by BuildController.placementGuard (error 'blocked' + its message). */
 export type BuildCheck = Omit<PlaceCheck, 'error'> & { error?: PlaceCheck['error'] | 'blocked'; message?: string };
+
+/**
+ * What the ghost would connect to: buildings feeding it, buildings it feeds, what blocks its output (a
+ * building or the map edge), machines whose output it would take away from their current line.
+ */
+export interface LinkSummary {
+  from: BuildingType[];
+  to: BuildingType[];
+  blockedBy: BuildingType | 'edge' | null;
+  steals: BuildingType[];
+}
+
+/** HUD text for a link summary ('' when the ghost connects to nothing). */
+export function describeLinks(s: LinkSummary | null): string {
+  if (!s) return '';
+  const names = (types: BuildingType[]) => [...new Set(types)].map((t) => BUILDINGS[t].name).join(', ');
+  const parts: string[] = [];
+  if (s.from.length) parts.push(`reçoit : ${names(s.from)}`);
+  if (s.to.length) parts.push(`alimente : ${names(s.to)}`);
+  const ok = parts.length ? `<span class="good">✓ ${parts.join(' · ')}</span>` : '';
+  const steal = s.steals.length ? `<span class="bad">⚠ prend la sortie de : ${names(s.steals)} (sa ligne actuelle n’aura plus rien)</span>` : '';
+  const bad = s.blockedBy === 'edge' ? '<span class="bad">✕ sortie vers le bord de la carte</span>' : s.blockedBy ? `<span class="bad">✕ sortie bloquée par : ${BUILDINGS[s.blockedBy].name}</span>` : '';
+  return [ok, steal, bad].filter(Boolean).join(' · ');
+}
 
 export function describeError(check: BuildCheck): string {
   switch (check.error) {
@@ -84,6 +110,8 @@ export class BuildController {
   private aimGround = false;
   /** Last placement check (for HUD messages). */
   lastCheck: BuildCheck | null = null;
+  /** What the current ghost or drag would connect to (for HUD messages). */
+  lastLinks: LinkSummary | null = null;
   onChange: (() => void) | null = null;
   onMessage: ((text: string, kind: 'info' | 'error' | 'success') => void) | null = null;
   /**
@@ -97,7 +125,20 @@ export class BuildController {
   private ghost: THREE.Group | null = null;
   private ghostType: BuildingType | null = null;
   private ghostValid = true;
-  private dragStart: [number, number] | null = null;
+  /** Port markers of a building ghost, by port index. */
+  private ghostPorts: ReturnType<typeof portMarker>[] = [];
+  /** Single conveyor ghost: where it stands and how it is turned (after snapping). */
+  private shown: { x: number; z: number; rot: Rot } | null = null;
+  /** Cell where R turned the single conveyor ghost by hand: no snapping there until the aim leaves it. */
+  private rotOverride: string | null = null;
+  /** Connection marks (green arrows at linked edges) and the dead-end cross. */
+  private linkMarks: THREE.Mesh[] = [];
+  private deadMark: THREE.Mesh;
+  private dragStart: DragEnd | null = null;
+  /** Where the drag was pressed: while the aim stays on that cell (or building), it is a click, not a drag. */
+  private dragAim: { cell: [number, number]; building: number | null } | null = null;
+  /** The drag ends on a belt that its last tile merges into: that end is not placed. */
+  private dragMerge = false;
   private dragPath: { x: number; z: number; rot: Rot }[] = [];
   private dragGhosts: THREE.Object3D[] = [];
   private highlight: THREE.Mesh;
@@ -115,6 +156,10 @@ export class BuildController {
     /** Pays costs (backpack first, then hub) and receives dismantling refunds. */
     private readonly wallet: Wallet,
   ) {
+    this.deadMark = new THREE.Mesh(crossGeometry, sharedPointer.dead);
+    this.deadMark.visible = false;
+    this.deadMark.renderOrder = 6;
+    scene.add(this.deadMark);
     this.highlight = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), highlightMat);
     this.highlight.visible = false;
     this.highlight.renderOrder = 5;
@@ -132,6 +177,9 @@ export class BuildController {
   setTool(tool: Tool): void {
     this.clearGhost();
     this.clearDrag();
+    this.hideLinks();
+    this.lastLinks = null;
+    this.rotOverride = null;
     this.tool = tool;
     this.onChange?.();
   }
@@ -141,6 +189,19 @@ export class BuildController {
   }
 
   rotate(dir: 1 | -1 = 1): void {
+    if (this.dragStart && this.dragPath.length === 1) {
+      // Button held on a single tile: same as on the hover ghost.
+      const t = this.dragPath[0]!;
+      this.rot = ((t.rot + dir + 4) & 3) as Rot;
+      this.rotOverride = `${t.x},${t.z}`;
+      return;
+    }
+    if (this.shown && !this.dragStart) {
+      // Single conveyor: turn from what the ghost shows (snapped or not), and stop snapping on this cell.
+      this.rot = ((this.shown.rot + dir + 4) & 3) as Rot;
+      this.rotOverride = `${this.shown.x},${this.shown.z}`;
+      return;
+    }
     this.rot = ((this.rot + dir + 4) & 3) as Rot;
     if (this.ghost) this.ghostType = null; // force refresh
   }
@@ -200,6 +261,9 @@ export class BuildController {
   update(): void {
     this.highlight.visible = false;
     this.outline.visible = false;
+    this.shown = null;
+    this.lastLinks = null;
+    this.hideLinks();
     if (this.tool.kind === 'build') this.updateBuild(this.tool.type);
     else if (this.tool.kind === 'dismantle') this.updateDismantle();
     else this.updateHover();
@@ -217,18 +281,135 @@ export class BuildController {
       return;
     }
     if (!this.ghost || this.ghostType !== type) this.makeGhost(type);
-    const [ax, az] = this.anchorFor(type, cell);
-    const check = this.checkPlacement(type, ax, az, this.rot);
+    let ax: number;
+    let az: number;
+    let rot = this.rot;
+    if (type === 'conveyor') {
+      [ax, az] = startCell(this.sim, cell, this.aimPoint()).cell;
+      rot = this.conveyorRot(ax, az);
+      this.shown = { x: ax, z: az, rot };
+    } else [ax, az] = this.anchorFor(type, cell);
+    const check = this.checkPlacement(type, ax, az, rot);
     this.lastCheck = check;
     const ghost = this.ghost!;
     ghost.visible = true;
-    footprintCenter(type, ax, az, this.rot, ghost.position);
+    footprintCenter(type, ax, az, rot, ghost.position);
     ghost.position.y = 0.02;
-    ghost.rotation.y = this.rot * (Math.PI / 2);
+    ghost.rotation.y = rot * (Math.PI / 2);
     if (check.ok !== this.ghostValid) {
       this.ghostValid = check.ok;
       setGhostMaterial(ghost, check.ok ? ghostOk : ghostBad);
     }
+    // Connections it would make (only where it can stand).
+    const plan: Placement[] = [{ type, x: ax, z: az, rot }];
+    const links = cellsFree(check) ? this.sim.planLinks(plan) : null;
+    if (links) this.showLinks(plan, links, type === 'conveyor');
+    if (type === 'conveyor') return;
+    const ports = BUILDINGS[type].ports;
+    if (!links) {
+      // Where it cannot stand: plain markers (no state left over from the last spot).
+      this.ghostPorts.forEach((marker, i) => {
+        marker.visible = true;
+        marker.setColor(ports[i]!.dir);
+      });
+      return;
+    }
+    // Machine ghost: outputs green when they would link (the others hidden, a building outputs through one
+    // port only); when every output faces a building or the map edge, a red cross over its output face.
+    const outLinked = !!links[0]!.out;
+    let blocked: BuildingType | 'edge' | null = null;
+    const faces: [number, number][] = [];
+    if (!outLinked) {
+      const fronts = ports.filter((p) => p.dir === 'out').map((p) => {
+        const w = this.sim.portWorld(plan[0]!, p.cell, p.side);
+        faces.push([(w.cx + 0.5 + DX[w.side] * 0.3) * FACTORY_CELL, (w.cz + 0.5 + DZ[w.side] * 0.3) * FACTORY_CELL]);
+        const nx = w.cx + DX[w.side];
+        const nz = w.cz + DZ[w.side];
+        return this.sim.inBounds(nx, nz) ? (this.sim.at(nx, nz)?.type ?? 'free') : 'edge';
+      });
+      if (fronts.length && !fronts.includes('free')) blocked = (fronts.find((f) => f !== 'edge') as BuildingType | undefined) ?? 'edge';
+    }
+    this.ghostPorts.forEach((marker, i) => {
+      const p = ports[i]!;
+      const linked = portLinked(this.sim, plan[0]!, i, links[0]!);
+      // Blocked outputs: their markers would sit inside the blocking building, the cross shows instead.
+      marker.visible = !(p.dir === 'out' && ((outLinked && !linked) || blocked));
+      marker.setColor(linked ? 'linked' : p.dir);
+    });
+    if (blocked && this.lastLinks) {
+      this.lastLinks.blockedBy = blocked;
+      const fx = faces.reduce((a, f) => a + f[0], 0) / faces.length;
+      const fz = faces.reduce((a, f) => a + f[1], 0) / faces.length;
+      this.deadMark.position.set(fx, buildingHeight(type) + 0.6, fz);
+      this.deadMark.visible = true;
+    }
+  }
+
+  /** Aimed point in cell units (fractional). */
+  private aimPoint(): [number, number] | undefined {
+    const p = this.aim.point;
+    return p ? [p.x / FACTORY_CELL, p.z / FACTORY_CELL] : undefined;
+  }
+
+  /** Orientation of a single conveyor: snapped to the ports around it, unless R turned it by hand on this cell. */
+  private conveyorRot(x: number, z: number): Rot {
+    if (this.rotOverride === `${x},${z}`) return this.rot;
+    this.rotOverride = null;
+    return snapConveyorRot(this.sim, x, z, this.rot).rot;
+  }
+
+  /**
+   * Green arrows where planned buildings would connect to existing ones (planned ↔ planned links are the
+   * path itself), a red cross where the last one's front would run into a building that refuses its items;
+   * fills lastLinks. Only placements that can stand are passed in, in path order.
+   */
+  private showLinks(plan: Placement[], links: PlanLinks[], marks = true): void {
+    const summary: LinkSummary = { from: [], to: [], blockedBy: null, steals: [] };
+    let k = 0;
+    const mark = (cx: number, cz: number, entry: number, stolen = false) => {
+      if (!marks) return;
+      let m = this.linkMarks[k];
+      if (!m) {
+        m = new THREE.Mesh(pointerGeometry, sharedPointer.linked);
+        this.scene.add(m);
+        this.linkMarks.push(m);
+      }
+      k++;
+      m.material = stolen ? sharedPointer.dead : sharedPointer.linked;
+      // On the shared edge, over the belts, pointing into the receiving cell.
+      m.position.set((cx + 0.5 + DX[entry]! * 0.5) * FACTORY_CELL, POINTER_Y, (cz + 0.5 + DZ[entry]! * 0.5) * FACTORY_CELL);
+      m.rotation.y = yawOf(opposite(entry as Rot));
+      m.visible = true;
+    };
+    links.forEach((l, i) => {
+      if (l.out && l.out.target >= 0) {
+        mark(l.out.cx, l.out.cz, l.out.entry);
+        summary.to.push(this.sim.buildings.get(l.out.target)!.type);
+      }
+      for (const f of l.in) {
+        if (f.id < 0) continue;
+        const type = this.sim.buildings.get(f.id)!.type;
+        const stolen = steals(this.sim, f);
+        mark(f.link.cx, f.link.cz, f.link.entry, stolen);
+        (stolen ? summary.steals : summary.from).push(type);
+      }
+      const p = plan[i]!;
+      if (marks && i === plan.length - 1 && p.type === 'conveyor' && !l.out) {
+        const front = this.sim.at(p.x + DX[p.rot], p.z + DZ[p.rot]);
+        if (front) {
+          summary.blockedBy = front.type;
+          const f = 0.4 * FACTORY_CELL;
+          this.deadMark.position.set((p.x + 0.5) * FACTORY_CELL + DX[p.rot] * f, POINTER_Y, (p.z + 0.5) * FACTORY_CELL + DZ[p.rot] * f);
+          this.deadMark.visible = true;
+        }
+      }
+    });
+    this.lastLinks = summary;
+  }
+
+  private hideLinks(): void {
+    for (const m of this.linkMarks) m.visible = false;
+    this.deadMark.visible = false;
   }
 
   /** Grid/cost check of the sim, with the placement guard's veto (a blocked spot outranks a missing cost). */
@@ -244,18 +425,23 @@ export class BuildController {
     const g = buildModel(this.assets, type);
     setGhostMaterial(g, ghostOk);
     this.ghostValid = true;
-    // Port arrows (local, unrotated footprint coordinates).
+    // Port markers in the cell in front of each port (local, unrotated footprint coordinates), as on
+    // placed buildings; a conveyor shows its direction with an arrow over it instead.
     const def = BUILDINGS[type];
     const [w, h] = def.footprint;
-    for (const p of def.ports) {
-      const arrow = new THREE.Mesh(arrowGeo, p.dir === 'out' ? arrowOut : arrowIn);
-      arrow.userData.keepMaterial = true;
-      const lx = (p.cell[0] + 0.5 - w / 2) * FACTORY_CELL + DX[p.side] * (FACTORY_CELL * 0.5 + 0.35);
-      const lz = (p.cell[1] + 0.5 - h / 2) * FACTORY_CELL + DZ[p.side] * (FACTORY_CELL * 0.5 + 0.35);
-      arrow.position.set(lx, 0.45, lz);
-      const yaw = Math.atan2(DX[p.side], DZ[p.side]);
-      arrow.rotation.y = p.dir === 'out' ? yaw : yaw + Math.PI;
-      g.add(arrow);
+    this.ghostPorts = [];
+    if (type === 'conveyor') g.add(conveyorArrow());
+    else {
+      for (const p of def.ports) {
+        const marker = portMarker(p.dir);
+        const lx = (p.cell[0] + 0.5 - w / 2 + DX[p.side]) * FACTORY_CELL;
+        const lz = (p.cell[1] + 0.5 - h / 2 + DZ[p.side]) * FACTORY_CELL;
+        // The ghost stands 2 cm up: keep the pad on the floor.
+        marker.position.set(lx, -0.02, lz);
+        marker.rotation.y = yawOf(p.side) + (p.dir === 'in' ? Math.PI : 0);
+        g.add(marker);
+        this.ghostPorts.push(marker);
+      }
     }
     if (type === 'garage') {
       // Door: an entry arrow in front of the open side.
@@ -275,79 +461,82 @@ export class BuildController {
     this.ghost?.removeFromParent();
     this.ghost = null;
     this.ghostType = null;
+    this.ghostPorts = [];
   }
 
   // ------------------------------------------------------------ conveyor drag
 
-  private pathBetween(a: [number, number], b: [number, number]): { x: number; z: number; rot: Rot }[] {
-    const cells: [number, number][] = [];
-    const dx = b[0] - a[0];
-    const dz = b[1] - a[1];
-    const sx = Math.sign(dx);
-    const sz = Math.sign(dz);
-    let x = a[0];
-    let z = a[1];
-    cells.push([x, z]);
-    if (Math.abs(dx) >= Math.abs(dz)) {
-      while (x !== b[0]) cells.push([(x += sx), z]);
-      while (z !== b[1]) cells.push([x, (z += sz)]);
-    } else {
-      while (z !== b[1]) cells.push([x, (z += sz)]);
-      while (x !== b[0]) cells.push([(x += sx), z]);
-    }
-    const dirOf = (from: [number, number], to: [number, number]): Rot =>
-      to[0] > from[0] ? 1 : to[0] < from[0] ? 3 : to[1] > from[1] ? 0 : 2;
-    return cells.map((c, i) => {
-      let rot: Rot;
-      if (cells.length === 1) rot = this.rot;
-      else if (i < cells.length - 1) rot = dirOf(c, cells[i + 1]!);
-      else rot = dirOf(cells[i - 1]!, c);
-      return { x: c[0], z: c[1], rot };
-    });
+  /**
+   * Conveyor path of the current drag: from the pressed spot to the aimed one, snapped to ports (a belt runs
+   * from an output to an input, whichever is pressed first). While the aim stays where it was pressed, a
+   * single tile, as the hover ghost showed.
+   */
+  private planDrag(): Placement[] {
+    const start = this.dragStart!;
+    const aim = this.aim.cell;
+    const pressed = this.dragAim;
+    const click =
+      !aim ||
+      !pressed ||
+      (aim[0] === pressed.cell[0] && aim[1] === pressed.cell[1]) ||
+      (pressed.building !== null && this.sim.at(aim[0], aim[1])?.id === pressed.building);
+    const end = click ? start : endCell(this.sim, aim, start, this.aimPoint());
+    const path = planDrag(this.sim, start, end, this.rot);
+    // A click keeps the orientation R gave on that cell.
+    if (path.length === 1 && this.rotOverride === `${path[0]!.x},${path[0]!.z}`) path[0]!.rot = this.rot;
+    return path;
   }
 
   private updateDrag(): void {
-    const end = this.aim.cell ?? this.dragStart!;
-    const path = this.pathBetween(this.dragStart!, end).slice(0, 64);
+    const path = this.planDrag();
     this.dragPath = path;
     while (this.dragGhosts.length < path.length) {
       const g = buildModel(this.assets, 'conveyor');
       setGhostMaterial(g, ghostOk);
-      const arrow = new THREE.Mesh(arrowGeo, arrowOut);
-      arrow.userData.keepMaterial = true;
-      arrow.position.set(0, 1.0, 0.3);
-      arrow.scale.setScalar(0.7);
-      g.add(arrow);
+      g.add(conveyorArrow());
       this.scene.add(g);
       this.dragGhosts.push(g);
     }
+    const checks = path.map((p) => this.checkPlacement('conveyor', p.x, p.z, p.rot, { free: true }));
+    const standing = path.filter((_, i) => cellsFree(checks[i]!));
+    const links = standing.length ? this.sim.planLinks(standing) : [];
+    // A path ending on a belt that the tile before merges into: that end is the existing belt, not a tile.
+    const n = path.length;
+    const endBelt = n > 1 ? this.sim.at(path[n - 1]!.x, path[n - 1]!.z) : undefined;
+    const merge = endBelt?.type === 'conveyor' && standing[standing.length - 1] === path[n - 2] && links[links.length - 1]?.out?.target === endBelt.id;
+    this.dragMerge = merge;
     let budget = this.wallet.count('plate');
     const cost = BUILDINGS.conveyor.cost.plate ?? 0;
-    let okCount = 0;
+    let short = 0;
     let blocked: BuildCheck | null = null;
+    let failed: BuildCheck | null = null;
     this.dragGhosts.forEach((g, i) => {
       const p = path[i];
-      g.visible = !!p;
-      if (!p) return;
+      g.visible = !!p && !(merge && i === n - 1);
+      if (!g.visible || !p) return;
       g.position.set((p.x + 0.5) * FACTORY_CELL, 0.02, (p.z + 0.5) * FACTORY_CELL);
       g.rotation.y = p.rot * (Math.PI / 2);
-      const check = this.checkPlacement('conveyor', p.x, p.z, p.rot, { free: true });
+      const check = checks[i]!;
       const affordable = budget >= cost;
-      const ok = check.ok && affordable;
-      if (ok) {
-        budget -= cost;
-        okCount++;
-      } else if (check.error === 'blocked') blocked ??= check;
-      setGhostMaterial(g, ok ? ghostOk : ghostBad);
+      if (check.ok && affordable) budget -= cost;
+      else if (check.ok) short++;
+      else if (check.error === 'blocked') blocked ??= check;
+      else failed ??= check;
+      setGhostMaterial(g, check.ok && affordable ? ghostOk : ghostBad);
     });
-    this.lastCheck = blocked ?? { ok: okCount === path.length, cells: [], error: okCount === path.length ? undefined : 'cost' };
+    // The first real reason first (a veto, a taken cell), then what is missing to pay for the rest.
+    this.lastCheck = blocked ?? failed ?? (short ? { ok: false, cells: [], error: 'cost', missing: { plate: short * cost } } : { ok: true, cells: [] });
     if (this.ghost) this.ghost.visible = false;
+    if (n === 1) this.shown = { ...path[0]! };
+    if (standing.length) this.showLinks(standing, links);
   }
 
   private clearDrag(): void {
     for (const g of this.dragGhosts) g.removeFromParent();
     this.dragGhosts = [];
     this.dragStart = null;
+    this.dragAim = null;
+    this.dragMerge = false;
     this.dragPath = [];
   }
 
@@ -358,8 +547,7 @@ export class BuildController {
     if (!b) return;
     const [w, h] = BUILDINGS[b.type].footprint;
     const [rw, rh] = rotatedSize(w, h, b.rot);
-    const height =
-      b.type === 'conveyor' ? 1.0 : b.type === 'hub' || b.type === 'smelter' ? 4.2 : b.type === 'drill' ? 4.1 : b.type === 'garage' ? GARAGE.height + 0.05 : 3.0;
+    const height = buildingHeight(b.type);
     const sx = rw * FACTORY_CELL + 0.1;
     const sz = rh * FACTORY_CELL + 0.1;
     if (BUILDINGS[b.type].hollow) {
@@ -418,6 +606,7 @@ export class BuildController {
   hideHighlights(): void {
     this.highlight.visible = false;
     this.outline.visible = false;
+    this.hideLinks();
   }
 
   /** Building the player can interact with (E): machines, drills and the hub. */
@@ -432,7 +621,8 @@ export class BuildController {
 
   primaryDown(): void {
     if (this.tool.kind === 'build' && this.tool.type === 'conveyor' && this.aim.cell) {
-      this.dragStart = [...this.aim.cell];
+      this.dragStart = startCell(this.sim, this.aim.cell, this.aimPoint());
+      this.dragAim = { cell: [...this.aim.cell], building: this.sim.at(this.aim.cell[0], this.aim.cell[1])?.id ?? null };
       this.updateDrag();
     }
   }
@@ -468,9 +658,11 @@ export class BuildController {
 
   private commitDrag(): void {
     if (!this.dragStart) return;
-    const path = this.dragPath.length ? this.dragPath : this.pathBetween(this.dragStart, this.dragStart);
+    if (!this.dragPath.length) this.updateDrag();
+    const path = this.dragMerge ? this.dragPath.slice(0, -1) : this.dragPath;
     let placed = 0;
     let lastError: BuildCheck | null = null;
+    let last: Building | null = null;
     for (const p of path) {
       const check = this.checkPlacement('conveyor', p.x, p.z, p.rot, { free: true });
       if (check.error === 'blocked') {
@@ -478,13 +670,21 @@ export class BuildController {
         continue;
       }
       const r = this.sim.place('conveyor', p.x, p.z, p.rot, { wallet: this.wallet });
-      if (r.ok) placed++;
-      else lastError = r.check;
+      if (r.ok) {
+        placed++;
+        last = r.building;
+      } else lastError = r.check;
     }
     if (path.length) this.rot = path[path.length - 1]!.rot;
+    this.rotOverride = null;
+    // Nothing placed: the reason the HUD gave (veto, taken cell, missing plates) rather than the last one met.
+    const reason = this.lastCheck && !this.lastCheck.ok ? this.lastCheck : lastError;
     this.clearDrag();
-    if (placed) this.onMessage?.(`${placed} convoyeur${placed > 1 ? 's' : ''} posé${placed > 1 ? 's' : ''}`, 'success');
-    else if (lastError) this.onMessage?.(describeError(lastError), 'error');
+    const front = last && this.sim.isDeadEnd(last.id) ? this.sim.at(last.x + DX[last.rot], last.z + DZ[last.rot]) : undefined;
+    const label = `${placed} convoyeur${placed > 1 ? 's' : ''} posé${placed > 1 ? 's' : ''}`;
+    if (placed && front) this.onMessage?.(`${label}, mais le dernier bute contre : ${BUILDINGS[front.type].name}`, 'error');
+    else if (placed) this.onMessage?.(label, 'success');
+    else if (reason) this.onMessage?.(describeError(reason), 'error');
     this.onChange?.();
   }
 
@@ -531,9 +731,34 @@ export class BuildController {
   dispose(): void {
     this.clearGhost();
     this.clearDrag();
+    for (const m of this.linkMarks) m.removeFromParent();
+    this.linkMarks = [];
+    this.deadMark.removeFromParent();
     this.highlight.removeFromParent();
     this.outline.removeFromParent();
     this.outlineEdges.geometry.dispose();
     this.outlineFloor.geometry.dispose();
   }
+}
+
+/** Cells free for the building (it may still be unaffordable or vetoed): its connections can be previewed. */
+function cellsFree(check: BuildCheck): boolean {
+  return check.ok || check.error === 'cost' || check.error === 'blocked';
+}
+
+/** Is port `i` of planned building `p` part of one of its planned links? */
+function portLinked(sim: FactorySim, p: Placement, i: number, links: PlanLinks): boolean {
+  const port = BUILDINGS[p.type].ports[i]!;
+  const w = sim.portWorld(p, port.cell, port.side);
+  if (port.dir === 'out') return !!links.out && links.out.cx === w.cx + DX[w.side] && links.out.cz === w.cz + DZ[w.side] && links.out.entry === opposite(w.side);
+  return links.in.some((f) => f.link.cx === w.cx && f.link.cz === w.cz && f.link.entry === w.side);
+}
+
+/** Orange arrow over a conveyor ghost: its direction. */
+function conveyorArrow(): THREE.Mesh {
+  const arrow = new THREE.Mesh(arrowGeo, arrowOut);
+  arrow.userData.keepMaterial = true;
+  arrow.position.set(0, 1.0, 0.3);
+  arrow.scale.setScalar(0.7);
+  return arrow;
 }

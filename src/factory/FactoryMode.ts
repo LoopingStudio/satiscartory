@@ -6,7 +6,7 @@ import type { GameState } from '../state/GameState';
 import { FactoryView } from './view/FactoryView';
 import { FactoryWorld } from './FactoryWorld';
 import { FactoryHud } from './FactoryHud';
-import { BuildController, describeError, type Tool } from './build/BuildController';
+import { BuildController, describeError, describeLinks, type Tool } from './build/BuildController';
 import { CharacterController } from '../player/CharacterController';
 import { PlayerAvatar } from '../player/PlayerAvatar';
 import { OrbitCamera } from '../player/OrbitCamera';
@@ -560,6 +560,7 @@ export class FactoryMode implements Mode {
     this.updateHint();
 
     this.rig.follow(this.renderPos);
+    this.view.setPortEmphasis(this.build.tool.kind === 'build' && !this.garagePanel.isOpen);
     this.view.update(dt, this.game.loop.factoryAlpha);
     this.tickHud(dt);
     this.state.player = { x: this.player.cur.x, y: this.player.cur.y, z: this.player.cur.z, yaw: this.orbit.yaw };
@@ -704,11 +705,13 @@ export class FactoryMode implements Mode {
     } else if (t.kind === 'build') {
       const check = this.build.lastCheck;
       const err = check && !check.ok ? `<span class="bad">${describeError(check)}</span> · ` : '';
+      const links = describeLinks(this.build.lastLinks);
       const name = BUILDINGS[t.type].name;
+      const status = `${err}<b>${name}</b>${links ? ` · ${links}` : ''}`;
       html =
         t.type === 'conveyor'
-          ? `${err}<b>${name}</b> · clic gauche maintenu : tracer · <kbd>R</kbd> tourner · clic droit : annuler`
-          : `${err}<b>${name}</b> · clic gauche : poser · <kbd>R</kbd> tourner · clic droit : annuler`;
+          ? `${status} · clic gauche maintenu : tracer · <kbd>R</kbd> tourner · clic droit : annuler`
+          : `${status} · clic gauche : poser · <kbd>R</kbd> tourner · clic droit : annuler`;
     } else if (t.kind === 'dismantle') {
       html = 'Démontage · clic gauche : démonter (remboursé) · <kbd>F</kbd> quitter';
     } else {

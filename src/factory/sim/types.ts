@@ -68,6 +68,38 @@ export interface Link {
   entry: Side;
 }
 
+/** Where a building of some type stands (or would stand). */
+export interface Placement {
+  type: BuildingType;
+  x: number;
+  z: number;
+  rot: Rot;
+}
+
+/** Links a planned building would make (FactorySim.planLinks); planned buildings have ids -1, -2… */
+export interface PlanLinks {
+  out: Link | null;
+  /** Buildings that would feed it, with their link. */
+  in: { id: number; link: Link }[];
+}
+
+/**
+ * A building's port in world terms. `linked`: an output carrying its items, an input something feeds;
+ * `blocked`: the cell in front is taken by a building that does not connect through it (or off the map);
+ * `unused`: an output with nothing in front while another output of the building is linked (a building
+ * outputs through one port only); `free`: an empty cell in front, waiting for a conveyor.
+ */
+export interface PortInfo {
+  /** Building cell of the port and the world side it faces. */
+  cx: number;
+  cz: number;
+  side: Side;
+  dir: 'in' | 'out';
+  state: 'linked' | 'blocked' | 'unused' | 'free';
+  /** Building in front of the port, if any. */
+  neighbor: number | null;
+}
+
 export interface FactorySave {
   /**
    * 1: machines 1×2, items along their length. 2: machines 2×1, items across.

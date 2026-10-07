@@ -213,6 +213,11 @@ function screenMaterial(): THREE.Material {
   return garageScreenMaterial;
 }
 
+/** Height of a building's model (highlight boxes, marks floated over it). */
+export function buildingHeight(type: BuildingType): number {
+  return type === 'conveyor' ? 1.0 : type === 'hub' || type === 'smelter' ? 4.2 : type === 'drill' ? 4.1 : type === 'garage' ? GARAGE.height + 0.05 : 3.0;
+}
+
 /** World position of the center of a footprint. */
 export function footprintCenter(type: BuildingType, x: number, z: number, rot: Rot, out = new THREE.Vector3()): THREE.Vector3 {
   const [w, h] = BUILDINGS[type].footprint;

@@ -429,6 +429,7 @@ export class FactoryHud {
       ...this.header(def.name),
       el('div', { class: `status status-${m.status}` }, STATUS_LABEL[m.status]),
       el('div', { class: 'progress' }, this.progressEl),
+      this.portStatus(m.id),
     );
     if (recipe) {
       const ins = el('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px' }, el('span', { class: 'muted small' }, 'Entrées'));
@@ -458,15 +459,59 @@ export class FactoryHud {
     this.panel!.append(list);
   }
 
+  /** Whether something feeds the building and whether its output goes anywhere, with what to do if not. */
+  private portStatus(id: number): HTMLElement {
+    const ports = this.sim.portsOf(id);
+    const line = (dir: 'in' | 'out') => {
+      const own = ports.filter((p) => p.dir === dir);
+      if (!own.length) return null;
+      let cls = 'muted';
+      let text: string;
+      if (own.some((p) => p.state === 'linked')) {
+        cls = 'good';
+        text = dir === 'in' ? 'Entrée reliée' : 'Sortie reliée';
+      } else if (own.some((p) => p.state === 'free')) {
+        text = dir === 'in' ? 'Entrée non reliée : amène un convoyeur sur une flèche bleue' : 'Sortie non reliée : pose un convoyeur sur une flèche orange, devant la machine';
+      } else {
+        // Every port of that side faces something that does not connect (or the map edge).
+        const n = own.map((p) => (p.neighbor !== null ? this.sim.buildings.get(p.neighbor) : undefined)).find((b) => b);
+        if (dir === 'out') {
+          cls = 'bad';
+          text = n?.type === 'conveyor'
+            ? 'Sortie bloquée : le convoyeur devant pointe vers la machine, repose-le dans l’autre sens'
+            : n
+              ? `Sortie bloquée (${BUILDINGS[n.type].name}) : libère une case devant la machine`
+              : 'Sortie bloquée : elle donne sur le bord de la carte, tourne ou déplace la machine';
+        } else {
+          text = n?.type === 'conveyor'
+            ? 'Entrée non reliée : le convoyeur derrière ne pointe pas vers la machine'
+            : n
+              ? `Entrée bloquée (${BUILDINGS[n.type].name}) : libère une case derrière la machine`
+              : 'Entrée bloquée : elle donne sur le bord de la carte, tourne ou déplace la machine';
+        }
+      }
+      return el('div', { class: 'row small' }, el('span', { class: `port-dot port-${dir}` }), el('span', { class: cls }, text));
+    };
+    return el('div', { class: 'port-status' }, line('in'), line('out'));
+  }
+
   private renderDrill(): void {
     const d = this.sim.buildings.get(this.panelTarget!) as DrillB | undefined;
     if (!d) return this.cb.closePanel();
     const res = d.resource ? RESOURCES[d.resource] : null;
     const full = d.outBuf.length >= DRILL.OUT_CAP;
+    const linked = !!this.sim.linkOf(d.id);
+    const stuck = this.sim.portsOf(d.id).every((p) => p.state === 'blocked');
+    const fullText = linked
+      ? 'Sortie pleine : la chaîne en aval est saturée'
+      : stuck
+        ? 'Sortie pleine : sortie bloquée, prends la production'
+        : 'Sortie pleine : relie un convoyeur ou prends la production';
     this.panel!.append(
       ...this.header(BUILDINGS.drill.name, res ? res.name : 'Aucun gisement'),
-      el('div', { class: `status ${full ? 'status-blocked' : 'status-working'}` }, full ? 'Sortie pleine : relie un convoyeur ou prends la production' : 'En extraction'),
+      el('div', { class: `status ${full ? 'status-blocked' : 'status-working'}` }, full ? fullText : 'En extraction'),
       el('div', { class: 'progress' }, (this.progressEl = el('div', { style: `width:${Math.round(this.sim.progressOf(d) * 100)}%` }))),
+      this.portStatus(d.id),
       el('div', { class: 'row', style: 'gap:6px' }, el('span', { class: 'muted small' }, `Sortie ${d.outBuf.length}/${DRILL.OUT_CAP}`), d.outBuf.length ? this.slotEl({ item: d.outBuf[0]!, count: d.outBuf.length }) : null),
       el('div', { class: 'row', style: 'margin-top:8px' },
         el('button', { class: 'small primary', disabled: d.outBuf.length === 0, onclick: () => this.cb.collect(d.id) }, `Prendre (${d.outBuf.length})`),

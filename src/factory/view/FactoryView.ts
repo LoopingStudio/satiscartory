@@ -6,11 +6,13 @@ import { FACTORY_CELL, FACTORY_MODEL_SCALE } from '../../config/constants';
 import type { FactorySim, ConveyorShape } from '../sim/FactorySim';
 import type { Building, ConveyorB } from '../sim/types';
 import { mulberry32 } from '../../core/rng';
-import { BuildingVisual } from './BuildingVisuals';
+import { BuildingVisual, buildingHeight } from './BuildingVisuals';
 import { ItemRenderer } from './ItemRenderer';
 import { MineBursts } from './MineBursts';
 import { beltLocal, rotateLocal } from './beltPath';
 import type { ModelKey } from '../../core/assets/manifest.gen';
+import { DX, DZ } from '../sim/dirs';
+import { PAD_Y, POINTER_Y, PORT_COLORS, crossGeometry, padGeometry, padMaterial, pointerGeometry, pointerMaterial, portPose } from './portMarkers';
 
 const BELT_TOP = 0.4 * FACTORY_MODEL_SCALE;
 const SHAPE_MODELS: Record<ConveyorShape, ModelKey> = {
@@ -37,6 +39,11 @@ export class FactoryView {
   private readonly tmp2 = { x: 0, z: 0 };
   /** Conveyor ids in instance order per shape (for picking). */
   private conveyorIds = new Map<ConveyorShape, number[]>();
+  /** Port markers of placed buildings (pads and floating arrows, outputs and inputs) and dead-end crosses on belts. */
+  private markers: Record<MarkerKind, THREE.InstancedMesh> | null = null;
+  private markersDirty = true;
+  /** A build tool is active: every free port shows, pulsing (otherwise only the unconnected sides). */
+  private portEmphasis = false;
 
   constructor(private readonly assets: AssetLoader, private readonly sim: FactorySim) {
     this.root.name = 'factory';
@@ -48,6 +55,7 @@ export class FactoryView {
       sim.events.on('placed', (b) => {
         this.addVisual(b);
         this.conveyorsDirty = true;
+        this.markersDirty = true;
       }),
       sim.events.on('removed', (b) => {
         const v = this.visuals.get(b.id);
@@ -55,8 +63,12 @@ export class FactoryView {
         if (v && v === this.hub) this.hub = null;
         this.visuals.delete(b.id);
         this.conveyorsDirty = true;
+        this.markersDirty = true;
       }),
-      sim.events.on('topology', () => (this.conveyorsDirty = true)),
+      sim.events.on('topology', () => {
+        this.conveyorsDirty = true;
+        this.markersDirty = true;
+      }),
     );
   }
 
@@ -183,6 +195,95 @@ export class FactoryView {
     }
   }
 
+  /**
+   * Port markers: in front of each free output an orange pad and arrow, of each free input a blue one
+   * (where a conveyor connects); a red cross at the end of a belt that runs into a building refusing its
+   * items, and on the outputs of a building whose every output faces a building or the map edge. Without
+   * a build tool only the sides of a building that nothing connects yet show.
+   */
+  private rebuildMarkers(): void {
+    this.sim.syncTopology();
+    this.markersDirty = false;
+    const poses: Record<MarkerKind, { x: number; y: number; z: number; yaw: number }[]> = { padOut: [], padIn: [], arrowOut: [], arrowIn: [], dead: [] };
+    const pose = { x: 0, z: 0, yaw: 0 };
+    for (const b of this.sim.buildings.values()) {
+      if (b.type === 'conveyor') {
+        if (this.sim.isDeadEnd(b.id)) {
+          // Over the front edge of the tile.
+          const f = 0.4 * FACTORY_CELL;
+          poses.dead.push({ x: (b.x + 0.5) * FACTORY_CELL + DX[b.rot] * f, y: POINTER_Y, z: (b.z + 0.5) * FACTORY_CELL + DZ[b.rot] * f, yaw: 0 });
+        }
+        continue;
+      }
+      const ports = this.sim.portsOf(b.id);
+      const linkedOut = ports.some((p) => p.dir === 'out' && p.state === 'linked');
+      const linkedIn = ports.some((p) => p.dir === 'in' && p.state === 'linked');
+      const outs = ports.filter((p) => p.dir === 'out');
+      if (outs.length && outs.every((p) => p.state === 'blocked')) {
+        // Nowhere to output: a cross over each output face, above the building so that a building standing
+        // against it does not hide it (a belt pointing into it already has its own).
+        for (const p of outs) {
+          if (p.neighbor !== null && this.sim.buildings.get(p.neighbor)?.type === 'conveyor') continue;
+          poses.dead.push({ x: (p.cx + 0.5 + DX[p.side] * 0.3) * FACTORY_CELL, y: buildingHeight(b.type) + 0.6, z: (p.cz + 0.5 + DZ[p.side] * 0.3) * FACTORY_CELL, yaw: 0 });
+        }
+      }
+      for (const p of ports) {
+        if (p.state !== 'free') continue;
+        if (!this.portEmphasis && (p.dir === 'out' ? linkedOut : linkedIn)) continue;
+        portPose(p.cx, p.cz, p.side, p.dir, pose);
+        const out = p.dir === 'out';
+        poses[out ? 'padOut' : 'padIn'].push({ x: pose.x, y: PAD_Y, z: pose.z, yaw: pose.yaw });
+        poses[out ? 'arrowOut' : 'arrowIn'].push({ x: pose.x, y: POINTER_Y, z: pose.z, yaw: pose.yaw });
+      }
+    }
+    if (!this.markers) {
+      const make = (geo: THREE.BufferGeometry, mat: THREE.Material, name: string, order: number) => {
+        const m = new THREE.InstancedMesh(geo, mat, 16);
+        m.name = name;
+        m.renderOrder = order;
+        m.frustumCulled = false;
+        this.root.add(m);
+        return m;
+      };
+      this.markers = {
+        padOut: make(padGeometry, padMaterial(PORT_COLORS.out), 'ports:pad-out', 3),
+        padIn: make(padGeometry, padMaterial(PORT_COLORS.in), 'ports:pad-in', 3),
+        arrowOut: make(pointerGeometry, pointerMaterial(PORT_COLORS.out), 'ports:arrow-out', 0),
+        arrowIn: make(pointerGeometry, pointerMaterial(PORT_COLORS.in), 'ports:arrow-in', 0),
+        dead: make(crossGeometry, pointerMaterial(PORT_COLORS.dead), 'belts:dead-end', 0),
+      };
+    }
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const one = new THREE.Vector3(1, 1, 1);
+    const p = new THREE.Vector3();
+    for (const kind of MARKER_KINDS) {
+      let mesh = this.markers[kind];
+      const list = poses[kind];
+      if (mesh.instanceMatrix.count < list.length) {
+        const bigger = new THREE.InstancedMesh(mesh.geometry, mesh.material, 2 ** Math.ceil(Math.log2(list.length)));
+        bigger.name = mesh.name;
+        bigger.renderOrder = mesh.renderOrder;
+        bigger.frustumCulled = false;
+        mesh.removeFromParent();
+        mesh.dispose();
+        this.root.add(bigger);
+        this.markers[kind] = mesh = bigger;
+      }
+      list.forEach((o, i) => mesh.setMatrixAt(i, m4.compose(p.set(o.x, o.y, o.z), q.setFromAxisAngle(up, o.yaw), one)));
+      mesh.count = list.length;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /** While a build tool is active, every free port shows and pulses. */
+  setPortEmphasis(on: boolean): void {
+    if (on === this.portEmphasis) return;
+    this.portEmphasis = on;
+    this.markersDirty = true;
+  }
+
   /** Building id of a raycast hit (conveyor instance or building mesh), if any. */
   buildingIdFromHit(hit: THREE.Intersection): number | null {
     const obj = hit.object as THREE.InstancedMesh;
@@ -217,6 +318,13 @@ export class FactoryView {
   update(dt: number, factoryAlpha: number): void {
     this.t += dt;
     if (this.conveyorsDirty) this.rebuildConveyors();
+    if (this.markersDirty) this.rebuildMarkers();
+    if (this.markers) {
+      // Pulsing while building; the floating arrows bob along their direction.
+      const k = this.portEmphasis ? 0.5 + 0.5 * Math.sin(this.t * 5) : 0.5;
+      for (const kind of ['padOut', 'padIn'] as const) (this.markers[kind].material as THREE.MeshBasicMaterial).opacity = 0.55 + 0.4 * k;
+      for (const kind of ['arrowOut', 'arrowIn'] as const) (this.markers[kind].material as THREE.MeshStandardMaterial).emissiveIntensity = 0.35 + 0.5 * k;
+    }
     for (const v of this.visuals.values()) v.update(this.sim, this.t);
     this.bursts.update(dt);
 
@@ -249,10 +357,19 @@ export class FactoryView {
     this.items.dispose();
     this.bursts.dispose();
     for (const m of this.conveyorMeshes.values()) m.dispose();
+    if (this.markers) {
+      for (const m of Object.values(this.markers)) {
+        (m.material as THREE.Material).dispose();
+        m.dispose();
+      }
+    }
     (this.root.getObjectByName('floor') as THREE.Mesh | undefined)?.geometry.dispose(); // own clone, not the cached tile
     this.root.removeFromParent();
   }
 }
+
+type MarkerKind = 'padOut' | 'padIn' | 'arrowOut' | 'arrowIn' | 'dead';
+const MARKER_KINDS: MarkerKind[] = ['padOut', 'padIn', 'arrowOut', 'arrowIn', 'dead'];
 
 /** Extra yaw for the T-junction model so its stem points backward (set after visual check). */
 const JUNCTION_YAW = 0;

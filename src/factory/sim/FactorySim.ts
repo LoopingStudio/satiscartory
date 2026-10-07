@@ -6,7 +6,7 @@ import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
-import { isMachine, isProducer, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck } from './types';
+import { isMachine, isProducer, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
 
 export interface SimEvents extends Record<string, unknown> {
   placed: Building;
@@ -25,6 +25,11 @@ export interface FactorySimOptions {
 }
 
 export type ConveyorShape = 'straight' | 'left' | 'right' | 'junction';
+
+/** A building, existing or planned (planned ones have negative ids), as seen by link finding. */
+type Occupant = Placement & { id: number };
+/** Who stands on a cell (undefined: empty or out of bounds). */
+type OccupantAt = (x: number, z: number) => Occupant | undefined;
 
 const RESOURCE_IDS = Object.keys(RESOURCES) as ResourceId[];
 
@@ -52,6 +57,9 @@ export class FactorySim {
 
   private outLinks = new Map<number, Link | null>();
   private feeders = new Map<number, { id: number; side: Side }[]>();
+  /** Per target building: the links that feed it (any building type). */
+  private inbound = new Map<number, { id: number; link: Link }[]>();
+  private readonly occupantAt: OccupantAt = (x, z) => this.at(x, z);
   private convOrder: ConveyorB[] = [];
   private producers: (DrillB | MachineB)[] = [];
   private topoDirty = true;
@@ -369,13 +377,9 @@ export class FactorySim {
   // ---------------------------------------------------------------- topology
 
   /** Does `target` accept items entering cell (cx, cz) through world side `entry`? */
-  private acceptsAt(target: Building, cx: number, cz: number, entry: Side): boolean {
+  private acceptsAt(target: Occupant, cx: number, cz: number, entry: Side, at: OccupantAt): boolean {
     const def = BUILDINGS[target.type];
-    if (def.acceptsAllEdges) {
-      const nx = cx + DX[entry];
-      const nz = cz + DZ[entry];
-      return this.grid[this.idx(cx, cz)] === target.id && (!this.inBounds(nx, nz) || this.grid[this.idx(nx, nz)] !== target.id);
-    }
+    if (def.acceptsAllEdges) return at(cx, cz)?.id === target.id && at(cx + DX[entry], cz + DZ[entry])?.id !== target.id;
     for (const p of def.ports) {
       if (p.dir !== 'in') continue;
       const w = this.portWorld(target, p.cell, p.side);
@@ -384,30 +388,38 @@ export class FactorySim {
     return false;
   }
 
+  /** Output link of `b` among the occupants given by `at`: its output ports in order, the first one that links wins. */
+  private findLink(b: Occupant, at: OccupantAt): Link | null {
+    for (const out of BUILDINGS[b.type].ports) {
+      if (out.dir !== 'out') continue;
+      const w = this.portWorld(b, out.cell, out.side);
+      const nx = w.cx + DX[w.side];
+      const nz = w.cz + DZ[w.side];
+      const t = at(nx, nz);
+      const entry = opposite(w.side);
+      if (t && t.id !== b.id && this.acceptsAt(t, nx, nz, entry, at)) return { target: t.id, cx: nx, cz: nz, entry };
+    }
+    return null;
+  }
+
   private rebuildTopology(): void {
     this.topoDirty = false;
     this.outLinks.clear();
     this.feeders.clear();
+    this.inbound.clear();
     const sorted = [...this.buildings.values()].sort((a, b) => a.id - b.id);
     for (const b of sorted) {
-      // A building may have several output ports (machines): the first one that links wins.
-      let link: Link | null = null;
-      for (const out of BUILDINGS[b.type].ports) {
-        if (out.dir !== 'out') continue;
-        const w = this.portWorld(b, out.cell, out.side);
-        const nx = w.cx + DX[w.side];
-        const nz = w.cz + DZ[w.side];
-        const t = this.at(nx, nz);
-        const entry = opposite(w.side);
-        if (t && t.id !== b.id && this.acceptsAt(t, nx, nz, entry)) {
-          link = { target: t.id, cx: nx, cz: nz, entry };
-          if (t.type === 'conveyor') {
-            let list = this.feeders.get(t.id);
-            if (!list) this.feeders.set(t.id, (list = []));
-            list.push({ id: b.id, side: unrotateSide(entry, t.rot) });
-          }
-          break;
+      const link = this.findLink(b, this.occupantAt);
+      if (link) {
+        const t = this.buildings.get(link.target)!;
+        if (t.type === 'conveyor') {
+          let list = this.feeders.get(t.id);
+          if (!list) this.feeders.set(t.id, (list = []));
+          list.push({ id: b.id, side: unrotateSide(link.entry, t.rot) });
         }
+        let ins = this.inbound.get(t.id);
+        if (!ins) this.inbound.set(t.id, (ins = []));
+        ins.push({ id: b.id, link });
       }
       this.outLinks.set(b.id, link);
     }
@@ -453,6 +465,81 @@ export class FactorySim {
     if (sides.has(3)) return 'left';
     if (sides.has(1)) return 'right';
     return 'straight';
+  }
+
+  /**
+   * Ports of a building with their state, for markers and panels. A hub (it accepts on every edge) and a
+   * garage have none listed.
+   */
+  portsOf(id: number): PortInfo[] {
+    this.syncTopology();
+    const b = this.buildings.get(id);
+    if (!b) return [];
+    const link = this.outLinks.get(id) ?? null;
+    const ins = this.inbound.get(id) ?? [];
+    return BUILDINGS[b.type].ports.map((p) => {
+      const w = this.portWorld(b, p.cell, p.side);
+      const nx = w.cx + DX[w.side];
+      const nz = w.cz + DZ[w.side];
+      const linked =
+        p.dir === 'out'
+          ? !!link && link.cx === nx && link.cz === nz && link.entry === opposite(w.side)
+          : ins.some((f) => f.link.cx === w.cx && f.link.cz === w.cz && f.link.entry === w.side);
+      const neighbor = this.at(nx, nz);
+      // A building outputs through one port only (the first that links): with an output linked, its other
+      // outputs are unused even with nothing in front (a belt there would get nothing, or steal the output).
+      const state = linked ? 'linked' : !this.inBounds(nx, nz) || neighbor ? 'blocked' : p.dir === 'out' && link ? 'unused' : 'free';
+      return { cx: w.cx, cz: w.cz, side: w.side, dir: p.dir, state, neighbor: neighbor?.id ?? null };
+    });
+  }
+
+  /** Buildings feeding `id` (any type), in id order. */
+  inboundOf(id: number): { id: number; link: Link }[] {
+    this.syncTopology();
+    return this.inbound.get(id) ?? [];
+  }
+
+  /**
+   * A conveyor whose front runs into a building that refuses its items (a machine's wall or output,
+   * a belt coming head-on…): items pile up at its end forever. A front onto empty ground is not one.
+   */
+  isDeadEnd(id: number): boolean {
+    const c = this.buildings.get(id);
+    if (!c || c.type !== 'conveyor' || this.linkOf(id)) return false;
+    return !!this.at(c.x + DX[c.rot], c.z + DZ[c.rot]);
+  }
+
+  /**
+   * Links that planned buildings would make, without placing them (build ghosts). Planned buildings get
+   * the ids -1, -2… in order; their cells are assumed free (check() ok) and they see each other. The
+   * result mirrors the topology placing them all would give: per planned building, its output link and
+   * the buildings (existing or planned) that would feed it.
+   */
+  planLinks(plan: Placement[]): PlanLinks[] {
+    this.syncTopology();
+    const planned: Occupant[] = plan.map((p, i) => ({ type: p.type, x: p.x, z: p.z, rot: p.rot, id: -1 - i }));
+    const cells = new Map<number, Occupant>();
+    for (const p of planned) for (const [cx, cz] of this.cellsFor(p.type, p.x, p.z, p.rot)) if (this.inBounds(cx, cz)) cells.set(this.idx(cx, cz), p);
+    const at: OccupantAt = (x, z) => (this.inBounds(x, z) ? (cells.get(this.idx(x, z)) ?? this.at(x, z)) : undefined);
+    const res: PlanLinks[] = planned.map(() => ({ out: null, in: [] }));
+    const feed = (from: Occupant) => {
+      const l = this.findLink(from, at);
+      if (l && l.target < 0) res[-1 - l.target]!.in.push({ id: from.id, link: l });
+      return l;
+    };
+    // Existing neighbors of planned cells may link into them (in id order, as the topology would).
+    const neighbors = new Map<number, Building>();
+    for (const p of planned) {
+      res[-1 - p.id]!.out = feed(p);
+      for (const [cx, cz] of this.cellsFor(p.type, p.x, p.z, p.rot)) {
+        for (let s = 0; s < 4; s++) {
+          const n = this.at(cx + DX[s], cz + DZ[s]);
+          if (n) neighbors.set(n.id, n);
+        }
+      }
+    }
+    for (const n of [...neighbors.values()].sort((a, b) => a.id - b.id)) feed(n);
+    return res;
   }
 
   // ---------------------------------------------------------------- simulation
