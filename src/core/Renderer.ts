@@ -66,6 +66,8 @@ export interface LightRig {
   hemi: THREE.HemisphereLight;
   /** Keeps the shadow camera centered on a point of interest. */
   follow(target: THREE.Vector3): void;
+  /** Removes the lights and frees the sun's shadow map (each mode builds its own rig on enter). */
+  dispose(): void;
 }
 
 /** Sky color, fog, hemisphere + shadow-casting sun. */
@@ -107,6 +109,11 @@ export function addLightRig(
       const z = Math.round(target.z / texel) * texel;
       sun.target.position.set(x, target.y, z);
       sun.position.set(x + offset.x, target.y + offset.y, z + offset.z);
+    },
+    dispose() {
+      scene.remove(hemi, sun, sun.target);
+      sun.dispose();
+      hemi.dispose();
     },
   };
 }

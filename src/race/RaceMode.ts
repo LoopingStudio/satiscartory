@@ -430,6 +430,7 @@ export class RaceMode implements Mode {
     this.vehicle.dispose();
     this.track.dispose();
     this.physics.dispose();
+    this.rig.dispose();
     this.layer?.remove();
     this.disposeCamera();
   }

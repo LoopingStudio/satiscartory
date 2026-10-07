@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { Game } from '../core/Game';
 import type { Mode } from '../core/ModeManager';
 import { addLightRig, type LightRig } from '../core/Renderer';
-import type { GameState } from '../state/GameState';
+import { GameState } from '../state/GameState';
+import { isTerrainId } from './sim/terrain';
 import { FactoryView } from './view/FactoryView';
 import { FactoryWorld } from './FactoryWorld';
 import { BUILD_ORDER, FactoryHud } from './FactoryHud';
@@ -39,6 +40,8 @@ import type { TrackSelectParams } from '../race/TrackSelectMode';
 
 export interface FactoryModeParams {
   layout?: 'demo' | 'stress';
+  /** Dev (`?terrain=`): a fresh, never-saved game on this relief; the saved game stays untouched. */
+  terrain?: string;
 }
 
 const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4', 'hotbar5', 'hotbar6', 'hotbar7', 'hotbar8'];
@@ -111,11 +114,24 @@ export class FactoryMode implements Mode {
   }
 
   enter(params?: FactoryModeParams): void {
+    const terrain = import.meta.env.DEV && isTerrainId(params?.terrain) ? params.terrain : null;
     if (params?.layout === 'stress') {
       this.sim = new FactorySim({ hub: null, width: 64, height: 64 });
       spawnStressLoops(this.sim);
       this.state.sim = this.sim;
       this.state.ephemeral = true;
+      // The saved player and cars stand on the real map, not in this 64×64 one.
+      this.state.player = null;
+      this.state.cars = [];
+      this.state.builds = [];
+    } else if (terrain) {
+      const settings = this.state.settings;
+      this.state.replaceWith(new GameState(FactorySim.newGame({ terrain })));
+      this.state.settings = settings;
+      this.state.ephemeral = true;
+      this.state.tier = TIERS.length;
+      this.sim = this.state.sim;
+      if (params?.layout === 'demo') spawnDemoFactory(this.sim);
     } else {
       this.sim = this.state.sim;
       if (params?.layout === 'demo') {
@@ -974,6 +990,7 @@ export class FactoryMode implements Mode {
     this.player.dispose();
     this.world.dispose();
     this.view.dispose();
+    this.rig.dispose();
     this.disposeCamera();
   }
 }

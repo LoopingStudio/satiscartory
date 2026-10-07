@@ -5,6 +5,8 @@ import { FACTORY_GRID_H, FACTORY_GRID_W } from '../../config/constants';
 import { isItemId, type Inventory, type ItemId } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
 import { Emitter } from '../../core/events';
+import { FACTORY_TERRAIN_DEFAULT, type TerrainId } from '../../data/factoryTerrain';
+import { Terrain } from './terrain';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
 import { isMachine, isNode, isProducer, type NodeB, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
 
@@ -22,6 +24,8 @@ export interface FactorySimOptions {
   storage?: Inventory;
   /** Pre-placed hub (null = none, e.g. in unit tests). */
   hub?: { x: number; z: number; rot: Rot } | null;
+  /** Relief of the map (default: flat, like every unit test). */
+  terrain?: TerrainId | Terrain;
 }
 
 export type ConveyorShape = 'straight' | 'left' | 'right' | 'junction';
@@ -45,6 +49,8 @@ export class FactorySim {
   /** Resource index + 1 per cell (0 = none). */
   readonly nodeGrid: Int8Array;
   readonly nodes: ResourceNode[];
+  /** Relief: natural ground and the ground as the padded buildings left it. */
+  readonly terrain: Terrain;
   readonly buildings = new Map<number, Building>();
   storage: Inventory;
   /** Items received by the hub since the start (objectives/stats). */
@@ -81,16 +87,19 @@ export class FactorySim {
       const idx = RESOURCE_IDS.indexOf(n.resource) + 1;
       for (let x = n.x; x < n.x + n.w; x++) for (let z = n.z; z < n.z + n.h; z++) if (this.inBounds(x, z)) this.nodeGrid[this.idx(x, z)] = idx;
     }
+    const t = opts.terrain ?? 'flat';
+    this.terrain = t instanceof Terrain ? t : Terrain.create(t, this.width, this.height, this.nodes);
     this.storage = { ...(opts.storage ?? {}) };
     if (opts.hub) this.place('hub', opts.hub.x, opts.hub.z, opts.hub.rot, { free: true, force: true });
   }
 
-  /** New game with the default map, hub and starting stock. */
-  static newGame(): FactorySim {
+  /** New game with the default map, hub and starting stock (and the default relief, unless given). */
+  static newGame(opts: { terrain?: TerrainId } = {}): FactorySim {
     return new FactorySim({
       nodes: FACTORY_MAP.nodes,
       storage: START_STORAGE,
       hub: FACTORY_MAP.hub,
+      terrain: opts.terrain ?? FACTORY_TERRAIN_DEFAULT,
     });
   }
 

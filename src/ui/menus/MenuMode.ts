@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Game } from '../../core/Game';
 import type { Mode, ModeName } from '../../core/ModeManager';
-import { addLightRig } from '../../core/Renderer';
+import { addLightRig, type LightRig } from '../../core/Renderer';
 import { CAR_SCALE, FACTORY_MODEL_SCALE, TRACK_CELL } from '../../config/constants';
 import { createLayer, el } from '../dom';
 import { fr } from '../i18n/fr';
@@ -22,6 +22,7 @@ export class MenuMode implements Mode {
   readonly camera: THREE.PerspectiveCamera;
   private disposeCamera: () => void;
   private layer: HTMLElement | null = null;
+  private rig: LightRig | null = null;
   private t = 0;
   private car: THREE.Object3D | null = null;
 
@@ -32,7 +33,7 @@ export class MenuMode implements Mode {
   }
 
   enter(): void {
-    addLightRig(this.scene, { shadowSize: 40, fog: [60, 160] });
+    this.rig = addLightRig(this.scene, { shadowSize: 40, fog: [60, 160] });
     const a = this.game.assets;
     const ground = new THREE.Mesh(new THREE.CircleGeometry(200, 48), new THREE.MeshStandardMaterial({ color: 0x575b80 }));
     ground.rotation.x = -Math.PI / 2;
@@ -113,6 +114,7 @@ export class MenuMode implements Mode {
   }
 
   exit(): void {
+    this.rig?.dispose();
     this.disposeCamera();
     this.layer?.remove();
   }

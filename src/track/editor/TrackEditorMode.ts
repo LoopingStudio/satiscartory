@@ -516,6 +516,7 @@ export class TrackEditorMode implements Mode {
     window.removeEventListener('keydown', this.onKey);
     this.game.renderer.canvas.removeEventListener('contextmenu', this.prevent);
     this.built?.dispose();
+    this.rig.dispose();
     this.layer?.remove();
     this.disposeCamera();
   }

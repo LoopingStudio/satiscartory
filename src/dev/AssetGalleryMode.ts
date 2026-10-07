@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { Game } from '../core/Game';
 import type { Mode } from '../core/ModeManager';
-import { addLightRig } from '../core/Renderer';
+import { addLightRig, type LightRig } from '../core/Renderer';
 import { PhysicsWorld, RAPIER } from '../core/physics/PhysicsWorld';
 import { KITS, MODELS, type ModelKey } from '../core/assets/manifest.gen';
 import { CAR_SCALE, FACTORY_MODEL_SCALE, PLAYER_HEIGHT, TRACK_CELL } from '../config/constants';
@@ -23,6 +23,7 @@ export class AssetGalleryMode implements Mode {
   private controls: OrbitControls;
   private labels: CSS2DRenderer;
   private layer: HTMLElement | null = null;
+  private rig: LightRig | null = null;
   private physics = new PhysicsWorld(-9.81);
   private box: { body: RAPIER.RigidBody; mesh: THREE.Mesh } | null = null;
   private prevBox = new THREE.Vector3();
@@ -44,8 +45,8 @@ export class AssetGalleryMode implements Mode {
   }
 
   enter(): void {
-    const rig = addLightRig(this.scene, { shadowSize: 90 });
-    rig.follow(new THREE.Vector3(10, 0, 20));
+    this.rig = addLightRig(this.scene, { shadowSize: 90 });
+    this.rig.follow(new THREE.Vector3(10, 0, 20));
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x5a5f86 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.01;
@@ -239,6 +240,7 @@ export class AssetGalleryMode implements Mode {
     this.disposeCamera();
     this.disposeResize?.();
     this.physics.dispose();
+    this.rig?.dispose();
     this.layer?.remove();
     this.box?.mesh.geometry.dispose();
   }

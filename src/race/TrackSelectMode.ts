@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Game } from '../core/Game';
 import type { Mode } from '../core/ModeManager';
-import { addLightRig } from '../core/Renderer';
+import { addLightRig, type LightRig } from '../core/Renderer';
 import { PhysicsWorld } from '../core/physics/PhysicsWorld';
 import { GRAVITY_RACE } from '../config/constants';
 import type { GameState } from '../state/GameState';
@@ -49,6 +49,7 @@ export class TrackSelectMode implements Mode {
   private origin: TrackOrigin = 'menu';
   /** The « Supprimer » dialog is open: a second click (Space on the button behind it) opens no other. */
   private confirming = false;
+  private rig: LightRig | null = null;
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(50, 1, 4000);
@@ -57,7 +58,8 @@ export class TrackSelectMode implements Mode {
   }
 
   enter(params?: TrackSelectParams): void {
-    addLightRig(this.scene, { shadowSize: 120, sky: 0x9fc0f0, fog: [400, 1600] }).follow(new THREE.Vector3());
+    this.rig = addLightRig(this.scene, { shadowSize: 120, sky: 0x9fc0f0, fog: [400, 1600] });
+    this.rig.follow(new THREE.Vector3());
     this.tracks = TrackStore.all();
     this.origin = params?.origin === 'factory' ? 'factory' : 'menu';
     this.layer = createLayer('tracks-screen');
@@ -236,6 +238,7 @@ export class TrackSelectMode implements Mode {
   exit(): void {
     this.built?.dispose();
     this.physics.dispose();
+    this.rig?.dispose();
     this.layer?.remove();
     this.disposeCamera();
   }

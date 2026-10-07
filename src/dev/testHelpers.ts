@@ -3,6 +3,7 @@ import type { Game } from '../core/Game';
 import { FACTORY_CELL } from '../config/constants';
 import { Bot } from '../race/bot';
 import { PAD, type PadButton } from '../core/gamepad';
+import type { Terrain } from '../factory/sim/terrain';
 
 /**
  * A virtual standard gamepad served by navigator.getGamepads(), so automated checks go through the real
@@ -88,6 +89,22 @@ export function installTestHelpers(game: Game): void {
   const canvas = game.renderer.canvas;
   const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   const mode = () => game.modes.current as unknown as Record<string, any>;
+  /** Relief of the factory being played (null outside the factory). */
+  const terrain = (): Terrain | null => (mode()?.sim?.terrain as Terrain | undefined) ?? null;
+  /** Relief of the current factory: heights in m, corners and cells in cm per 2 m. */
+  const terrainHelpers = {
+    id: () => terrain()?.id ?? null,
+    heightAt: (x: number, z: number) => terrain()?.heightAt(x, z) ?? 0,
+    /** Height of the ground at the center of grid cell (cx, cz). */
+    cellY: (cx: number, cz: number) => terrain()?.heightAt((cx + 0.5) * FACTORY_CELL, (cz + 0.5) * FACTORY_CELL) ?? 0,
+    cell(cx: number, cz: number) {
+      const t = terrain();
+      if (!t) return null;
+      const g = t.cellGrad(cx, cz, { gx: 0, gz: 0, twist: 0 });
+      const n = t.cellGrad(cx, cz, { gx: 0, gz: 0, twist: 0 }, true);
+      return { base: t.baseAt(cx, cz), eff: t.effAt(cx, cz), grad: [g.gx, g.gz], twist: g.twist, naturalGrad: [n.gx, n.gz], wet: t.isWetCell(cx, cz), beltFits: t.beltFits(cx, cz) };
+    },
+  };
   const T = {
     sleep,
     game,
@@ -116,7 +133,8 @@ export function installTestHelpers(game: Game): void {
       const r = canvas.getBoundingClientRect();
       return { cx: r.left + ((v.x + 1) / 2) * r.width, cy: r.top + ((1 - v.y) / 2) * r.height, onScreen: Math.abs(v.x) < 1 && Math.abs(v.y) < 1 && v.z < 1 };
     },
-    screenOfCell(x: number, z: number, y = 0) {
+    terrain: terrainHelpers,
+    screenOfCell(x: number, z: number, y = terrainHelpers.cellY(x, z)) {
       return T.screenOf(new THREE.Vector3((x + 0.5) * FACTORY_CELL, y, (z + 0.5) * FACTORY_CELL));
     },
     move(cx: number, cy: number, dx = 0, dy = 0) {
