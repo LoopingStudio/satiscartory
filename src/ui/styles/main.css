@@ -68,6 +68,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #2b1a00; border-color: transparent; }
 button.primary:hover:not(:disabled) { background: #ffb347; }
 button.danger { background: #8a2b3a; }
+button.sell { background: #5c4a14; border-color: rgba(255, 209, 102, 0.45); }
+button.sell:hover:not(:disabled) { background: #74601c; }
 button.small { font-size: 13px; padding: 5px 10px; }
 button.selected { outline: 2px solid var(--accent); }
 
@@ -174,6 +176,24 @@ kbd {
 .port-dot.port-out { background: #ffa31a; }
 .storage-panel { min-width: 210px; max-height: 70vh; overflow: auto; }
 .storage-row { font-size: 14px; }
+/* Credits (car sales): a gold pill, never split over two lines (formatCredits groups digits with plain spaces). */
+.credits { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; background: rgba(255, 209, 102, 0.12); border: 1px solid rgba(255, 209, 102, 0.45); color: var(--gold); font-family: var(--mono); font-size: 13px; font-weight: 800; white-space: nowrap; }
+.credits-text { color: var(--gold); white-space: nowrap; }
+.credits-wrap { position: relative; display: inline-flex; }
+.storage-head { margin-bottom: 6px; }
+.storage-head h3 { margin: 0; }
+.credits.flash { animation: credits-pulse 0.6s ease-out; }
+.credits-gain { position: absolute; right: 0; top: calc(100% + 3px); color: var(--gold); font-family: var(--mono); font-size: 13px; font-weight: 800; white-space: nowrap; text-shadow: 0 1px 0 #000; opacity: 0; pointer-events: none; }
+.credits-gain.flash { animation: credits-gain 1.8s ease-out forwards; }
+@keyframes credits-pulse { 0% { transform: scale(1.1); box-shadow: 0 0 0 0 rgba(255, 209, 102, 0.7); } 100% { transform: scale(1); box-shadow: 0 0 0 10px rgba(255, 209, 102, 0); } }
+@keyframes credits-gain { 0% { opacity: 0; transform: translateY(6px); } 12% { opacity: 1; transform: translateY(0); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
+/* Dealer panel */
+.dealer-stock { flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.dealer-stock .inv-slot { width: 48px; height: 48px; }
+.inv-slot.zero { opacity: 0.4; }
+.price-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.price-row { font-size: 14px; padding: 2px 6px; border-radius: 6px; gap: 6px; }
+.price-row.bonus { padding-left: 22px; font-size: 12px; }
 .modal { width: min(560px, 92vw); max-height: 80vh; overflow: auto; }
 /* Keep machine / build panels clear of the backpack bar (still visible under them). */
 .panel-open:not(.bag-panel-open) .modal { max-height: min(80vh, calc(100% - 160px)); }

@@ -1,19 +1,21 @@
 import { BUILDINGS, BUILD_CATEGORIES, BUILD_MENU, type BuildingType } from '../data/buildings';
 import { ITEMS, ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { recipesFor, RECIPES_BY_ID, type Recipe } from '../data/recipes';
-import { DRILL, MACHINE } from '../data/balance';
+import { DEALER, DRILL, MACHINE } from '../data/balance';
+import { BLUEPRINTS, CAR_PARTS } from '../data/blueprints';
+import { bestSale, carCost, carLabel, carPrice, formatCredits, nearestSale, planLoad, priceList, type CarConfig } from '../data/sales';
 import { RESOURCES } from '../data/factoryMap';
 import { append, clear, createLayer, el } from '../ui/dom';
 import { dual, html, keyCap, padGlyph, renderTokens } from '../ui/padHints';
 import { setPadHandlers } from '../ui/padNav';
 import type { FactorySim } from './sim/FactorySim';
-import { isMachine, type DrillB, type MachineB } from './sim/types';
+import { isMachine, type DealerB, type DrillB, type MachineB } from './sim/types';
 import type { Tool } from './build/BuildController';
 import type { Inventory, Stack, Wallet } from '../state/Inventory';
 import type { ItemIcons } from '../core/assets/IconRenderer';
 import { INVENTORY } from '../data/inventory';
 import { TIERS, tierOf } from '../data/tiers';
-import { FACTORY_CELL } from '../config/constants';
+import { FACTORY_CELL, FACTORY_HZ } from '../config/constants';
 
 /** What a building is for, in the build menu's detail pane (HTML; machines also list their recipes). */
 const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
@@ -22,6 +24,7 @@ const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
   merger: 'Réunit jusqu’à trois lignes (arrière, gauche, droite) en une seule vers l’avant, chacune à son tour.',
   drill: 'À poser sur un gisement : minerai de fer ou latex selon la roche.',
   garage: 'Une place pour une voiture : assemblage, pièces, départ des courses. Porte à l’avant.',
+  dealer: `Reçoit les pièces de voiture par l’arrière, sans limite (le reste est refusé). Monte toute seule la voiture la plus chère que son stock permet, puis la vend : les crédits vont à ton solde. ${dual(keyCap('E'), padGlyph('x'))} : « Charger » le surplus du sac et du hangar.`,
 };
 
 const STATUS_LABEL = { working: 'En production', idle: 'En attente d’entrées', blocked: 'Sortie pleine', noRecipe: 'Aucune recette' } as const;
@@ -43,6 +46,10 @@ export interface HudCallbacks {
   loadMachine(machineId: number): void;
   /** Takes a producer's output into the backpack. */
   collect(buildingId: number): void;
+  /** Dealer « Charger »: from the backpack, then the hub, the parts of the complete cars it can make. */
+  loadDealer(dealerId: number): void;
+  /** Dealer « Reprendre les pièces »: its waiting parts to the backpack (overflow: hub); the car being assembled stays. */
+  unloadDealer(dealerId: number): void;
   /** Hub → backpack (one stack of `item`). */
   takeFromHub(item: ItemId): void;
   /** Backpack slot → hub. */
@@ -70,9 +77,9 @@ export interface HudCallbacks {
   closePanel(): void;
 }
 
-type PanelKind = 'build' | 'machine' | 'drill' | 'hub' | 'inventory';
+type PanelKind = 'build' | 'machine' | 'drill' | 'dealer' | 'hub' | 'inventory';
 /** Pad buttons that close a panel: B, plus the one that opened it (Y build menu, View backpack). */
-const CLOSE_PAD: Record<PanelKind, string> = { build: 'b y', machine: 'b', drill: 'b', hub: 'b', inventory: 'b view' };
+const CLOSE_PAD: Record<PanelKind, string> = { build: 'b y', machine: 'b', drill: 'b', dealer: 'b', hub: 'b', inventory: 'b view' };
 type HubTab = 'stock' | 'bench' | 'tiers';
 
 interface Drag {
@@ -88,6 +95,14 @@ interface Drag {
 export class FactoryHud {
   readonly layer = createLayer('factory-hud');
   private storage = el('div', { class: 'panel top-right storage-panel' });
+  /** Hub stock rows, under the title and the credits (rebuilt on every delivery, the credits are not). */
+  private storageList = el('div');
+  private creditsEl = el('span', { class: 'credits', title: 'Crédits : ventes de voitures (concessions et garages)' });
+  /** « +4 480 cr » floating under the credits after a sale. */
+  private creditsGain = el('span', { class: 'credits-gain' });
+  private creditsWrap = el('span', { class: 'credits-wrap' }, this.creditsEl, this.creditsGain);
+  /** Balance last shown (null: not yet, no flash on the first one). */
+  private creditsSeen: number | null = null;
   private bagBar = el('div', { class: 'bag-bar' });
   private hint = el('div', { class: 'hint' });
   /** Bottom of the screen: hint, then the backpack's first row (buildings are picked in the build menu). */
@@ -127,6 +142,7 @@ export class FactoryHud {
     private readonly buildingIcon: (type: BuildingType) => string | null,
     private readonly cb: HudCallbacks,
   ) {
+    this.storage.append(el('div', { class: 'row storage-head' }, el('h3', {}, 'Hangar central'), el('span', { class: 'spacer' }), this.creditsWrap), this.storageList);
     this.layer.append(this.storage, this.bottom, this.crosshair, this.overlay, this.objectives);
     this.objectives.style.display = 'none';
   }
@@ -164,11 +180,11 @@ export class FactoryHud {
     if (this.panelKind === 'build') this.refreshPanel();
   }
 
-  /** Compact cost: icon + quantity per item (red when short), full text in the tooltip. */
-  private costIcons(cost: ItemCounts): HTMLElement {
+  /** Compact cost: icon + quantity per item (red when short, if `check`), full text in the tooltip. */
+  private costIcons(cost: ItemCounts, check = true): HTMLElement {
     const row = el('span', { class: 'cost-icons', title: costText(cost) });
     for (const [item, n] of Object.entries(cost) as [ItemId, number][]) {
-      const short = this.wallet.count(item) < n;
+      const short = check && this.wallet.count(item) < n;
       row.append(el('span', { class: `cost-item${short ? ' bad' : ''}` }, this.icon(item, 'item-icon micro'), `${n}`));
     }
     return row;
@@ -185,16 +201,45 @@ export class FactoryHud {
   /** Hub panel (top right) and backpack bar (bottom); only re-rendered when their content changed. */
   updateStorage(): void {
     this.updateBagBar();
+    this.updateCredits();
     const entries = ITEM_IDS.filter((id) => this.sim.count(id) > 0).map((id) => [id, this.sim.count(id)] as const);
     const key = entries.map((e) => e.join(':')).join('|');
     if (key === this.storageKey) return;
     this.storageKey = key;
-    clear(this.storage);
-    this.storage.appendChild(el('h3', {}, 'Hangar central'));
-    if (!entries.length) this.storage.appendChild(el('div', { class: 'muted' }, 'Vide'));
+    clear(this.storageList);
+    if (!entries.length) this.storageList.appendChild(el('div', { class: 'muted' }, 'Vide'));
     for (const [id, n] of entries) {
-      this.storage.appendChild(el('div', { class: 'row storage-row' }, this.icon(id, 'item-icon tiny'), el('span', {}, ITEMS[id].name), el('span', { class: 'spacer' }), el('b', { class: 'mono' }, n)));
+      this.storageList.appendChild(el('div', { class: 'row storage-row' }, this.icon(id, 'item-icon tiny'), el('span', {}, ITEMS[id].name), el('span', { class: 'spacer' }), el('b', { class: 'mono' }, n)));
     }
+  }
+
+  /** Credits are shown once there is something to sell them with (the dealer unlocked) or a first sale. */
+  private showCredits(): boolean {
+    return this.sim.credits > 0 || this.cb.isUnlocked('dealer');
+  }
+
+  /** The balance next to the hub's title, updated in place: a rise floats « +4 480 cr » under it. */
+  private updateCredits(): void {
+    const display = this.showCredits() ? '' : 'none';
+    if (this.creditsWrap.style.display !== display) this.creditsWrap.style.display = display;
+    const c = this.sim.credits;
+    const seen = this.creditsSeen;
+    this.creditsSeen = c;
+    if (seen === c) return;
+    this.creditsEl.textContent = formatCredits(c);
+    if (seen === null || c < seen) return;
+    this.creditsGain.textContent = `+${formatCredits(c - seen)}`;
+    for (const e of [this.creditsEl, this.creditsGain]) {
+      // Restart the animation (one per sale).
+      e.classList.remove('flash');
+      void e.offsetWidth;
+      e.classList.add('flash');
+    }
+  }
+
+  /** The balance as a gold pill (panel headers). */
+  private creditsPill(): HTMLElement {
+    return el('span', { class: 'credits', title: 'Crédits : ventes de voitures (concessions et garages)' }, formatCredits(this.sim.credits));
   }
 
   /** First row of the backpack, always visible; a slot that gained items pulses. */
@@ -236,8 +281,8 @@ export class FactoryHud {
         el('p', { class: 'muted' }, html(dual('Clique pour prendre le contrôle de la caméra.', `${g('a')} pour jouer : la manette fonctionne partout, menus compris.`))),
         el('div', { class: 'controls-help kbm-only' },
           el('div', {}, el('kbd', {}, 'Z Q S D'), ' se déplacer · ', el('kbd', {}, 'Maj'), ' courir · ', el('kbd', {}, 'Espace'), ' sauter'),
-          el('div', {}, el('kbd', {}, 'A'), ' menu de construction (raccourcis ', el('kbd', {}, '1-8'), ') · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter'),
-          el('div', {}, el('kbd', {}, 'E'), ' maintenu sur un gisement : miner · ', el('kbd', {}, 'E'), ' utiliser une machine / le hangar (établi, paliers)'),
+          el('div', {}, el('kbd', {}, 'A'), ' menu de construction (raccourcis ', el('kbd', {}, `1-${BUILD_MENU.length}`), ') · ', el('kbd', {}, 'R'), ' tourner · ', el('kbd', {}, 'F'), ' démonter'),
+          el('div', {}, el('kbd', {}, 'E'), ' maintenu sur un gisement : miner · ', el('kbd', {}, 'E'), ' utiliser une machine, une concession, le hangar (établi, paliers)'),
           el('div', {}, el('kbd', {}, 'E'), ' sur un convoyeur : prendre ses objets (maintenu : toute la ligne)'),
           el('div', {}, el('kbd', {}, 'E'), ' près d’une voiture : monter / descendre · ', el('kbd', {}, 'Tab'), ' sac · ', el('kbd', {}, 'Échap'), ' pause'),
         ),
@@ -245,7 +290,7 @@ export class FactoryHud {
           `<div>${g('ls')} se déplacer (${g('l3')} courir) · ${g('rs')} caméra (${g('up')} zoom) · ${g('a')} sauter</div>`,
           `<div>${g('y')} menu de construction · ${g('left')}${g('right')} bâtiment précédent / suivant · ${g('down')} démonter</div>`,
           `<div>${g('rt')} poser (maintenu : tracer un convoyeur) · ${g('lb')}${g('rb')} tourner · ${g('b')} annuler</div>`,
-          `<div>${g('x')} maintenu sur un gisement : miner · ${g('x')} utiliser une machine / le hangar · sur un convoyeur : prendre (maintenu : toute la ligne)</div>`,
+          `<div>${g('x')} maintenu sur un gisement : miner · ${g('x')} utiliser une machine, une concession, le hangar · sur un convoyeur : prendre (maintenu : toute la ligne)</div>`,
           `<div>${g('x')} près d’une voiture : monter / descendre · ${g('view')} sac · ${g('start')} pause</div>`,
           `<div>Menus : ${g('up')}${g('down')}${g('left')}${g('right')} choisir · ${g('a')} valider · ${g('b')} retour · ${g('lb')}${g('rb')} onglets</div>`,
         ].join(''))),
@@ -286,10 +331,10 @@ export class FactoryHud {
     this.refreshPanel(true);
   }
 
-  /** Title row with « Fermer » (B closes, and the button that opened the panel); `sub` is HTML. */
-  private header(title: string, sub?: string): HTMLElement[] {
+  /** Title row with « Fermer » (B closes, and the button that opened the panel), `extra` before it; `sub` is HTML. */
+  private header(title: string, sub?: string, extra?: HTMLElement | null): HTMLElement[] {
     return [
-      el('div', { class: 'row' }, el('h2', {}, title), el('span', { class: 'spacer' }), el('button', { class: 'small', onclick: () => this.cb.closePanel(), 'data-pad-btn': CLOSE_PAD[this.panelKind ?? 'machine'] }, 'Fermer')),
+      el('div', { class: 'row' }, el('h2', {}, title), el('span', { class: 'spacer' }), extra ?? null, el('button', { class: 'small', onclick: () => this.cb.closePanel(), 'data-pad-btn': CLOSE_PAD[this.panelKind ?? 'machine'] }, 'Fermer')),
       sub ? el('div', { class: 'muted small' }, html(sub)) : el('span', {}),
     ];
   }
@@ -302,6 +347,7 @@ export class FactoryHud {
   openMachine(id: number): void {
     const b = this.sim.buildings.get(id);
     if (b?.type === 'drill') this.openPanel('drill', id, 'machine-panel');
+    else if (b?.type === 'dealer') this.openPanel('dealer', id, 'machine-panel dealer-panel');
     else if (isMachine(b)) this.openPanel('machine', id, 'machine-panel');
   }
 
@@ -340,6 +386,8 @@ export class FactoryHud {
         return this.renderMachine();
       case 'drill':
         return this.renderDrill();
+      case 'dealer':
+        return this.renderDealer();
       case 'hub':
         return this.renderHub();
       case 'inventory':
@@ -359,7 +407,9 @@ export class FactoryHud {
     const b = this.panelTarget !== null ? this.sim.buildings.get(this.panelTarget) : undefined;
     // Progress is animated in place (see tick) so it does not trigger re-renders.
     const bkey = b ? JSON.stringify({ ...b, items: undefined, progress: undefined }) : '';
-    return `${this.panelKind}|${bag}|${hub}|${bkey}|${this.cb.nearHub()}|${this.hubTab}|${this.cb.tier()}`;
+    // Hub and dealer panels show the balance.
+    const credits = this.panelKind === 'hub' || this.panelKind === 'dealer' ? this.sim.credits : '';
+    return `${this.panelKind}|${bag}|${hub}|${bkey}|${this.cb.nearHub()}|${this.hubTab}|${this.cb.tier()}|${credits}`;
   }
 
   /** Build menu (A): buildings by category with thumbnails and costs, details of the hovered one. */
@@ -446,6 +496,7 @@ export class FactoryHud {
       el('div', { class: 'muted small' }, `${w} × ${h} cases (${w * FACTORY_CELL} × ${h * FACTORY_CELL} m)`, el('span', { class: 'kbm-only' }, ` · touche ${BUILD_MENU.indexOf(type) + 1}`)),
       el('p', { class: 'small' }, BUILD_ROLE[type] ? html(BUILD_ROLE[type]) : def.description),
       makes ? el('div', { class: 'small' }, el('span', { class: 'muted' }, 'Fabrique : '), makes) : null,
+      type === 'dealer' ? el('div', { class: 'small' }, el('span', { class: 'muted' }, 'Vend : '), priceList().map((l) => `${BLUEPRINTS[l.blueprint].name} dès ${formatCredits(l.price)}`).join(', ')) : null,
       el('h3', { style: 'margin-top:10px' }, 'Coût'),
       cost,
       locked
@@ -495,7 +546,7 @@ export class FactoryHud {
   }
 
   /** Whether something feeds the building and whether its output goes anywhere, with what to do if not. */
-  private portStatus(id: number): HTMLElement {
+  private portStatus(id: number, what = 'la machine'): HTMLElement {
     const ports = this.sim.portsOf(id);
     const line = (dir: 'in' | 'out') => {
       const own = ports.filter((p) => p.dir === dir);
@@ -515,16 +566,16 @@ export class FactoryHud {
         if (dir === 'out') {
           cls = 'bad';
           text = n?.type === 'conveyor'
-            ? 'Sortie bloquée : le convoyeur devant pointe vers la machine, repose-le dans l’autre sens'
+            ? `Sortie bloquée : le convoyeur devant pointe vers ${what}, repose-le dans l’autre sens`
             : n
-              ? `Sortie bloquée (${BUILDINGS[n.type].name}) : libère une case devant la machine`
-              : `Sortie bloquée : elle donne ${where}, tourne ou déplace la machine`;
+              ? `Sortie bloquée (${BUILDINGS[n.type].name}) : libère une case devant ${what}`
+              : `Sortie bloquée : elle donne ${where}, tourne ou déplace ${what}`;
         } else {
           text = n?.type === 'conveyor'
-            ? 'Entrée non reliée : le convoyeur derrière ne pointe pas vers la machine'
+            ? `Entrée non reliée : le convoyeur derrière ne pointe pas vers ${what}`
             : n
-              ? `Entrée bloquée (${BUILDINGS[n.type].name}) : libère une case derrière la machine`
-              : `Entrée bloquée : elle donne ${where}, tourne ou déplace la machine`;
+              ? `Entrée bloquée (${BUILDINGS[n.type].name}) : libère une case derrière ${what}`
+              : `Entrée bloquée : elle donne ${where}, tourne ou déplace ${what}`;
         }
       }
       return el('div', { class: 'row small' }, el('span', { class: `port-dot port-${dir}` }), el('span', { class: cls }, text));
@@ -553,6 +604,98 @@ export class FactoryHud {
       el('div', { class: 'row', style: 'margin-top:8px' },
         el('button', { class: 'small primary', 'data-action': 'collect', disabled: d.outBuf.length === 0, onclick: () => this.cb.collect(d.id) }, `Prendre (${d.outBuf.length})`),
       ),
+    );
+  }
+
+  /**
+   * Dealer: the car being assembled and its price, the waiting parts, what the next car misses, « Charger » (the
+   * complete cars the backpack and the hub allow) and « Reprendre les pièces », sales and prices.
+   */
+  private renderDealer(): void {
+    const d = this.sim.buildings.get(this.panelTarget!) as DealerB | undefined;
+    if (d?.type !== 'dealer') return this.cb.closePanel();
+    const stock = d.stock;
+    const waiting = CAR_PARTS.reduce((n, i) => n + (stock[i] ?? 0), 0);
+    const next = bestSale(stock);
+    const label = (c: CarConfig) => `${carLabel(c.blueprint, c.parts)} · ${formatCredits(carPrice(c.blueprint, c.parts))}`;
+    const missing = () => `il manque ${costText(nearestSale(stock).missing)} pour la prochaine voiture`;
+    const [cls, status] = d.car
+      ? ['status-working', `Assemblage : ${label(d.car)}`]
+      : next
+        ? ['status-working', `Prête : ${label(next)}`]
+        : waiting
+          ? ['status-idle', `En attente : ${missing()}`]
+          : ['status-noRecipe', 'En attente de pièces de voiture'];
+    const then = d.car ? (next ? `Ensuite : ${label(next)}` : waiting ? `Ensuite : ${missing()}` : null) : null;
+    this.progressEl = el('div', { style: `width:${Math.round(this.sim.progressOf(d) * 100)}%` });
+    const parts = el('div', { class: 'row dealer-stock' });
+    for (const item of CAR_PARTS) {
+      const n = stock[item] ?? 0;
+      const slot = this.slotEl({ item, count: n }, undefined, `${ITEMS[item].name} : ${n} en attente`);
+      if (!n) slot.classList.add('zero');
+      parts.appendChild(slot);
+    }
+    const plan = planLoad(stock, this.wallet.totals(CAR_PARTS));
+    const cars = (n: number) => `${n} voiture${n > 1 ? 's' : ''}`;
+    const loadNote = !plan.items
+      ? 'Ton sac et le hangar n’ont pas de quoi compléter une voiture.'
+      : plan.cars
+        ? `Ton sac et le hangar : de quoi faire ${cars(plan.cars)} de plus, ${formatCredits(plan.total)}.`
+        : `Ton sac et le hangar améliorent les voitures en attente : +${formatCredits(plan.total)}.`;
+    const sold = priceList()
+      .map((l) => [BLUEPRINTS[l.blueprint].name, this.sim.sales[l.blueprint] ?? 0] as const)
+      .filter(([, n]) => n > 0)
+      .map(([name, n]) => `${name} ×${n}`);
+    const prices = el('div', { class: 'price-list' });
+    priceList().forEach((l, i) => {
+      const bp = BLUEPRINTS[l.blueprint];
+      prices.appendChild(
+        el('div', { class: 'row price-row', 'data-pad-focus': '', 'data-price': l.blueprint, 'data-pad-default': i === 0, title: `${bp.name} : ${costText(carCost(l.blueprint, l.parts))}` },
+          el('b', {}, bp.name), el('span', { class: 'spacer' }), el('b', { class: 'credits-text' }, formatCredits(l.price))),
+      );
+      for (const b of l.bonuses) {
+        const slot = bp.slots.find((s) => s.id === b.slot)!;
+        const base = l.parts[b.slot];
+        prices.appendChild(
+          el('div', { class: 'row price-row bonus small', 'data-pad-focus': '', 'data-price': `${l.blueprint}:${b.item}`, title: base ? `${slot.count} ${b.label} au lieu de ${countLabel(base, slot.count)}` : `+ ${countLabel(b.item, slot.count)}` },
+            this.icon(b.item, 'item-icon micro'), el('span', {}, `avec ${b.label}`), el('span', { class: 'spacer' }), el('span', { class: 'credits-text' }, `+${formatCredits(b.bonus)}`)),
+        );
+      }
+    });
+    const secs = String(DEALER.SELL_TICKS / FACTORY_HZ).replace('.', ',');
+    append(this.panel!,
+      ...this.header(BUILDINGS.dealer.name, `Monte toute seule la voiture la plus chère que ses pièces permettent (${secs} s par voiture), puis la vend. Les pièces arrivent par convoyeur, par l’arrière.`, this.creditsPill()),
+      el('div', { class: `status ${cls}` }, status),
+      el('div', { class: 'progress' }, this.progressEl),
+      d.car ? el('div', { class: 'row small', style: 'gap:6px' }, el('span', { class: 'muted' }, 'Pièces montées :'), this.costIcons(carCost(d.car.blueprint, d.car.parts), false)) : null,
+      this.portStatus(d.id, 'la concession'),
+      el('h3', { style: 'margin-top:10px' }, `Pièces en attente (${waiting})`),
+      parts,
+      then ? el('div', { class: 'muted small' }, then) : null,
+      el('div', { class: 'row', style: 'margin-top:8px;flex-wrap:wrap' },
+        el('button', {
+          class: 'small primary',
+          'data-action': 'dealer-load',
+          disabled: !plan.items,
+          title: plan.items
+            ? `Charge depuis ton sac, puis le hangar : ${costText(plan.load)}`
+            : 'Ni ton sac ni le hangar n’ont de quoi compléter une voiture (un kart : 1 châssis, 1 moteur, 4 roues de la même sorte)',
+          onclick: () => this.cb.loadDealer(d.id),
+        }, 'Charger (sac puis hangar)'),
+        el('button', {
+          class: 'small',
+          'data-action': 'dealer-unload',
+          disabled: !waiting,
+          title: waiting ? 'Rend les pièces en attente à ton sac (le surplus au hangar). La voiture en cours reste.' : 'Aucune pièce en attente',
+          onclick: () => this.cb.unloadDealer(d.id),
+        }, `Reprendre les pièces (${waiting})`),
+      ),
+      el('div', { class: 'muted small' }, loadNote),
+      el('h3', { style: 'margin-top:12px' }, 'Ventes'),
+      el('div', { class: 'small' }, sold.length ? `Vendues : ${sold.join(' · ')}` : 'Aucune voiture vendue pour l’instant.', sold.length ? el('span', { class: 'muted' }, ' (concessions et garages)') : null),
+      el('h3', { style: 'margin-top:12px' }, 'Prix de vente'),
+      prices,
+      el('div', { class: 'muted small', style: 'margin-top:6px' }, 'Une pièce vaut ses matières et son temps machine ; une voiture vaut ses pièces, plus 25 %. Le garage paie le même prix.'),
     );
   }
 
@@ -734,7 +877,7 @@ export class FactoryHud {
       tiers: 'Livre des pièces pour débloquer de nouveaux bâtiments. Le sac paie d’abord, puis le hangar.',
     };
     this.panel!.append(
-      ...this.header('Hangar central', subs[tab]),
+      ...this.header('Hangar central', subs[tab], this.showCredits() ? this.creditsPill() : null),
       el('div', { class: 'row tabs' }, tabBtn('stock', 'Hangar'), tabBtn('bench', 'Établi'), tabBtn('tiers', 'Paliers', tierReady)),
       el('div', { class: 'hub-columns' },
         el('div', {}, el('h3', {}, `Ton sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`), this.bagGrid((i) => this.cb.depositSlot(i))),

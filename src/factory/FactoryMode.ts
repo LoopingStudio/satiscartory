@@ -38,6 +38,7 @@ import { GaragePanel } from '../garage/GaragePanel';
 import { bayOccupant, bayPose, bayRect, type BayBlocker, type GarageSpot } from '../garage/parking';
 import { makeCarPreview } from '../car/CarModel';
 import { buildingIcons } from './view/BuildingIcons';
+import { formatCredits } from '../data/sales';
 import type { TrackSelectParams } from '../race/TrackSelectMode';
 
 export interface FactoryModeParams {
@@ -48,7 +49,7 @@ export interface FactoryModeParams {
 
 /** The player walks at most this far (m) past the edge of the grid. */
 const MAP_EDGE = 20;
-const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4', 'hotbar5', 'hotbar6', 'hotbar7', 'hotbar8'];
+const HOTKEYS: Action[] = ['hotbar1', 'hotbar2', 'hotbar3', 'hotbar4', 'hotbar5', 'hotbar6', 'hotbar7', 'hotbar8', 'hotbar9'];
 /** The Escape keydown and the pointer-lock change arrive in either order: treat them as one press. */
 const ESC_GRACE_MS = 400;
 
@@ -222,6 +223,21 @@ export class FactoryMode implements Mode {
       loadMachine: (id) => {
         const n = this.sim.loadFrom(id, this.wallet);
         toast(n ? `${n} objet${n > 1 ? 's' : ''} chargé${n > 1 ? 's' : ''}` : 'Rien à charger', n ? 'success' : 'info', 1200);
+      },
+      loadDealer: (id) => {
+        const r = this.sim.loadDealer(id, this.wallet);
+        if (!r.count) return toast('Rien à charger : ni le sac ni le hangar n’ont de quoi compléter une voiture', 'info', 2000);
+        const what = (Object.entries(r.items) as [ItemId, number][]).map(([i, n]) => countLabel(i, n)).join(', ');
+        const gain = r.cars ? `${r.cars} voiture${r.cars > 1 ? 's' : ''}, ${formatCredits(r.total)}` : `+${formatCredits(r.total)}`;
+        toast(`Chargé : ${what} (${gain})`, 'success', 2200);
+        this.hud.updateStorage();
+      },
+      unloadDealer: (id) => {
+        const r = this.sim.unloadDealer(id, inv);
+        if (!r.count) return toast('Aucune pièce en attente', 'info', 1400);
+        const what = (Object.entries(r.items) as [ItemId, number][]).map(([i, n]) => countLabel(i, n)).join(', ');
+        toast(r.toHub ? `Repris : ${what} (${r.toHub} au hangar, sac plein)` : `Repris dans le sac : ${what}`, 'success', 2200);
+        this.hud.updateStorage();
       },
       collect: (id) => {
         const b = this.sim.buildings.get(id);
@@ -1090,7 +1106,14 @@ export class FactoryMode implements Mode {
       const load = belt !== null ? this.build.beltLoad(belt) : null;
       const car = b || mine || load?.line ? null : this.cars.carNear(this.player.cur);
       const e = k('interact');
-      if (b) html = `${e} ${b.type === 'hub' ? 'hangar : établi, paliers, stock' : b.type === 'garage' ? 'garage : assembler, pièces, voiture de course' : `configurer : ${BUILDINGS[b.type].name}`}`;
+      if (b) {
+        const what =
+          b.type === 'hub' ? 'hangar : établi, paliers, stock'
+          : b.type === 'garage' ? 'garage : assembler, pièces, vendre, voiture de course'
+          : b.type === 'dealer' ? 'concession : ventes, charger des pièces'
+          : `configurer : ${BUILDINGS[b.type].name}`;
+        html = `${e} ${what}`;
+      }
       else if (load?.line) {
         const pct = Math.round((this.build.beltProgress ?? 0) * 100);
         html = this.beltHold
@@ -1127,6 +1150,8 @@ export class FactoryMode implements Mode {
       storage: { ...this.sim.storage },
       inventory: this.state.inventory.totals(),
       delivered: { ...this.sim.delivered },
+      credits: this.sim.credits,
+      sales: { ...this.sim.sales },
       beltItems: this.sim.beltItemCount(),
       buildings: this.sim.buildings.size,
       player: this.player.cur.toArray().map((v) => +v.toFixed(2)),

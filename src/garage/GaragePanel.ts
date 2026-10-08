@@ -9,7 +9,8 @@ import { carStatsBlock } from '../ui/carStats';
 import { append, clear, el, toast } from '../ui/dom';
 import { html, padGlyph } from '../ui/padHints';
 import { bestChoices, checkAssembly, specOf, type CarInstance, type PartChoices } from './assembly';
-import { CAR_PARTS, assembleCar, carLocation, checkAssembleIn, disassembleCar, findCar, partStock, selectRaceCar, swapCarPart, type CarLocation } from './actions';
+import { CAR_PARTS, assembleCar, carLocation, checkAssembleIn, disassembleCar, findCar, partStock, selectRaceCar, sellCar, swapCarPart, type CarLocation } from './actions';
+import { carPrice, formatCredits } from '../data/sales';
 import { bayOccupant, type BayBlocker, type GarageSpot } from './parking';
 import { buildProgress, type CarBuild } from './build';
 import { abandonBuild, buildIn, installBuildPart, removeBuildPart } from './buildActions';
@@ -32,13 +33,16 @@ type View = { kind: 'car'; id: string | null } | { kind: 'draft'; blueprint: Blu
  * Who takes the pad focus when a click made the focused control go away: the view's main action (else its row),
  * its row on the left (after a car was finished or taken apart: a second A press does nothing), or a button.
  */
-type PadRefocus = 'main' | 'row' | 'disassemble' | 'abandon';
+type PadRefocus = 'main' | 'row' | 'disassemble' | 'abandon' | 'sell';
+
+/** Key of a pending « Vendre » confirmation (a bare car id is a pending « Démonter », 'build' an « Abandonner »). */
+const sellKey = (carId: string) => `sell:${carId}`;
 
 const LOCATION_LABEL: Record<CarLocation, string> = { here: 'Dans ce garage', elsewhere: 'Garée ailleurs', driving: 'En route', unplaced: 'À ranger' };
 
 const LOCATION_NOTE: Record<Exclude<CarLocation, 'here'>, string> = {
-  elsewhere: 'Garée hors de ce garage : amène-la dans la place pour changer ses pièces ou la démonter.',
-  driving: 'Tu la conduis : gare-la dans ce garage pour changer ses pièces ou la démonter.',
+  elsewhere: 'Garée hors de ce garage : amène-la dans la place pour changer ses pièces, la démonter ou la vendre.',
+  driving: 'Tu la conduis : gare-la dans ce garage pour changer ses pièces, la démonter ou la vendre.',
   unplaced: 'Elle attend une place libre : pose un garage ou libère une place.',
 };
 
@@ -47,8 +51,8 @@ function blueprintOf(car: CarInstance | null): Blueprint | undefined {
 }
 
 /**
- * Garage panel over the factory (E on a garage): the cars and where they are, new-car drafts, part swaps
- * and dismantling for the car standing in this garage's bay, the race car and « Courir ».
+ * Garage panel over the factory (E on a garage): the cars and where they are, new-car drafts, part swaps,
+ * dismantling and selling for the car standing in this garage's bay, the race car and « Courir ».
  * Two side columns so the bay stays visible in the middle of the screen.
  * Pad (PadNav scope): B closes (or cancels a pending confirmation), LB/RB step through the left list, the
  * focus starts on the view's main action (« Assembler », the next « Poser », « Courir »).
@@ -190,7 +194,7 @@ export class GaragePanel {
     const stock = partStock(this.state);
     const driven = this.driven;
     const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}`).join('|');
-    return [CAR_PARTS.map((i) => stock[i] ?? 0).join(','), cars, this.occupant(spot)?.id, JSON.stringify(this.build), this.state.selectedCarId, JSON.stringify(this.view), this.confirming].join('#');
+    return [CAR_PARTS.map((i) => stock[i] ?? 0).join(','), cars, this.occupant(spot)?.id, JSON.stringify(this.build), this.state.selectedCarId, JSON.stringify(this.view), this.confirming, this.state.sim.credits].join('#');
   }
 
   // ------------------------------------------------------------------ UI
@@ -227,7 +231,13 @@ export class GaragePanel {
     const build = this.build;
     const progress = build ? buildProgress(build) : null;
     l.append(
-      el('div', { class: 'row' }, el('h2', {}, 'Garage'), el('span', { class: 'spacer' }), el('button', { class: 'small', 'data-action': 'close', 'data-pad-btn': 'b', onclick: () => this.cb.close() }, 'Fermer')),
+      el('div', { class: 'row' },
+        el('h2', {}, 'Garage'),
+        el('span', { class: 'spacer' }),
+        // Always shown: cars sell here (the storage panel with the balance is hidden while the garage is open).
+        el('span', { class: 'credits', title: 'Crédits : ventes de voitures (garages et concessions)' }, formatCredits(this.state.sim.credits)),
+        el('button', { class: 'small', 'data-action': 'close', 'data-pad-btn': 'b', onclick: () => this.cb.close() }, 'Fermer'),
+      ),
       el('div', { class: 'muted small' },
         occupant
           ? `Dans la place : ${occupant.name}`
@@ -483,6 +493,13 @@ export class GaragePanel {
       ),
       bp ? el('div', { class: 'muted small', style: 'margin-top:4px' }, bp.description) : null,
     );
+    const price = car ? carPrice(car.blueprint, car.parts) : 0;
+    if (car) {
+      r.appendChild(
+        el('div', { class: 'small', style: 'margin-top:4px', title: 'Prix de vente au garage ou dans une concession : la valeur de ses pièces, plus 25 %' },
+          el('span', { class: 'muted' }, 'Valeur : '), el('b', { class: 'credits-text' }, formatCredits(price))),
+      );
+    }
     if (bp) r.appendChild(carStatsBlock(specOf(car)));
 
     if (car && bp && loc === 'here') {
@@ -521,16 +538,34 @@ export class GaragePanel {
 
     const id = car?.id ?? null;
     const isRacing = (this.state.selectedCarId ?? null) === id;
+    // One confirmation at a time: « Démonter » and « Vendre » hide while either waits for its answer.
+    const pending = !!car && (this.confirming === car.id || this.confirming === sellKey(car.id));
     const race = el('button', { class: 'primary', 'data-action': 'race', title: 'Choisir un circuit avec cette voiture', onclick: () => this.doRace(id) }, 'Courir');
     r.appendChild(
       el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' },
         race,
         el('button', { class: isRacing ? 'selected' : '', disabled: isRacing, 'data-action': 'select', onclick: () => this.doSelect(id) }, isRacing ? '★ Voiture de course' : 'Choisir pour courir'),
-        car && loc === 'here' && this.confirming !== car.id
+        car && loc === 'here' && !pending
           ? el('button', { class: 'danger', 'data-action': 'disassemble', onclick: () => { this.confirming = car.id; this.render(); } }, 'Démonter')
+          : null,
+        car && loc === 'here' && !pending
+          ? el('button', { class: 'sell', 'data-action': 'sell', title: `Vendre pour ${formatCredits(price)}`, onclick: () => { this.confirming = sellKey(car.id); this.render(); } }, 'Vendre')
           : null,
       ),
     );
+    if (car && loc === 'here' && this.confirming === sellKey(car.id)) {
+      const next = isRacing ? (this.state.cars.find((c) => c !== car)?.name ?? 'le kart de location') : null;
+      r.appendChild(
+        el('div', { class: 'garage-confirm' },
+          el('div', { class: 'small' }, `Vendre « ${car.name} » pour ${formatCredits(price)} ? Elle part avec ses pièces.`),
+          next ? el('div', { class: 'small muted' }, `C’est ta voiture de course : ${next} prendra sa place.`) : null,
+          el('div', { class: 'row', style: 'margin-top:6px' },
+            el('button', { class: 'danger small', 'data-action': 'confirm-sell', onclick: () => this.doSell(car.id) }, 'Oui, vendre'),
+            this.cancelButton('cancel-sell', () => this.cancelConfirm('sell')),
+          ),
+        ),
+      );
+    }
     if (car && loc === 'here' && this.confirming === car.id) {
       r.appendChild(
         el('div', { class: 'garage-confirm' },
@@ -548,7 +583,7 @@ export class GaragePanel {
   // ------------------------------------------------------------------ actions
 
   /** « Annuler »: the button that asked for the confirmation is back, and takes the pad focus again. */
-  private cancelConfirm(button: 'disassemble' | 'abandon'): void {
+  private cancelConfirm(button: 'disassemble' | 'abandon' | 'sell'): void {
     this.confirming = null;
     this.padRefocus = button;
     this.render();
@@ -619,6 +654,16 @@ export class GaragePanel {
     if (!res) return this.render();
     const n = res.toHub;
     toast(n ? `${res.car.name} démontée : pièces dans ton sac, ${n} au hangar (sac plein)` : `${res.car.name} démontée : pièces dans ton sac`, 'success', 2400);
+    this.view = this.defaultView();
+    this.padRefocus = 'row';
+    this.commit();
+  }
+
+  private doSell(carId: string): void {
+    this.confirming = null;
+    const res = sellCar(this.state, carId);
+    if (!res) return this.render();
+    toast(`${res.car.name} vendue : +${formatCredits(res.price)}`, 'success', 2400);
     this.view = this.defaultView();
     this.padRefocus = 'row';
     this.commit();

@@ -23,6 +23,7 @@ export const KEYBINDS = {
   hotbar6: ['Digit6'],
   hotbar7: ['Digit7'],
   hotbar8: ['Digit8'],
+  hotbar9: ['Digit9'],
   // pad-only (keyboard: Escape pauses through the pointer lock, Shift+R, mouse buttons, wheel)
   pause: [],
   primary: [],

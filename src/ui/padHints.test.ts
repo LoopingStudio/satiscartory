@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { dualKey, keyFor, padLabel, padText, renderTokens } from './padHints';
 import { OBJECTIVES } from '../data/objectives';
 import { KEYBINDS, PADBINDS, type Action } from '../config/keybinds';
+import { BUILD_MENU } from '../data/buildings';
 
 describe('pad hints', () => {
   it('labels keys on AZERTY and pad buttons by context', () => {
@@ -25,6 +26,12 @@ describe('pad hints', () => {
     }
     expect(renderTokens('a < b {interact}')).toMatch(/^a &lt; b <span class="kbm-only"><kbd>E<\/kbd>/);
     expect(renderTokens('{hotkey2}')).toContain('(touche 2)');
+    expect(renderTokens('{hotkey9}')).toContain('(touche 9)');
+  });
+
+  it('every building of the build menu has its number key (one digit: 9 at most)', () => {
+    expect(BUILD_MENU.length).toBeLessThanOrEqual(9);
+    BUILD_MENU.forEach((t, i) => expect(KEYBINDS, t).toHaveProperty(`hotbar${i + 1}`, [`Digit${i + 1}`]));
   });
 });
 
