@@ -1,4 +1,5 @@
-import { BELT, DEALER, DRILL, MACHINE, NODE, START_STORAGE } from '../../data/balance';
+import { BELT, DEALER, DRILL, MACHINE, NODE, START_STORAGE, STATS } from '../../data/balance';
+import { TICKS_PER_MIN } from '../../data/rates';
 import { BLUEPRINT_IDS, BLUEPRINTS, CAR_PARTS, blueprintById, isCarPart, type BlueprintId } from '../../data/blueprints';
 import { bestSale, carCost, carPrice, planLoad, sanitizeCar } from '../../data/sales';
 import { BUILDINGS, GARAGE_DOOR_SIDE, isBelt, isPadded, type BuildingType, type Side } from '../../data/buildings';
@@ -549,13 +550,13 @@ export class FactorySim implements PadSource {
       case 'merger':
         return { type, id, x, z, rot, buf: [], out: this.outSlots(type), lastOut: -1, lastFrom: -1 };
       case 'drill':
-        return { type, id, x, z, rot, resource, progress: 0, outBuf: [] };
+        return { type, id, x, z, rot, resource, progress: 0, outBuf: [], done: [], since: this.tickCount };
       case 'smelter':
       case 'press':
       case 'assembler':
-        return { type, id, x, z, rot, recipe: null, inBuf: {}, outBuf: [], progress: 0, status: 'noRecipe' };
+        return { type, id, x, z, rot, recipe: null, inBuf: {}, outBuf: [], progress: 0, status: 'noRecipe', done: [], since: this.tickCount };
       case 'dealer':
-        return { type, id, x, z, rot, stock: {}, car: null, progress: 0 };
+        return { type, id, x, z, rot, stock: {}, car: null, progress: 0, taken: [], since: this.tickCount };
       case 'garage':
       case 'hub':
         return { type, id, x, z, rot };
@@ -630,6 +631,9 @@ export class FactorySim implements PadSource {
     b.outBuf = [];
     b.progress = 0;
     b.status = recipeId ? 'idle' : 'noRecipe';
+    // A new recipe is a new rate.
+    b.done = [];
+    b.since = this.tickCount;
     return true;
   }
 
@@ -950,6 +954,7 @@ export class FactorySim implements PadSource {
       else this.stepMachine(b);
     }
     for (const d of this.dealers) this.stepDealer(d);
+    this.pruneRates();
     for (const b of this.producers) {
       if (b.outBuf.length === 0) continue;
       const link = this.outLinks.get(b.id);
@@ -974,6 +979,7 @@ export class FactorySim implements PadSource {
       const item = RESOURCES[d.resource].item;
       d.outBuf.push(item);
       this.crafted[item] = (this.crafted[item] ?? 0) + 1;
+      d.done.push(this.tickCount);
     }
   }
 
@@ -990,6 +996,7 @@ export class FactorySim implements PadSource {
         for (let i = 0; i < o.count; i++) m.outBuf.push(o.item);
         this.crafted[o.item] = (this.crafted[o.item] ?? 0) + o.count;
       }
+      m.done.push(this.tickCount);
       m.progress = 0;
       m.status = 'idle';
     }
@@ -1015,6 +1022,7 @@ export class FactorySim implements PadSource {
       d.progress++;
       if (d.progress < DEALER.SELL_TICKS) return;
       this.sell(d.car.blueprint, d.car.parts, d.id);
+      d.taken.push({ t: this.tickCount, cost: carCost(d.car.blueprint, d.car.parts) });
       d.car = null;
       d.progress = 0;
     }
@@ -1027,6 +1035,104 @@ export class FactorySim implements PadSource {
     }
     // A copy: the sale belongs to the shared CAR_SALES table.
     d.car = { blueprint: s.blueprint, parts: { ...s.parts } };
+  }
+
+  /** Forgets the productions that ended before the rate window (every tick: the state is the same as a reload's). */
+  private pruneRates(): void {
+    const cut = this.tickCount - STATS.WINDOW;
+    for (const b of this.producers) while (b.done.length && b.done[0]! <= cut) b.done.shift();
+    for (const d of this.dealers) while (d.taken.length && d.taken[0]!.t <= cut) d.taken.shift();
+  }
+
+  /**
+   * Work done over the rate window, in jobs of `period` ticks: each job that ended at a tick of `ends` counts for
+   * the part of it inside the window, the job in progress (`progress` ticks into it) too. Exact at full speed
+   * whatever the period (a 160-tick engine does 7.5 in a minute), and from the first tick of a measure.
+   */
+  private work(start: number, period: number, ends: Iterable<number>, progress: number): number {
+    let w = Math.min(progress, this.tickCount - start) / period;
+    for (const t of ends) if (t > start) w += Math.min(1, (t - start) / period);
+    return w;
+  }
+
+  /** Start of the rate window of a building: a minute ago, or when it started being measured. */
+  private rateStart(b: { since: number }): number {
+    return Math.max(this.tickCount - STATS.WINDOW, b.since);
+  }
+
+  /**
+   * How fast a drill, machine or dealer worked over the last minute (STATS.WINDOW): extractions, crafts or cars per
+   * minute (never above full speed), and at full speed. `measuring`: placed or reset too recently to tell. Null:
+   * nothing to make (no resource or recipe) or not a producer.
+   */
+  rateOf(b: Building): { perMin: number; nominal: number; measuring: boolean } | null {
+    let period: number;
+    let work: number;
+    let start: number;
+    if (b.type === 'drill') {
+      if (!b.resource) return null;
+      period = DRILL.PERIOD;
+      start = this.rateStart(b);
+      work = this.work(start, period, b.done, b.progress);
+    } else if (isMachine(b)) {
+      const r = b.recipe ? RECIPES_BY_ID[b.recipe] : undefined;
+      if (!r) return null;
+      period = r.ticks;
+      start = this.rateStart(b);
+      work = this.work(start, period, b.done, b.status === 'working' ? b.progress : 0);
+    } else if (b.type === 'dealer') {
+      period = DEALER.SELL_TICKS;
+      start = this.rateStart(b);
+      work = this.work(start, period, b.taken.map((x) => x.t), b.car ? b.progress : 0);
+    } else return null;
+    const span = this.tickCount - start;
+    const nominal = TICKS_PER_MIN / period;
+    return { perMin: span > 0 ? Math.min(nominal, (work * TICKS_PER_MIN) / span) : 0, nominal, measuring: span < STATS.MIN_SPAN };
+  }
+
+  /**
+   * The whole factory over the last minute, per minute: items made (drills, machines) and used (machines, dealers),
+   * and what every machine would use at full speed (`demand`; a dealer's is what it took). Buildings still
+   * measuring are left out of `produced`/`consumed`; hand mining and the bench never count.
+   */
+  flows(): { produced: Partial<Record<ItemId, number>>; consumed: Partial<Record<ItemId, number>>; demand: Partial<Record<ItemId, number>> } {
+    const produced: Partial<Record<ItemId, number>> = {};
+    const consumed: Partial<Record<ItemId, number>> = {};
+    const demand: Partial<Record<ItemId, number>> = {};
+    const add = (to: Partial<Record<ItemId, number>>, item: ItemId, n: number) => {
+      if (n > 0) to[item] = (to[item] ?? 0) + n;
+    };
+    for (const b of this.buildings.values()) {
+      if (isMachine(b) && b.recipe) {
+        const r = RECIPES_BY_ID[b.recipe]!;
+        for (const i of r.inputs) add(demand, i.item, (TICKS_PER_MIN / r.ticks) * i.count);
+      }
+      const rate = this.rateOf(b);
+      if (!rate || rate.measuring) continue;
+      if (b.type === 'drill' && b.resource) add(produced, RESOURCES[b.resource].item, rate.perMin);
+      else if (isMachine(b) && b.recipe) {
+        const r = RECIPES_BY_ID[b.recipe]!;
+        for (const o of r.outputs) add(produced, o.item, rate.perMin * o.count);
+        for (const i of r.inputs) add(consumed, i.item, rate.perMin * i.count);
+      } else if (b.type === 'dealer') {
+        // Each car's parts, weighted like its share of the work (the cars differ), scaled to rate.perMin cars.
+        const start = this.rateStart(b);
+        const parts: Partial<Record<ItemId, number>> = {};
+        let cars = 0;
+        const weigh = (w: number, cost: Inventory) => {
+          cars += w;
+          for (const [item, n] of Object.entries(cost) as [ItemId, number][]) add(parts, item, n * w);
+        };
+        for (const x of b.taken) weigh(this.work(start, DEALER.SELL_TICKS, [x.t], 0), x.cost);
+        if (b.car) weigh(this.work(start, DEALER.SELL_TICKS, [], b.progress), carCost(b.car.blueprint, b.car.parts));
+        const scale = cars > 0 ? rate.perMin / cars : 0;
+        for (const [item, n] of Object.entries(parts) as [ItemId, number][]) {
+          add(consumed, item, n * scale);
+          add(demand, item, n * scale);
+        }
+      }
+    }
+    return { produced, consumed, demand };
   }
 
   /**
@@ -1255,6 +1361,8 @@ export class FactorySim implements PadSource {
           b.outBuf = [];
           b.progress = 0;
           b.status = 'noRecipe';
+          b.done = [];
+          b.since = sim.tickCount;
         } else if (r) {
           // Same recipe id, different inputs (rebalance): stale items go back to the hub.
           for (const [item, n] of Object.entries(b.inBuf ?? {}) as [string, number][]) {
@@ -1263,6 +1371,19 @@ export class FactorySim implements PadSource {
             delete (b.inBuf as Record<string, number>)[item];
           }
         }
+      }
+      if (b.type === 'drill' || isMachine(b) || b.type === 'dealer') {
+        // Rates: stamps within the last window only, sorted; measured from now if the save has no start.
+        const cut = sim.tickCount - STATS.WINDOW;
+        const stamp = (t: unknown): t is number => Number.isSafeInteger(t) && (t as number) > cut && (t as number) <= sim.tickCount;
+        if (b.type === 'dealer') {
+          const taken = Array.isArray(b.taken) ? (b.taken as unknown[]) : [];
+          b.taken = taken
+            .filter((x): x is { t: number; cost: Inventory } => !!x && typeof x === 'object' && stamp((x as { t?: unknown }).t))
+            .map((x) => ({ t: x.t, cost: Object.fromEntries(Object.entries(x.cost ?? {}).filter(([i, n]) => isItemId(i) && isCarPart(i) && Number.isSafeInteger(n) && (n as number) > 0)) }))
+            .sort((p, q) => p.t - q.t);
+        } else b.done = (Array.isArray(b.done) ? (b.done as unknown[]) : []).filter(stamp).sort((p, q) => p - q);
+        if (!Number.isSafeInteger(b.since) || b.since > sim.tickCount || b.since < 0) b.since = sim.tickCount;
       }
       if (b.type === 'dealer') {
         const stock: Inventory = {};

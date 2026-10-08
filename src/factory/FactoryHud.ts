@@ -1,7 +1,8 @@
 import { BUILDINGS, BUILD_CATEGORIES, BUILD_MENU, type BuildingType } from '../data/buildings';
 import { ITEMS, ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { recipesFor, RECIPES_BY_ID, type Recipe } from '../data/recipes';
-import { DEALER, DRILL, MACHINE } from '../data/balance';
+import { BELT, DEALER, DRILL, MACHINE } from '../data/balance';
+import { TICKS_PER_MIN, perMinLabel, rateNumber, recipeRates } from '../data/rates';
 import { BLUEPRINTS, CAR_PARTS } from '../data/blueprints';
 import { bestSale, carCost, carLabel, carPrice, formatCredits, nearestSale, planLoad, priceList, type CarConfig } from '../data/sales';
 import { RESOURCES } from '../data/factoryMap';
@@ -9,7 +10,7 @@ import { append, clear, createLayer, el } from '../ui/dom';
 import { dual, html, keyCap, padGlyph, renderTokens } from '../ui/padHints';
 import { setPadHandlers } from '../ui/padNav';
 import type { FactorySim } from './sim/FactorySim';
-import { isMachine, type DealerB, type DrillB, type MachineB } from './sim/types';
+import { isMachine, type Building, type DealerB, type DrillB, type MachineB } from './sim/types';
 import type { Tool } from './build/BuildController';
 import type { Inventory, Stack, Wallet } from '../state/Inventory';
 import type { ItemIcons } from '../core/assets/IconRenderer';
@@ -19,7 +20,7 @@ import { FACTORY_CELL, FACTORY_HZ } from '../config/constants';
 
 /** What a building is for, in the build menu's detail pane (HTML; machines also list their recipes). */
 const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
-  conveyor: `Transporte les objets à 2 m/s. ${dual('Clic gauche maintenu', `${padGlyph('rt')} maintenu`)} : tracer une ligne.`,
+  conveyor: `Transporte les objets à 2 m/s, ${(TICKS_PER_MIN * BELT.SPEED) / BELT.SPACING} par minute au plus. ${dual('Clic gauche maintenu', `${padGlyph('rt')} maintenu`)} : tracer une ligne.`,
   splitter: 'Partage une ligne : ce qui entre par l’arrière sort tour à tour à l’avant, à gauche et à droite. Une sortie libre ou bouchée est sautée, rien ne se perd.',
   merger: 'Réunit jusqu’à trois lignes (arrière, gauche, droite) en une seule vers l’avant, chacune à son tour.',
   drill: 'À poser sur un gisement : minerai de fer ou latex selon la roche.',
@@ -36,6 +37,29 @@ function itemLabel(stacks: { item: ItemId; count: number }[]): string {
 /** Duration of a recipe: « 6 s », « 0,75 s ». */
 function secondsLabel(ticks: number): string {
   return `${String(+(ticks / FACTORY_HZ).toFixed(2)).replace('.', ',')} s`;
+}
+
+/**
+ * What a drill, machine or dealer makes and how fast over the last minute, for the aim hint: « Châssis 7,5/min
+ * (75 %) », « Minerai de fer · mesure… », « 4,8 voitures/min (80 %) ». Null: nothing to make.
+ */
+export function rateSummary(sim: FactorySim, b: Building): string | null {
+  const rate = sim.rateOf(b);
+  if (!rate) return null;
+  const what = b.type === 'drill' && b.resource
+    ? { name: ITEMS[RESOURCES[b.resource].item].name, per: 1 }
+    : isMachine(b) && b.recipe
+      ? { name: RECIPES_BY_ID[b.recipe]!.name, per: RECIPES_BY_ID[b.recipe]!.outputs[0]!.count }
+      : { name: '', per: 1 };
+  if (rate.measuring) return `${what.name || 'Ventes'} · mesure…`;
+  const pct = Math.round((rate.perMin / rate.nominal) * 100);
+  const n = rate.perMin * what.per;
+  return `${what.name ? `${what.name} ` : ''}${rateNumber(n)}${what.name ? '' : carsUnit(n)}/min (${pct} %)`;
+}
+
+/** « voiture » under 2 (« 1,5 voiture/min »), « voitures » from 2 on, as French counts go. */
+function carsUnit(n: number): string {
+  return Number(rateNumber(n).replace(',', '.')) >= 2 ? ' voitures' : ' voiture';
 }
 
 export function costText(cost: ItemCounts): string {
@@ -85,7 +109,7 @@ export interface HudCallbacks {
 type PanelKind = 'build' | 'machine' | 'drill' | 'dealer' | 'hub' | 'inventory';
 /** Pad buttons that close a panel: B, plus the one that opened it (Y build menu, View backpack). */
 const CLOSE_PAD: Record<PanelKind, string> = { build: 'b y', machine: 'b', drill: 'b', dealer: 'b', hub: 'b', inventory: 'b view' };
-type HubTab = 'stock' | 'bench' | 'tiers';
+type HubTab = 'stock' | 'bench' | 'tiers' | 'stats';
 
 interface Drag {
   from: number;
@@ -375,7 +399,7 @@ export class FactoryHud {
     this.panelKey = key;
     // Re-rendering must not jump the panel and its lists back to the top.
     const panel = this.panel;
-    const scrolls = [panel, ...panel.querySelectorAll<HTMLElement>('.hub-list, .bench-list, .tier-list')].map((e) => [e === panel ? '' : e.className, e.scrollTop] as const);
+    const scrolls = [panel, ...panel.querySelectorAll<HTMLElement>('.hub-list, .bench-list, .tier-list, .stats-list')].map((e) => [e === panel ? '' : e.className, e.scrollTop] as const);
     clear(panel);
     this.renderPanel();
     if (this.panel !== panel) return;
@@ -413,10 +437,12 @@ export class FactoryHud {
     const hub = this.panelKind === 'inventory' ? '' : ITEM_IDS.map((i) => this.sim.count(i)).join(',');
     const b = this.panelTarget !== null ? this.sim.buildings.get(this.panelTarget) : undefined;
     // Progress is animated in place (see tick) so it does not trigger re-renders.
-    const bkey = b ? JSON.stringify({ ...b, items: undefined, progress: undefined }) : '';
+    // Rates: only the figures shown (a craft adds a stamp, which alone must not re-render).
+    const bkey = b ? JSON.stringify({ ...b, items: undefined, progress: undefined, done: undefined, taken: undefined, since: undefined }) + (rateSummary(this.sim, b) ?? '') : '';
     // Hub and dealer panels show the balance.
     const credits = this.panelKind === 'hub' || this.panelKind === 'dealer' ? this.sim.credits : '';
-    return `${this.panelKind}|${bag}|${hub}|${bkey}|${this.cb.nearHub()}|${this.hubTab}|${this.cb.tier()}|${credits}`;
+    const stats = this.panelKind === 'hub' && this.hubTab === 'stats' ? this.statsKey() : '';
+    return `${this.panelKind}|${bag}|${hub}|${bkey}|${this.cb.nearHub()}|${this.hubTab}|${this.cb.tier()}|${credits}|${stats}`;
   }
 
   /** Build menu (A): buildings by category with thumbnails and costs, details of the hovered one. */
@@ -518,11 +544,12 @@ export class FactoryHud {
     const def = BUILDINGS[m.type];
     const recipe: Recipe | undefined = m.recipe ? RECIPES_BY_ID[m.recipe] : undefined;
     this.progressEl = el('div', { style: `width:${Math.round(this.sim.progressOf(m) * 100)}%` });
-    this.panel!.append(
+    append(this.panel!,
       ...this.header(def.name),
       el('div', { class: `status status-${m.status}` }, STATUS_LABEL[m.status]),
       el('div', { class: 'progress' }, this.progressEl),
       this.portStatus(m.id),
+      recipe ? this.rateBlock(m, recipe.outputs[0]!.item, recipe.outputs[0]!.count, recipe) : null,
     );
     if (recipe) {
       const ins = el('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px' }, el('span', { class: 'muted small' }, 'Entrées'));
@@ -547,7 +574,7 @@ export class FactoryHud {
         class: `recipe${active ? ' selected' : ''}`,
         'data-recipe': r.id,
         'data-pad-default': !m.recipe && r === recipesFor(def.machine!)[0],
-        title: `${itemLabel(r.inputs)} → ${itemLabel(r.outputs)} · ${secondsLabel(r.ticks)}`,
+        title: `${itemLabel(r.inputs)} → ${itemLabel(r.outputs)} · ${secondsLabel(r.ticks)} · à plein régime : ${this.ratesText(r)}`,
         onclick: () => {
           // A first recipe adds the inputs block above the list: keep the chosen recipe where it was on screen
           // (under the mouse, in view for the pad).
@@ -558,7 +585,7 @@ export class FactoryHud {
           if (again && this.panel) this.panel.scrollTop += again.getBoundingClientRect().top - top;
         },
       },
-        el('span', { class: 'row recipe-head' }, this.icon(r.outputs[0]!.item, 'item-icon tiny'), el('b', {}, r.name), el('span', { class: 'spacer' }), el('span', { class: 'small muted' }, secondsLabel(r.ticks))),
+        el('span', { class: 'row recipe-head' }, this.icon(r.outputs[0]!.item, 'item-icon tiny'), el('b', {}, r.name), el('span', { class: 'spacer' }), el('span', { class: 'small muted' }, `${secondsLabel(r.ticks)} · ${perMinLabel(recipeRates(r).outputs[0]!.perMin)}`)),
         this.recipeChips(r),
       );
       list.appendChild(btn);
@@ -616,16 +643,109 @@ export class FactoryHud {
       : stuck
         ? 'Sortie pleine : sortie bloquée, prends la production'
         : 'Sortie pleine : relie un convoyeur ou prends la production';
-    this.panel!.append(
+    append(this.panel!,
       ...this.header(BUILDINGS.drill.name, res ? res.name : 'Aucun gisement'),
       el('div', { class: `status ${full ? 'status-blocked' : 'status-working'}` }, full ? fullText : 'En extraction'),
       el('div', { class: 'progress' }, (this.progressEl = el('div', { style: `width:${Math.round(this.sim.progressOf(d) * 100)}%` }))),
       this.portStatus(d.id),
+      res ? this.rateBlock(d, res.item, 1) : null,
       el('div', { class: 'row', style: 'gap:6px' }, el('span', { class: 'muted small' }, `Sortie ${d.outBuf.length}/${DRILL.OUT_CAP}`), d.outBuf.length ? this.slotEl({ item: d.outBuf[0]!, count: d.outBuf.length }) : null),
       el('div', { class: 'row', style: 'margin-top:8px' },
         el('button', { class: 'small primary', 'data-action': 'collect', disabled: d.outBuf.length === 0, onclick: () => this.cb.collect(d.id) }, `Prendre (${d.outBuf.length})`),
       ),
     );
+  }
+
+  /** « 30 lingots de fer/min → 20 plaques/min »: a recipe at full speed, as text. */
+  private ratesText(r: Recipe): string {
+    const rates = recipeRates(r);
+    const part = (list: { item: ItemId; perMin: number }[]) => list.map((x) => `${rateNumber(x.perMin)} ${x.perMin > 1 ? ITEMS[x.item].plural : ITEMS[x.item].name.toLowerCase()}/min`).join(' + ');
+    return `${part(rates.inputs)} → ${part(rates.outputs)}`;
+  }
+
+  /**
+   * How fast the building worked over the last minute against full speed, and (machines) what full speed takes
+   * and gives per minute: the figures to size a chain (one assembler on chassis takes 20 plates/min).
+   * `item`/`per`: the product and how many a craft makes; null for a dealer (cars).
+   */
+  private rateBlock(b: Building, item: ItemId | null, per: number, recipe?: Recipe): HTMLElement | null {
+    const rate = this.sim.rateOf(b);
+    if (!rate) return null;
+    const pct = Math.round((rate.perMin / rate.nominal) * 100);
+    const unit = item ? '/min' : `${carsUnit(rate.perMin)}/min`;
+    const now = rate.measuring
+      ? el('span', { class: 'muted' }, 'mesure en cours…')
+      : el('span', { class: pct >= 95 ? 'good' : pct >= 50 ? '' : 'bad' }, `${rateNumber(rate.perMin * per)}${unit} sur ${rateNumber(rate.nominal * per)} (${pct} %)`);
+    const block = el('div', { class: 'rate-block small', title: 'Sur la dernière minute, comparé à la machine tournant sans arrêt' },
+      el('div', { class: 'row', style: 'gap:6px' }, el('span', { class: 'muted' }, 'Cadence'), item ? this.icon(item, 'item-icon micro') : null, now),
+    );
+    if (recipe) {
+      const rates = recipeRates(recipe);
+      const chip = (x: { item: ItemId; perMin: number }) => el('span', { class: 'rate-chip', title: `${ITEMS[x.item].name} : ${perMinLabel(x.perMin)}` }, this.icon(x.item, 'item-icon micro'), perMinLabel(x.perMin));
+      const line = el('div', { class: 'row rate-full' }, el('span', { class: 'muted' }, 'À plein régime'));
+      rates.inputs.forEach((x, i) => append(line, i ? el('span', { class: 'muted' }, '+') : null, chip(x)));
+      append(line, el('span', { class: 'muted' }, '→'), ...rates.outputs.map(chip));
+      block.appendChild(line);
+    }
+    return block;
+  }
+
+  /**
+   * The stats rows as shown, per item active in the factory: made, used, needed at full speed (every machine with
+   * its recipe; a dealer, what it took) and the balance made − needed, with its colour.
+   */
+  private statsRows(): { item: ItemId; made: string; used: string; need: string; net: string; cls: string }[] {
+    const { produced, consumed, demand } = this.sim.flows();
+    const show = (n: number) => (n > 0 ? rateNumber(n) : '–');
+    return ITEM_IDS.filter((i) => (produced[i] ?? 0) > 0 || (consumed[i] ?? 0) > 0 || (demand[i] ?? 0) > 0).map((item) => {
+      const net = (produced[item] ?? 0) - (demand[item] ?? 0);
+      // Under 0,05/min either way the chain is balanced (rounding).
+      const even = Math.abs(net) < 0.05;
+      return {
+        item,
+        made: show(produced[item] ?? 0),
+        used: show(consumed[item] ?? 0),
+        need: show(demand[item] ?? 0),
+        net: even ? '0' : `${net > 0 ? '+' : '−'}${rateNumber(Math.abs(net))}`,
+        cls: even ? 'muted' : net > 0 ? 'good' : 'bad',
+      };
+    });
+  }
+
+  /** The stats tab's refresh key: the figures it shows. */
+  private statsKey(): string {
+    return this.statsRows().map((r) => `${r.item}:${r.made}:${r.used}:${r.need}:${r.net}`).join(',');
+  }
+
+  /** Hub « Statistiques »: per item, made, used and needed per minute in the whole factory, and the balance. */
+  private hubStats(): HTMLElement {
+    const rows = this.statsRows();
+    const list = el('div', { class: 'stats-list' });
+    if (!rows.length) {
+      list.appendChild(el('div', { class: 'muted small', 'data-pad-focus': '', 'data-action': 'stats-empty' }, 'Rien ne tourne encore : foreuses, machines et concessions comptent ici (pas le minage à la main ni l’établi).'));
+    } else {
+      list.appendChild(
+        el('div', { class: 'stats-row stats-head muted small' },
+          el('span', {}, 'Objet'),
+          el('span', { title: 'Par les foreuses et les machines, sur la dernière minute' }, 'Produit'),
+          el('span', { title: 'Par les machines et les concessions, sur la dernière minute' }, 'Consommé'),
+          el('span', { title: 'Ce que toutes les machines prendraient à plein régime (une concession : ce qu’elle a pris)' }, 'Besoin'),
+          el('span', { title: 'Produit − besoin' }, 'Bilan'),
+        ),
+      );
+    }
+    for (const r of rows) {
+      list.appendChild(
+        el('div', { class: 'stats-row', 'data-pad-focus': '', 'data-item': r.item, title: `${ITEMS[r.item].name} : ${r.made} produits, ${r.used} consommés, ${r.need} demandés à plein régime, par minute` },
+          el('span', { class: 'row', style: 'gap:6px' }, this.icon(r.item, 'item-icon tiny'), ITEMS[r.item].name),
+          el('b', { class: 'mono' }, r.made),
+          el('b', { class: 'mono' }, r.used),
+          el('b', { class: 'mono' }, r.need),
+          el('b', { class: `mono ${r.cls}` }, r.net),
+        ),
+      );
+    }
+    return el('div', { style: 'margin-top:10px' }, el('h3', {}, 'Production de l’usine (par minute)'), list);
   }
 
   /**
@@ -690,6 +810,7 @@ export class FactoryHud {
       el('div', { class: 'progress' }, this.progressEl),
       d.car ? el('div', { class: 'row small', style: 'gap:6px' }, el('span', { class: 'muted' }, 'Pièces montées :'), this.costIcons(carCost(d.car.blueprint, d.car.parts), false)) : null,
       this.portStatus(d.id, 'la concession'),
+      this.rateBlock(d, null, 1),
       el('h3', { style: 'margin-top:10px' }, `Pièces en attente (${waiting})`),
       parts,
       then ? el('div', { class: 'muted small' }, then) : null,
@@ -896,14 +1017,18 @@ export class FactoryHud {
       ),
       bench: `${dual('Fabrication à la main : maintiens le bouton.', `Fabrication à la main : maintiens ${g('a')} sur le bouton.`)} Le sac paie d’abord, puis le hangar ; le résultat va dans le sac.`,
       tiers: 'Livre des pièces pour débloquer de nouveaux bâtiments. Le sac paie d’abord, puis le hangar.',
+      stats: 'Toute l’usine sur la dernière minute. Besoin : ce que les machines prendraient à plein régime. Bilan = produit − besoin : rouge, la chaîne en manque (des machines attendent) ; vert, ça s’entasse.',
     };
     this.panel!.append(
       ...this.header('Hangar central', subs[tab], this.showCredits() ? this.creditsPill() : null),
-      el('div', { class: 'row tabs' }, tabBtn('stock', 'Hangar'), tabBtn('bench', 'Établi'), tabBtn('tiers', 'Paliers', tierReady)),
-      el('div', { class: 'hub-columns' },
-        el('div', {}, el('h3', {}, `Ton sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`), this.bagGrid((i) => this.cb.depositSlot(i))),
-        tab === 'stock' ? this.hubStock() : tab === 'bench' ? this.hubBench() : this.hubTiers(),
-      ),
+      el('div', { class: 'row tabs' }, tabBtn('stock', 'Hangar'), tabBtn('bench', 'Établi'), tabBtn('tiers', 'Paliers', tierReady), tabBtn('stats', 'Statistiques')),
+      // The stats need the room (and nothing to do with the backpack).
+      tab === 'stats'
+        ? this.hubStats()
+        : el('div', { class: 'hub-columns' },
+          el('div', {}, el('h3', {}, `Ton sac ${this.inventory.usedSlots}/${this.inventory.slots.length}`), this.bagGrid((i) => this.cb.depositSlot(i))),
+          tab === 'stock' ? this.hubStock() : tab === 'bench' ? this.hubBench() : this.hubTiers(),
+        ),
       el('div', { class: 'row', style: 'margin-top:10px' },
         el('button', { 'data-action': 'deposit-all', disabled: this.inventory.usedSlots === 0, onclick: () => this.cb.depositAll() }, 'Tout déposer'),
       ),

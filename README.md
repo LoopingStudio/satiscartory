@@ -43,8 +43,8 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | F | Démonter |
 | Maintenir E sur un gisement | Miner à la main : un minerai toutes les 0,75 s dans le sac (case libre, à 6 m au plus) |
 | E sur un convoyeur | Prendre les objets de cette case dans le sac ; maintenu 0,5 s : ceux de toute la ligne (les convoyeurs reliés, en amont et en aval). Ce qui ne rentre pas dans le sac reste sur le convoyeur |
-| E | Utiliser une machine ou une foreuse : recette, « Charger » (sac puis hangar), « Prendre » (production vers le sac) |
-| E sur le hangar | Onglets Hangar (échanges sac ↔ hangar), Établi (fabrication à la main) et Paliers (déblocage des bâtiments) |
+| E | Utiliser une machine ou une foreuse : recette (ingrédients en icônes, cadence par minute), « Charger » (sac puis hangar), « Prendre » (production vers le sac), cadence sur la dernière minute et à plein régime. En visant une machine, le bas de l'écran donne déjà sa cadence (« Pneu 15/min (75 %) ») |
+| E sur le hangar | Onglets Hangar (échanges sac ↔ hangar), Établi (fabrication à la main), Paliers (déblocage des bâtiments) et Statistiques (production et consommation par minute de toute l'usine) |
 | E sur un garage | Panneau du garage : assembler une voiture dans sa place (d'un coup, ou pièce par pièce avec « Poser maintenant »), changer ses pièces, la démonter ou la vendre, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
 | E sur une concession | Panneau de la concession : la voiture en cours et son prix, les pièces en attente, ce qui manque pour la prochaine voiture, les ventes et les prix. « Charger (sac puis hangar) » y met les pièces des voitures complètes que permettent le sac et le hangar ; « Reprendre les pièces » rend celles qui attendent (au sac, le surplus au hangar) |
 | E près d'une voiture garée | Monter, à 3,2 m au plus (un bâtiment visé passe avant ; voir ci-dessous) |
@@ -171,6 +171,16 @@ Chaque machine montre où brancher un convoyeur : devant chaque **sortie**, une 
 - **Cul-de-sac** : une croix rouge marque un convoyeur qui bute contre un bâtiment qui refuse ses objets (une sortie, un mur de machine, un convoyeur en face), et les sorties d'une machine qui donnent toutes sur un bâtiment.
 - Le panneau d'une foreuse ou d'une machine (E) dit si son entrée et sa sortie sont reliées.
 - **Ramasser sur un convoyeur** : E prend les objets de la case visée ; maintenir E (0,5 s) prend ceux de toute la ligne, en surbrillance pendant qu'on vise. Ça marche aussi sur un répartiteur ou un fusionneur, et la ligne les traverse. Pratique pour vider une ligne bouchée ou se servir au passage.
+
+## Cadences
+
+Pour équilibrer les chaînes, tout se compte par minute.
+
+- **Recettes** : chaque recette d'une machine montre ses ingrédients en icônes et ce qu'elle produit par minute à plein régime (« 6 s · 20/min ») ; l'infobulle donne aussi ses entrées (« 30 lingots de fer/min → 20 plaques/min »).
+- **Panneau d'une machine, d'une foreuse ou d'une concession** : sa cadence sur la dernière minute comparée au plein régime (« 15/min sur 20 (75 %) »), et pour une machine ce que le plein régime demande et donne par minute. Une assembleuse de châssis demande 20 plaques/min : un constructeur de plaques entier.
+- **En visant** une machine, le bas de l'écran donne sa cadence sans ouvrir le panneau : pratique pour repérer le maillon lent en se promenant.
+- **Hangar → Statistiques** : pour toute l'usine, chaque objet produit, consommé et demandé par minute (le besoin : ce que toutes les machines prendraient à plein régime), et le bilan produit − besoin (rouge : la chaîne en manque, des machines attendent ; vert : il s'entasse). Le minage à la main et l'établi ne comptent pas.
+- Un convoyeur porte 180 objets par minute au plus : plus que n'importe quelle machine (120 boulons/min pour une presse à boulons).
 
 ## Relief
 

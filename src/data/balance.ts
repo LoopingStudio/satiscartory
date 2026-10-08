@@ -57,3 +57,11 @@ export const SALE = {
   MARGIN_DEN: 4,
   ROUND: 10,
 } as const;
+
+/** Production rates (« /min »): measured over the last WINDOW ticks; a building placed or reset less than MIN_SPAN ago is still measuring. */
+export const STATS = {
+  /** 1 200 ticks = the last minute. */
+  WINDOW: 1200,
+  /** 60 ticks = 3 s. */
+  MIN_SPAN: 60,
+} as const;

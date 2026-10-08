@@ -236,6 +236,14 @@ kbd {
 .recipe-chip .item-icon { width: 30px; height: 30px; }
 .recipe-count { position: absolute; right: 3px; bottom: 0; font-size: 12px; font-weight: 800; text-shadow: 0 1px 0 #000, 0 0 3px #000; }
 .recipe-op { color: var(--muted); font-weight: 800; padding: 0 2px; }
+/* Production rates: a machine's cadence, what full speed takes and gives; the hub's stats. */
+.rate-block { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px; padding: 6px 8px; background: #262842; border: 1px solid var(--panel-border); border-radius: 10px; }
+.rate-full { flex-wrap: wrap; gap: 5px; }
+.rate-chip { display: inline-flex; align-items: center; gap: 2px; font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+.stats-list { display: flex; flex-direction: column; gap: 2px; max-height: 330px; overflow: auto; }
+.stats-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 72px 64px 64px; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; font-size: 14px; }
+.stats-row > :not(:first-child) { text-align: right; }
+.stats-row:not(.stats-head):nth-child(even) { background: rgba(255, 255, 255, 0.03); }
 .status { font-weight: 800; margin: 4px 0; }
 .status-working { color: var(--good); }
 .status-idle { color: var(--accent); }

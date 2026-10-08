@@ -45,6 +45,10 @@ export interface DrillB extends Base {
   resource: ResourceId | null;
   progress: number;
   outBuf: ItemId[];
+  /** Ticks of its extractions within the last STATS.WINDOW (production rates). */
+  done: number[];
+  /** Tick its rate is measured from (placed, or loaded from a save without it). */
+  since: number;
 }
 
 export interface MachineB extends Base {
@@ -54,6 +58,10 @@ export interface MachineB extends Base {
   outBuf: ItemId[];
   progress: number;
   status: MachineStatus;
+  /** Ticks of its finished crafts within the last STATS.WINDOW (production rates). */
+  done: number[];
+  /** Tick its rate is measured from (placed, recipe set, or loaded from a save without it). */
+  since: number;
 }
 
 /**
@@ -94,6 +102,10 @@ export interface DealerB extends Base {
   car: CarConfig | null;
   /** Ticks spent on `car`. */
   progress: number;
+  /** Parts taken for each car started within the last STATS.WINDOW, and when (production rates). */
+  taken: { t: number; cost: Inventory }[];
+  /** Tick its rate is measured from (placed, or loaded from a save without it). */
+  since: number;
 }
 
 export type Building = ConveyorB | NodeB | DrillB | MachineB | GarageB | DealerB | HubB;

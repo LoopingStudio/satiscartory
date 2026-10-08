@@ -8,7 +8,7 @@ import { FactoryView, SUN_OFFSET } from './view/FactoryView';
 import { SKY } from './view/terrain/SkyDome';
 import { GRASS_PUSHERS } from './view/terrain/GrassField';
 import { FactoryWorld } from './FactoryWorld';
-import { FactoryHud } from './FactoryHud';
+import { FactoryHud, rateSummary } from './FactoryHud';
 import { BuildController, describeError, describeFill, describeLinks, type Tool } from './build/BuildController';
 import { CharacterController } from '../player/CharacterController';
 import { PlayerAvatar } from '../player/PlayerAvatar';
@@ -1108,11 +1108,13 @@ export class FactoryMode implements Mode {
       const e = k('interact');
       if (b) {
         const what =
-          b.type === 'hub' ? 'hangar : établi, paliers, stock'
+          b.type === 'hub' ? 'hangar : établi, paliers, stock, statistiques'
           : b.type === 'garage' ? 'garage : assembler, pièces, vendre, voiture de course'
           : b.type === 'dealer' ? 'concession : ventes, charger des pièces'
           : `configurer : ${BUILDINGS[b.type].name}`;
-        html = `${e} ${what}`;
+        // What it makes and how fast (last minute), to spot a slow link while walking the factory.
+        const rate = rateSummary(this.sim, b);
+        html = `${e} ${what}${rate ? ` · ${rate}` : ''}`;
       }
       else if (load?.line) {
         const pct = Math.round((this.build.beltProgress ?? 0) * 100);
