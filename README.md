@@ -21,7 +21,7 @@ Le jeu tourne ensuite sur http://localhost:5173.
 
 | Commande | Rôle |
 |---|---|
-| `npm test` | Tests Vitest : simulation d'usine, progression (minage à la main, établi, paliers), garage et voitures dans l'usine, circuits, course, véhicule Rapier sans rendu, bot de course. |
+| `npm test` | Tests Vitest : simulation d'usine, progression (minage à la main, établi, paliers), garage et voitures dans l'usine, concession et ventes (prix, crédits), circuits, course, véhicule Rapier sans rendu, bot de course. |
 | `npm run build` | Vérification de types et build de production. |
 | `npm run manifest` | Régénère le manifest typé des modèles. |
 | `node scripts/probe-connectors.mjs` | Mesure les tuiles de route dans les GLB. |
@@ -37,7 +37,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | ZQSD | Se déplacer |
 | Maj | Courir |
 | Espace | Sauter |
-| 1 à 8 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage, répartiteur, fusionneur (une fois leur palier débloqué) |
+| 1 à 9 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage, répartiteur, fusionneur, concession (une fois leur palier débloqué) |
 | R | Tourner (sur le fantôme d'un garage, une flèche bleue marque la porte). Un convoyeur posé contre une machine s'oriente seul pour s'y raccorder ; R l'oriente autrement sur cette case |
 | Clic gauche | Poser (maintenu : tracer des convoyeurs ; viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée) |
 | F | Démonter |
@@ -45,7 +45,8 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | E sur un convoyeur | Prendre les objets de cette case dans le sac ; maintenu 0,5 s : ceux de toute la ligne (les convoyeurs reliés, en amont et en aval). Ce qui ne rentre pas dans le sac reste sur le convoyeur |
 | E | Utiliser une machine ou une foreuse : recette, « Charger » (sac puis hangar), « Prendre » (production vers le sac) |
 | E sur le hangar | Onglets Hangar (échanges sac ↔ hangar), Établi (fabrication à la main) et Paliers (déblocage des bâtiments) |
-| E sur un garage | Panneau du garage : assembler une voiture dans sa place (d'un coup, ou pièce par pièce avec « Poser maintenant »), changer ses pièces, la démonter, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
+| E sur un garage | Panneau du garage : assembler une voiture dans sa place (d'un coup, ou pièce par pièce avec « Poser maintenant »), changer ses pièces, la démonter ou la vendre, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
+| E sur une concession | Panneau de la concession : la voiture en cours et son prix, les pièces en attente, ce qui manque pour la prochaine voiture, les ventes et les prix. « Charger (sac puis hangar) » y met les pièces des voitures complètes que permettent le sac et le hangar ; « Reprendre les pièces » rend celles qui attendent (au sac, le surplus au hangar) |
 | E près d'une voiture garée | Monter, à 3,2 m au plus (un bâtiment visé passe avant ; voir ci-dessous) |
 | Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
 | A | Menu de construction : bâtiments par catégorie, miniature, coût (j'ai / il faut) et palier ; clic pour placer |
@@ -102,7 +103,7 @@ Une manette (Xbox, PlayStation, Switch Pro… en mapping standard) marche partou
 | Stick gauche | Se déplacer (clic du stick : courir, jusqu'à ce qu'on le lâche) |
 | Stick droit | Caméra (sensibilité dans les Réglages) ; ↑ : zoom (proche, normal, loin) |
 | A | Sauter |
-| X | Comme E : utiliser une machine, le hangar, un garage, monter en voiture ; maintenu : miner, prendre toute une ligne de convoyeur |
+| X | Comme E : utiliser une machine, une concession, le hangar, un garage, monter en voiture ; maintenu : miner, prendre toute une ligne de convoyeur |
 | Y | Menu de construction |
 | ← / → | Bâtiment précédent / suivant (dans l'ordre du menu, ceux débloqués) |
 | RT | Poser ; maintenu : tracer un convoyeur. En démontage : démonter |
@@ -154,8 +155,9 @@ Une nouvelle partie démarre avec un hangar vide et aucun bâtiment débloqué. 
 | 3. Constructeur | 30 plaques, 20 tiges, 40 boulons | Constructeur |
 | 4. Assemblage | 60 plaques, 40 tiges, 120 boulons, 10 pneus | Assembleuse |
 | 5. Garage | 80 plaques, 60 tiges, 160 boulons, 8 pneus | Garage |
+| 6. Commerce | 2 châssis, 2 moteurs, 8 roues, 4 panneaux | Concession |
 
-Ensuite, la chaîne du fer prend le relais : foreuse → fonderie (lingots) → constructeur (plaques, tiges, boulons). Une foreuse alimente exactement une fonderie, qui alimente exactement un constructeur (30 minerais, puis 30 lingots par minute). Les sauvegardes d’avant les paliers gardent tout débloqué, et une sauvegarde qui avait tous les paliers de sa version reçoit ceux ajoutés depuis (le garage).
+Ensuite, la chaîne du fer prend le relais : foreuse → fonderie (lingots) → constructeur (plaques, tiges, boulons). Une foreuse alimente exactement une fonderie, qui alimente exactement un constructeur (30 minerais, puis 30 lingots par minute). Les sauvegardes d’avant les paliers gardent tout débloqué, et une sauvegarde qui avait tous les paliers de sa version reçoit ceux ajoutés depuis (le garage, la concession).
 
 ## Raccorder les machines
 
@@ -185,18 +187,39 @@ La carte de l'usine est vallonnée : un plateau plat autour du hangar et des pre
 
 Le garage est un bâtiment de l’usine (touche 6, palier 5 ; 40 plaques, 24 tiges, 80 boulons). Il occupe 3×4 cases et abrite **une** place de voiture : des murs sur trois côtés, toute la face avant ouverte en porte, que marque une flèche bleue sur le fantôme. Il n’y a plus de touche G ni d’écran Garage à part.
 
-- **E sur un garage** ouvre son panneau sans quitter l’usine : la caméra cadre la place depuis la porte, les colonnes laissent la voiture visible au milieu. On y assemble une voiture (la place doit être libre ; le sac paie d’abord, puis le hangar), qu’un fantôme montre dans la place avant l’assemblage. On change les pièces de la voiture garée là ou on la démonte (pièces dans le sac, le surplus au hangar), on choisit la voiture de course (★), et « Courir » ouvre le choix du circuit avec elle.
+- **E sur un garage** ouvre son panneau sans quitter l’usine : la caméra cadre la place depuis la porte, les colonnes laissent la voiture visible au milieu. On y assemble une voiture (la place doit être libre ; le sac paie d’abord, puis le hangar), qu’un fantôme montre dans la place avant l’assemblage. On change les pièces de la voiture garée là, on la démonte (pièces dans le sac, le surplus au hangar) ou on la vend (« Vendre », au prix d’une concession, affiché sous la voiture ; confirmé par un second bouton), on choisit la voiture de course (★), et « Courir » ouvre le choix du circuit avec elle.
 - **Les voitures restent garées** dans l’usine, là où on les laisse, et se conduisent (commandes ci-dessus). Elles traversent les lignes de convoyeurs, qui sont au sol ; machines, murs et voitures garées restent solides. Dans l’usine, la vitesse est plafonnée à 90 km/h environ. Le kart de location ne roule que sur les circuits.
 - **Construire pièce par pièce** : dans le brouillon d'une nouvelle voiture, « Poser maintenant » met dans la place ce qu'on a d'une pièce (deux roues, par exemple) sans attendre le reste. La voiture en construction reste dans le garage : pièces posées en couleur, le reste en transparence, des chandelles jaunes sous les roues manquantes, la carrosserie en métal nu tant qu'il manque des panneaux, le moteur posé sur son essieu. Son panneau dit ce qui est posé (« 3/6 pièces »), pose la suite ou retire une pièce (rendue au sac). La voiture sort, numérotée et choisie pour courir, dès que les pièces obligatoires y sont ; « Abandonner » rend tout.
 - Un garage où une voiture est garée ou en construction ne se démonte pas, et on ne construit pas sur une voiture.
 - Sauvegardes : les voitures d’une ancienne sauvegarde se garent dès le premier garage construit, une par garage libre ; les autres attendent le suivant.
+
+## Concession et ventes
+
+Une fois ses voitures construites, le surplus de pièces se vend. La **concession** (touche 9, palier 6 « Commerce » ; 60 plaques, 30 tiges, 120 boulons) occupe 3×2 cases : un magasin à l’arrière, une vitrine à l’avant.
+
+- **Elle s’alimente par convoyeur**, par ses trois trappes de l’arrière (une assembleuse posée contre elle la remplit aussi). Elle prend toutes les pièces de voiture (châssis, moteurs, roues, roues racing, panneaux, ailerons), sans limite, et refuse le reste comme une machine : une ligne mélangée ne se bloque jamais derrière une pièce dont elle a déjà trop.
+- **Elle monte toute seule la voiture la plus chère possible** avec ce qu’elle a : une Sportive dès que 4 panneaux sont là, avec roues racing et aileron s’il y en a, sinon un Kart (les 4 roues d’une voiture sont de la même sorte). La voiture se monte pièce par pièce dans la vitrine en 10 s, puis elle est vendue : elle s’enfonce dans le podium, « +7 950 cr » monte au-dessus de l’enseigne et le solde augmente. La suivante démarre aussitôt. La vente continue pendant les courses.
+- **E sur une concession** : la voiture en cours et son prix, les pièces en attente, ce qui manque pour la prochaine voiture, les ventes et les prix. « Charger (sac puis hangar) » y met exactement les pièces des voitures complètes que le sac, le hangar et ce qu’elle a déjà permettent : c’est ainsi que le surplus déjà stocké au hangar se vend. « Reprendre les pièces » rend celles qui attendent (pas la voiture en cours) au sac, le surplus au hangar. La démonter rend son coût, ses pièces et celles de la voiture en cours.
+- **Au garage**, « Vendre » vend la voiture garée dans la place, au même prix.
+- **Prix** : une pièce vaut ses matières et son temps machine, une voiture vaut ses pièces plus 25 %, arrondi à la dizaine.
+
+| Voiture | Prix |
+|---|---|
+| Kart Oopi | 4 480 cr |
+| Kart Oopi, roues racing | 5 680 cr |
+| Sportive | 6 180 cr |
+| Sportive, aileron | 6 750 cr |
+| Sportive, roues racing | 7 380 cr |
+| Sportive, roues racing et aileron | 7 950 cr |
+
+- **Crédits** : le solde s’affiche en haut à droite, à côté du hangar, dès que la concession est débloquée (ou après une première vente au garage), et dans les panneaux du hangar, de la concession et du garage. Il n’y a encore rien à acheter : le solde est sauvegardé pour la suite.
 
 ## Architecture
 
 ```
 src/
   core/        boucle à pas fixe (physique 60 Hz, usine 20 Hz), rendu, entrées (clavier, souris, manette), assets GLTF, Rapier
-  data/        données de jeu : objets, recettes, bâtiments, paliers, carte, voitures, pièces, circuits, équilibrage
+  data/        données de jeu : objets, recettes, bâtiments, paliers, carte, voitures, pièces, prix de vente, circuits, équilibrage
   factory/     sim/ (pure, déterministe, testée ; relief et décor compris), view/ (instancing ; terrain/ : sol, herbe, décor, lac, ciel), build/ (construction), cars/ (voitures garées et conduites), FactoryMode
   player/      contrôleur de personnage, caméra orbitale, avatar
   car/         stats et réglages (purs), modèle 3D

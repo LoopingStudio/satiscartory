@@ -1275,7 +1275,8 @@ export class FactorySim implements PadSource {
         b.stock = stock;
         const raw = b.car as unknown;
         const car = sanitizeCar(raw);
-        // No longer a valid car (blueprint or slots changed): its parts go back to the hub, like stale recipe inputs.
+        // No longer a valid car (a required slot empty, a part its slot no longer takes): the parts its blueprint's
+        // slots still take go back to the hub; those of an unknown blueprint or a vanished slot are dropped.
         if (raw && !car && typeof raw === 'object') {
           const { blueprint, parts } = raw as { blueprint?: unknown; parts?: unknown };
           if (parts && typeof parts === 'object') sim.give(carCost(blueprint, parts as Record<string, unknown>));

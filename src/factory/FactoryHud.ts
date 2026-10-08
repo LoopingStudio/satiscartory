@@ -230,10 +230,12 @@ export class FactoryHud {
     if (seen === null || c < seen) return;
     this.creditsGain.textContent = `+${formatCredits(c - seen)}`;
     for (const e of [this.creditsEl, this.creditsGain]) {
-      // Restart the animation (one per sale).
+      // Restart the animation (one per sale). Played once: hiding then showing the panel (display: none, the
+      // garage) would replay it.
       e.classList.remove('flash');
       void e.offsetWidth;
       e.classList.add('flash');
+      e.addEventListener('animationend', () => e.classList.remove('flash'), { once: true });
     }
   }
 
