@@ -229,6 +229,13 @@ kbd {
 .build-footer { margin-top: 12px; }
 .recipe-list { display: flex; flex-direction: column; gap: 6px; }
 .recipe { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.recipe .recipe-head { width: 100%; gap: 6px; }
+/* Machine recipes: ingredients as small slots (count in the corner, like the backpack's), then → the product. */
+.recipe-chips { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+.recipe-chip { position: relative; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; background: #262842; border: 1px solid var(--panel-border); border-radius: 8px; }
+.recipe-chip .item-icon { width: 30px; height: 30px; }
+.recipe-count { position: absolute; right: 3px; bottom: 0; font-size: 12px; font-weight: 800; text-shadow: 0 1px 0 #000, 0 0 3px #000; }
+.recipe-op { color: var(--muted); font-weight: 800; padding: 0 2px; }
 .status { font-weight: 800; margin: 4px 0; }
 .status-working { color: var(--good); }
 .status-idle { color: var(--accent); }

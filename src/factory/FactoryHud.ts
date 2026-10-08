@@ -33,6 +33,11 @@ function itemLabel(stacks: { item: ItemId; count: number }[]): string {
   return stacks.map((s) => countLabel(s.item, s.count)).join(' + ');
 }
 
+/** Duration of a recipe: « 6 s », « 0,75 s ». */
+function secondsLabel(ticks: number): string {
+  return `${String(+(ticks / FACTORY_HZ).toFixed(2)).replace('.', ',')} s`;
+}
+
 export function costText(cost: ItemCounts): string {
   return Object.entries(cost)
     .map(([i, n]) => countLabel(i as ItemId, n ?? 0))
@@ -537,12 +542,26 @@ export class FactoryHud {
     const list = el('div', { class: 'recipe-list' });
     for (const r of recipesFor(def.machine!)) {
       const active = r.id === m.recipe;
-      list.appendChild(
-        el('button', { class: `recipe${active ? ' selected' : ''}`, 'data-recipe': r.id, 'data-pad-default': !m.recipe && r === recipesFor(def.machine!)[0], onclick: () => { this.cb.setRecipe(m.id, r.id); this.refreshPanel(true); } },
-          el('span', { class: 'row', style: 'gap:6px' }, this.icon(r.outputs[0]!.item, 'item-icon tiny'), el('b', {}, r.name)),
-          el('span', { class: 'small muted' }, `${itemLabel(r.inputs)} → ${itemLabel(r.outputs)} · ${(r.ticks / 20).toFixed(1)} s`),
-        ),
+      // Ingredients as icons with their counts; the full text in the tooltip (the pad shows it on the focused recipe).
+      const btn: HTMLElement = el('button', {
+        class: `recipe${active ? ' selected' : ''}`,
+        'data-recipe': r.id,
+        'data-pad-default': !m.recipe && r === recipesFor(def.machine!)[0],
+        title: `${itemLabel(r.inputs)} → ${itemLabel(r.outputs)} · ${secondsLabel(r.ticks)}`,
+        onclick: () => {
+          // A first recipe adds the inputs block above the list: keep the chosen recipe where it was on screen
+          // (under the mouse, in view for the pad).
+          const top = btn.getBoundingClientRect().top;
+          this.cb.setRecipe(m.id, r.id);
+          this.refreshPanel(true);
+          const again = this.panel?.querySelector<HTMLElement>(`[data-recipe="${r.id}"]`);
+          if (again && this.panel) this.panel.scrollTop += again.getBoundingClientRect().top - top;
+        },
+      },
+        el('span', { class: 'row recipe-head' }, this.icon(r.outputs[0]!.item, 'item-icon tiny'), el('b', {}, r.name), el('span', { class: 'spacer' }), el('span', { class: 'small muted' }, secondsLabel(r.ticks))),
+        this.recipeChips(r),
       );
+      list.appendChild(btn);
     }
     this.panel!.append(list);
   }
@@ -906,6 +925,16 @@ export class FactoryHud {
     return el('div', { class: 'hub-drop', 'data-drop': 'hub' }, el('h3', {}, 'Hangar'), list);
   }
 
+  /** Machine recipe at a glance: each ingredient as a small slot with its count in the corner, then → the product. */
+  private recipeChips(r: Recipe): HTMLElement {
+    const chip = (s: { item: ItemId; count: number }) =>
+      el('span', { class: 'recipe-chip' }, this.icon(s.item), el('span', { class: 'recipe-count mono' }, `${s.count}`));
+    const row = el('span', { class: 'recipe-chips' });
+    r.inputs.forEach((s, i) => append(row, i ? el('span', { class: 'recipe-op' }, '+') : null, chip(s)));
+    append(row, el('span', { class: 'recipe-op' }, '→'), ...r.outputs.map(chip));
+    return row;
+  }
+
   /** Inputs → outputs with what the wallet holds (« 2/3 »), red when short. */
   private recipeLine(r: Recipe): HTMLElement {
     const line = el('span', { class: 'recipe-io small' });
@@ -923,7 +952,7 @@ export class FactoryHud {
     for (const r of recipesFor('bench')) {
       const can = this.canCraft(r);
       const active = this.crafting?.recipe.id === r.id;
-      const btn = el('button', { class: `craft-btn${active ? ' active' : ''}`, disabled: !can, 'data-craft': r.id, 'data-pad-hold': '', title: `${(r.ticks / 20).toFixed(2).replace(/\.?0+$/, '')} s par fabrication` },
+      const btn = el('button', { class: `craft-btn${active ? ' active' : ''}`, disabled: !can, 'data-craft': r.id, 'data-pad-hold': '', title: `${secondsLabel(r.ticks)} par fabrication` },
         el('span', { class: 'craft-fill', style: `width:${active ? Math.round((this.crafting!.t / (r.ticks / 20)) * 100) : 0}%` }),
         el('span', { class: 'craft-label' }, can ? 'Maintenir' : 'Manque'),
       );
