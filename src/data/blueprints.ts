@@ -86,3 +86,17 @@ export const BLUEPRINTS: Record<BlueprintId, Blueprint> = {
 };
 
 export const BLUEPRINT_IDS = Object.keys(BLUEPRINTS) as BlueprintId[];
+
+/** Blueprint for an id read from save data; never an inherited key ('constructor' → undefined). */
+export function blueprintById(id: unknown): Blueprint | undefined {
+  return typeof id === 'string' && Object.hasOwn(BLUEPRINTS, id) ? BLUEPRINTS[id as BlueprintId] : undefined;
+}
+
+/** Every item a car slot accepts (chassis, engine, wheels…): what garages count and dealers take. */
+export const CAR_PARTS: ItemId[] = [...new Set(Object.values(BLUEPRINTS).flatMap((bp) => bp.slots.flatMap((s) => s.accepts)))];
+
+const CAR_PART_SET = new Set<ItemId>(CAR_PARTS);
+
+export function isCarPart(item: ItemId): boolean {
+  return CAR_PART_SET.has(item);
+}

@@ -1,4 +1,6 @@
-import { BELT, DRILL, MACHINE, NODE, START_STORAGE } from '../../data/balance';
+import { BELT, DEALER, DRILL, MACHINE, NODE, START_STORAGE } from '../../data/balance';
+import { BLUEPRINT_IDS, BLUEPRINTS, CAR_PARTS, blueprintById, isCarPart, type BlueprintId } from '../../data/blueprints';
+import { bestSale, carCost, carPrice, planLoad, sanitizeCar } from '../../data/sales';
 import { BUILDINGS, GARAGE_DOOR_SIDE, isBelt, isPadded, type BuildingType, type Side } from '../../data/buildings';
 import { FACTORY_MAP, LEGACY_MAP_OFFSET, RESOURCES, type ResourceId, type ResourceNode } from '../../data/factoryMap';
 import { FACTORY_GRID_H, FACTORY_GRID_W } from '../../config/constants';
@@ -8,7 +10,7 @@ import { Emitter } from '../../core/events';
 import { FACTORY_TERRAIN_DEFAULT, TERRAIN_RULES, type TerrainId } from '../../data/factoryTerrain';
 import { Terrain, isTerrainId, type DeckPlane, type Pad, type PadSource } from './terrain';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
-import { isMachine, isNode, isProducer, type NodeB, type BeltItem, type Building, type ConveyorB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
+import { isMachine, isNode, isProducer, type NodeB, type BeltItem, type Building, type ConveyorB, type DealerB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
 
 export interface SimEvents extends Record<string, unknown> {
   placed: Building;
@@ -17,6 +19,16 @@ export interface SimEvents extends Record<string, unknown> {
   topology: undefined;
   /** The ground changed (a padded building placed or removed): corners [i0, i1] × [j0, j1]. */
   terrain: TerrainRect;
+  /** A car was sold, by a dealer or (dealer: null) from a garage. */
+  sold: SaleEvent;
+}
+
+export interface SaleEvent {
+  blueprint: string;
+  parts: Record<string, ItemId>;
+  price: number;
+  /** Id of the dealer that sold it; null: sold from a garage. */
+  dealer: number | null;
 }
 
 /** Inclusive rectangle of lattice corners (grid coordinates). */
@@ -67,6 +79,10 @@ export class FactorySim implements PadSource {
   delivered: Inventory = {};
   /** Items produced by drills and machines since the start. */
   crafted: Inventory = {};
+  /** Credits earned selling cars (dealers and garages); nothing spends them yet. */
+  credits = 0;
+  /** Cars sold per blueprint. */
+  sales: Partial<Record<BlueprintId, number>> = {};
   tickCount = 0;
   nextId = 1;
   /** Bumped each time links are rebuilt (caches keyed on the topology). */
@@ -83,6 +99,7 @@ export class FactorySim implements PadSource {
   private readonly occupantAt: OccupantAt = (x, z) => this.at(x, z);
   private convOrder: ConveyorB[] = [];
   private producers: (DrillB | MachineB)[] = [];
+  private dealers: DealerB[] = [];
   private topoDirty = true;
   /** Transient (within one tick): items inserted onto belts that must not move until the next tick. */
   private fresh = new Set<BeltItem>();
@@ -356,11 +373,12 @@ export class FactorySim implements PadSource {
     },
   };
 
-  /** Gives items to `sink` first; whatever it refuses goes to the hub. */
-  private refund(item: ItemId, n: number, sink?: ItemSink): void {
-    if (n <= 0) return;
+  /** Gives items to `sink` first; whatever it refuses goes to the hub. Returns how many went to the hub. */
+  private refund(item: ItemId, n: number, sink?: ItemSink): number {
+    if (n <= 0) return 0;
     const accepted = sink ? sink.add(item, n) : 0;
     if (accepted < n) this.storage[item] = this.count(item) + (n - accepted);
+    return n - accepted;
   }
 
   private missingIn(source: ItemSource, cost: Inventory): Inventory | null {
@@ -536,6 +554,8 @@ export class FactorySim implements PadSource {
       case 'press':
       case 'assembler':
         return { type, id, x, z, rot, recipe: null, inBuf: {}, outBuf: [], progress: 0, status: 'noRecipe' };
+      case 'dealer':
+        return { type, id, x, z, rot, stock: {}, car: null, progress: 0 };
       case 'garage':
       case 'hub':
         return { type, id, x, z, rot };
@@ -589,6 +609,11 @@ export class FactorySim implements PadSource {
         for (const st of r.inputs) this.refund(st.item, st.count, sink);
       }
     }
+    if (b.type === 'dealer') {
+      // Waiting parts, then the parts of the car being assembled (credits come only from a finished sale).
+      for (const p of CAR_PARTS) this.refund(p, b.stock[p] ?? 0, sink);
+      if (b.car) for (const [item, n] of Object.entries(carCost(b.car.blueprint, b.car.parts)) as [ItemId, number][]) this.refund(item, n, sink);
+    }
   }
 
   setRecipe(id: number, recipeId: string | null, sink?: ItemSink): boolean {
@@ -633,6 +658,70 @@ export class FactorySim implements PadSource {
       moved += n;
     }
     return moved;
+  }
+
+  /**
+   * « Charger » on a dealer: takes from `source` (a wallet: backpack, then hub) exactly the parts that, with its
+   * waiting stock, make every complete car the whole pool allows (data/sales.ts planLoad). `cars` and `total`
+   * count what the load adds.
+   */
+  loadDealer(id: number, source: ItemSource): { items: Inventory; count: number; cars: number; total: number } {
+    const d = this.buildings.get(id);
+    const res = { items: {} as Inventory, count: 0, cars: 0, total: 0 };
+    if (d?.type !== 'dealer') return res;
+    const available: Inventory = {};
+    for (const p of CAR_PARTS) available[p] = source.count(p);
+    const plan = planLoad(d.stock, available);
+    for (const p of CAR_PARTS) {
+      const n = source.remove(p, plan.load[p] ?? 0);
+      if (n <= 0) continue;
+      d.stock[p] = (d.stock[p] ?? 0) + n;
+      res.items[p] = n;
+      res.count += n;
+    }
+    res.cars = plan.cars;
+    res.total = plan.total;
+    return res;
+  }
+
+  /**
+   * « Reprendre les pièces »: a dealer's waiting parts (not the car being assembled) go to `sink` (the backpack),
+   * what it refuses to the hub.
+   */
+  unloadDealer(id: number, sink?: ItemSink): { items: Inventory; count: number; toHub: number } {
+    const d = this.buildings.get(id);
+    const res = { items: {} as Inventory, count: 0, toHub: 0 };
+    if (d?.type !== 'dealer') return res;
+    // In a fixed order: the backpack fills the same way whatever order the parts arrived in.
+    for (const p of CAR_PARTS) {
+      const n = d.stock[p] ?? 0;
+      if (n <= 0) continue;
+      res.toHub += this.refund(p, n, sink);
+      res.items[p] = n;
+      res.count += n;
+    }
+    d.stock = {};
+    return res;
+  }
+
+  /**
+   * Sells a car (a dealer's, or a garage's: dealer null): credits its price (data/sales.ts carPrice) and counts
+   * it. The only way credits are earned. Returns the price.
+   */
+  sell(blueprint: string, parts: Readonly<Record<string, ItemId>>, dealer: number | null = null): number {
+    const price = carPrice(blueprint, parts);
+    this.credits += price;
+    const bp = blueprintById(blueprint);
+    if (bp?.buildable) this.sales[bp.id] = (this.sales[bp.id] ?? 0) + 1;
+    this.events.emit('sold', { blueprint, parts: { ...parts }, price, dealer });
+    return price;
+  }
+
+  /** Cars sold so far (dealers and garages). */
+  get carsSold(): number {
+    let n = 0;
+    for (const id of BLUEPRINT_IDS) n += this.sales[id] ?? 0;
+    return n;
   }
 
   /**
@@ -736,6 +825,7 @@ export class FactorySim implements PadSource {
       for (let i = chain.length - 1; i >= 0; i--) this.convOrder.push(chain[i]!);
     }
     this.producers = sorted.filter(isProducer);
+    this.dealers = sorted.filter((b): b is DealerB => b.type === 'dealer');
     this.logistics = sorted.filter(isNode);
     this.events.emit('topology', undefined);
   }
@@ -859,6 +949,7 @@ export class FactorySim implements PadSource {
       if (b.type === 'drill') this.stepDrill(b);
       else this.stepMachine(b);
     }
+    for (const d of this.dealers) this.stepDealer(d);
     for (const b of this.producers) {
       if (b.outBuf.length === 0) continue;
       const link = this.outLinks.get(b.id);
@@ -916,6 +1007,26 @@ export class FactorySim implements PadSource {
     for (const i of r.inputs) m.inBuf[i.item] = (m.inBuf[i.item] ?? 0) - i.count;
     m.status = 'working';
     m.progress = 0;
+  }
+
+  /** Like a machine: the car in progress advances; once sold, the next one starts in the same tick. */
+  private stepDealer(d: DealerB): void {
+    if (d.car) {
+      d.progress++;
+      if (d.progress < DEALER.SELL_TICKS) return;
+      this.sell(d.car.blueprint, d.car.parts, d.id);
+      d.car = null;
+      d.progress = 0;
+    }
+    const s = bestSale(d.stock);
+    if (!s) return;
+    for (const [item, n] of Object.entries(s.cost) as [ItemId, number][]) {
+      const left = (d.stock[item] ?? 0) - n;
+      if (left > 0) d.stock[item] = left;
+      else delete d.stock[item];
+    }
+    // A copy: the sale belongs to the shared CAR_SALES table.
+    d.car = { blueprint: s.blueprint, parts: { ...s.parts } };
   }
 
   /**
@@ -1042,6 +1153,11 @@ export class FactorySim implements PadSource {
         this.giveOne(item);
         this.delivered[item] = (this.delivered[item] ?? 0) + 1;
         return true;
+      case 'dealer':
+        // Every car part, no cap: a mixed belt never waits behind a part the dealer has too many of.
+        if (!isCarPart(item)) return false;
+        t.stock[item] = (t.stock[item] ?? 0) + 1;
+        return true;
       case 'drill':
       case 'garage':
         return false;
@@ -1051,6 +1167,7 @@ export class FactorySim implements PadSource {
   /** Craft progress 0..1 of a machine/drill (for animations). */
   progressOf(b: Building): number {
     if (b.type === 'drill') return b.progress / DRILL.PERIOD;
+    if (b.type === 'dealer') return b.car ? Math.min(1, b.progress / DEALER.SELL_TICKS) : 0;
     if (isMachine(b) && b.recipe && b.status === 'working') {
       const r = RECIPES_BY_ID[b.recipe];
       return r ? b.progress / r.ticks : 0;
@@ -1080,6 +1197,8 @@ export class FactorySim implements PadSource {
       storage: this.storage,
       delivered: this.delivered,
       crafted: this.crafted,
+      credits: this.credits,
+      sales: this.sales,
       buildings,
     });
   }
@@ -1099,6 +1218,11 @@ export class FactorySim implements PadSource {
     sim.storage = data.storage ?? {};
     sim.delivered = data.delivered ?? {};
     sim.crafted = data.crafted ?? {};
+    sim.credits = Number.isSafeInteger(data.credits) && data.credits! >= 0 ? data.credits! : 0;
+    for (const id of BLUEPRINT_IDS) {
+      const n = (data.sales as Record<string, unknown> | undefined)?.[id];
+      if (BLUEPRINTS[id].buildable && Number.isSafeInteger(n) && (n as number) > 0) sim.sales[id] = n as number;
+    }
     for (const b of data.buildings) {
       if (!BUILDINGS[b.type]) continue;
       // v1 machines were 1×2 with items flowing along their length; v2 machines are 2×1
@@ -1139,6 +1263,25 @@ export class FactorySim implements PadSource {
             delete (b.inBuf as Record<string, number>)[item];
           }
         }
+      }
+      if (b.type === 'dealer') {
+        const stock: Inventory = {};
+        for (const [item, n] of Object.entries((b.stock ?? {}) as Record<string, unknown>)) {
+          // Unknown items and garbage counts are dropped (never minted); a known item that is not a part goes to the hub.
+          if (!isItemId(item) || !Number.isSafeInteger(n) || (n as number) <= 0) continue;
+          if (isCarPart(item)) stock[item] = n as number;
+          else sim.give({ [item]: n as number });
+        }
+        b.stock = stock;
+        const raw = b.car as unknown;
+        const car = sanitizeCar(raw);
+        // No longer a valid car (blueprint or slots changed): its parts go back to the hub, like stale recipe inputs.
+        if (raw && !car && typeof raw === 'object') {
+          const { blueprint, parts } = raw as { blueprint?: unknown; parts?: unknown };
+          if (parts && typeof parts === 'object') sim.give(carCost(blueprint, parts as Record<string, unknown>));
+        }
+        b.car = car;
+        b.progress = car && Number.isSafeInteger(b.progress) && b.progress >= 0 ? b.progress : 0;
       }
       if (sim.terrain.flat || !isPadded(b.type)) delete b.py;
       else if (!Number.isInteger(b.py) || b.py! < -3000 || b.py! > 10000) {
@@ -1207,4 +1350,4 @@ function structuredCloneJSON<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-export type { Building, ConveyorB, DrillB, MachineB, GarageB, HubB };
+export type { Building, ConveyorB, DealerB, DrillB, MachineB, GarageB, HubB };

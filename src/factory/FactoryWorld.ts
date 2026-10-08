@@ -6,6 +6,7 @@ import { PLAYER } from '../data/player';
 import { rotatedSize } from './sim/dirs';
 import { HUB_BENCH } from './view/hubBench';
 import { GARAGE_CLUTTER, GARAGE_LINTEL, GARAGE_WALLS, rotateBox } from './view/garageLayout';
+import { DEALER_BOXES } from './view/dealerLayout';
 import { rotateLocal } from './view/beltPath';
 import type { FactorySim, TerrainRect } from './sim/FactorySim';
 import { deckY, type DeckPlane, type Terrain } from './sim/terrain';
@@ -244,10 +245,12 @@ export class FactoryWorld {
       descs.push(RAPIER.ColliderDesc.cuboid(bhx, bhy, bhz).setTranslation(cx + bench.x, y0 + bhy, cz + bench.z));
       // A thin pickable slab over the whole footprint so the hub can be aimed at.
       descs.push(RAPIER.ColliderDesc.cuboid((rw * FACTORY_CELL) / 2, 0.02, (rh * FACTORY_CELL) / 2).setTranslation(cx, y0 + 0.02, cz));
-    } else if (b.type === 'garage') {
-      // Walls, door lintel and corner clutter: the bay floor is the ground collider (cars drive in and
+    } else if (b.type === 'garage' || b.type === 'dealer') {
+      // Garage: walls, door lintel and corner clutter; the bay floor is the ground collider (cars drive in and
       // out), no roof (cameras). Aiming at the floor falls back to the footprint cells (BuildController).
-      for (const w of [...GARAGE_WALLS, GARAGE_LINTEL, ...Object.values(GARAGE_CLUTTER)].map((l) => rotateBox(l, b.rot))) {
+      // Dealer: the store block and the glass showroom.
+      const boxes = b.type === 'garage' ? [...GARAGE_WALLS, GARAGE_LINTEL, ...Object.values(GARAGE_CLUTTER)] : DEALER_BOXES;
+      for (const w of boxes.map((l) => rotateBox(l, b.rot))) {
         // Standing parts (bottom on the floor) reach under the pad too; the lintel hangs.
         const grounded = w.y - w.hy < 0.01;
         const hy = grounded ? w.hy + down / 2 : w.hy;

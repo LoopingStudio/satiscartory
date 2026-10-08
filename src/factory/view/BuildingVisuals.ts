@@ -15,6 +15,7 @@ import { isMachine, type Building } from '../sim/types';
 import type { ModelKey } from '../../core/assets/manifest.gen';
 import { HUB_BENCH } from './hubBench';
 import { GARAGE, GARAGE_BAY, GARAGE_CLUTTER, GARAGE_DOOR, GARAGE_INNER, GARAGE_LINTEL, GARAGE_WALLS } from './garageLayout';
+import { DEALER_HATCHES, DEALER_SHOP, DEALER_SIGN, DEALER_STORE_FRONT, DEALER_TOP } from './dealerLayout';
 
 const STATUS_COLORS = { working: 0x3ddc84, idle: 0xffb347, blocked: 0xff5d5d, noRecipe: 0x8a8fb5 } as const;
 const statusMaterials = new Map<string, THREE.MeshStandardMaterial>();
@@ -112,6 +113,79 @@ function garageGeometry(): Record<GarageMat, THREE.BufferGeometry> {
   return garageGeometries;
 }
 
+/** Dealer materials: the garage's walls, trim and yellow frame, plus the showroom podium and the hatches. */
+const dealerMats = {
+  wall: garageMats.wall,
+  trim: garageMats.trim,
+  frame: garageMats.frame,
+  floor: new THREE.MeshStandardMaterial({ color: 0x61618a, roughness: 0.6 }),
+  check: new THREE.MeshStandardMaterial({ color: 0xc4c4dc, roughness: 0.5 }),
+  hatch: new THREE.MeshStandardMaterial({ color: 0x23233a, roughness: 0.9 }),
+};
+type DealerMat = keyof typeof dealerMats;
+/** Showroom glass: drawn after the car on show (renderOrder), never in the depth buffer. */
+const glassMaterial = new THREE.MeshStandardMaterial({ color: 0xcfe8ff, transparent: true, opacity: 0.16, roughness: 0.05, metalness: 0.2, depthWrite: false });
+
+let dealerGeometries: { solid: Record<DealerMat, THREE.BufferGeometry>; glass: THREE.BufferGeometry; sign: THREE.BufferGeometry } | null = null;
+/** Static boxes of the dealer merged per material, its glass and its two-sided sign (built once, shared by every dealer and ghost). */
+function dealerGeometry(): NonNullable<typeof dealerGeometries> {
+  if (dealerGeometries) return dealerGeometries;
+  const parts: Record<DealerMat, THREE.BufferGeometry[]> = { wall: [], trim: [], frame: [], floor: [], check: [], hatch: [] };
+  const glass: THREE.BufferGeometry[] = [];
+  const box = (list: THREE.BufferGeometry[], x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
+    list.push(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0).translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2));
+  const { halfW: W, halfD: D, floor, height: H, glassTop, glass: G, post, rail } = DEALER_SHOP;
+  const sf = DEALER_STORE_FRONT;
+  const e = 0.02;
+  // Showroom podium, light squares on it (6 × 3, where i + j is even).
+  box(parts.floor, -W, W, 0, floor, sf, D);
+  const [nx, nz] = [6, 3];
+  const [cw, cd] = [(2 * W) / nx, (D - sf) / nz];
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < nz; j++) {
+      if ((i + j) % 2) continue;
+      parts.check.push(new THREE.PlaneGeometry(cw, cd).rotateX(-Math.PI / 2).translate(-W + (i + 0.5) * cw, floor + 0.002, sf + (j + 0.5) * cd));
+    }
+  }
+  // Store block with dark skirting and cap bands 2 cm proud on its back and sides (a cap band across its front too,
+  // over the glass roof).
+  box(parts.wall, -W, W, 0, H, -D, sf);
+  box(parts.trim, -W - e, W + e, 0, 0.4, -D - e, sf - e);
+  box(parts.trim, -W - e, W + e, H - 0.15, H + 0.01, -D - e, sf + e);
+  // Hatches on the back wall, one per input: dark opening, yellow frame, strip curtains.
+  const { bottom: hb, top: ht, halfW: hw, frame: f } = DEALER_HATCHES;
+  for (const x of DEALER_HATCHES.xs) {
+    box(parts.hatch, x - hw, x + hw, hb, ht, -D - e, -D);
+    box(parts.frame, x - hw - f, x - hw, hb - f, ht + f, -D - 0.05, -D);
+    box(parts.frame, x + hw, x + hw + f, hb - f, ht + f, -D - 0.05, -D);
+    box(parts.frame, x - hw, x + hw, ht, ht + f, -D - 0.05, -D);
+    box(parts.frame, x - hw, x + hw, hb - f, hb, -D - 0.05, -D);
+    const slat = (2 * hw) / 5;
+    for (let k = 0; k < 5; k++) box(parts.trim, x - hw + k * slat + 0.02, x - hw + (k + 1) * slat - 0.02, hb + 0.04, ht, -D - 0.035, -D - 0.025);
+  }
+  // Sign board on the roof (the two printed faces stand just outside it).
+  const sg = DEALER_SIGN;
+  box(parts.trim, -sg.halfW - 0.08, sg.halfW + 0.08, H, sg.top + 0.06, sg.z - 0.03, sg.z + 0.03);
+  // Showroom: yellow front corner posts and top rails, glass front, sides and roof.
+  box(parts.frame, -W, -W + post, floor, glassTop, D - post, D);
+  box(parts.frame, W - post, W, floor, glassTop, D - post, D);
+  box(parts.frame, -W, W, glassTop - rail, glassTop, D - rail, D);
+  for (const sx of [-1, 1]) box(parts.frame, sx < 0 ? -W : W - rail, sx < 0 ? -W + rail : W, glassTop - rail, glassTop, sf, D - rail);
+  box(glass, -W + post, W - post, floor, glassTop - rail, D - G, D);
+  for (const sx of [-1, 1]) box(glass, sx < 0 ? -W : W - G, sx < 0 ? -W + G : W, floor, glassTop - rail, sf, D - post);
+  box(glass, -W + rail, W - rail, glassTop - 0.05, glassTop - 0.03, sf, D - rail);
+  const merge = (list: THREE.BufferGeometry[]) => mergeGeometries(list, false) ?? new THREE.BufferGeometry();
+  const sh = sg.top - sg.bottom;
+  const front = new THREE.PlaneGeometry(2 * sg.halfW, sh).translate(0, (sg.bottom + sg.top) / 2, sg.z + 0.042);
+  const back = new THREE.PlaneGeometry(2 * sg.halfW, sh).rotateY(Math.PI).translate(0, (sg.bottom + sg.top) / 2, sg.z - 0.042);
+  dealerGeometries = {
+    solid: Object.fromEntries(Object.entries(parts).map(([k, list]) => [k, merge(list)])) as Record<DealerMat, THREE.BufferGeometry>,
+    glass: merge(glass),
+    sign: merge([front, back]),
+  };
+  return dealerGeometries;
+}
+
 /** Canvas texture (shared, never disposed); null outside a browser. */
 function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.Texture | null {
   if (typeof document === 'undefined') return null;
@@ -127,42 +201,44 @@ function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2
   return tex;
 }
 
-/** « GARAGE » on a dark panel between hazard stripes. */
-let garageSignMaterial: THREE.Material | null = null;
-function signMaterial(): THREE.Material {
-  garageSignMaterial ??= new THREE.MeshStandardMaterial({
+/** A word (« GARAGE », « CONCESSION ») on a dark panel between hazard stripes, w × h px (shared per word, never disposed). */
+const signMaterials = new Map<string, THREE.Material>();
+function signMaterial(text: string, w: number, h: number): THREE.Material {
+  let m = signMaterials.get(text);
+  if (m) return m;
+  m = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     roughness: 0.6,
-    // 576 × 100 px for the 3 × 0.52 m panel.
-    map: canvasTexture(576, 100, (c) => {
+    map: canvasTexture(w, h, (c) => {
       c.fillStyle = '#2f2f45';
-      c.fillRect(0, 0, 576, 100);
-      for (const x0 of [0, 516]) {
+      c.fillRect(0, 0, w, h);
+      for (const x0 of [0, w - 60]) {
         c.save();
         c.beginPath();
-        c.rect(x0, 0, 60, 100);
+        c.rect(x0, 0, 60, h);
         c.clip();
         c.fillStyle = '#f0b36a';
-        c.fillRect(x0, 0, 60, 100);
+        c.fillRect(x0, 0, 60, h);
         c.fillStyle = '#2f2f45';
-        for (let k = -100; k < 60; k += 32) {
+        for (let k = -h; k < 60; k += 32) {
           c.beginPath();
-          c.moveTo(x0 + k, 100);
-          c.lineTo(x0 + k + 16, 100);
-          c.lineTo(x0 + k + 16 + 100, 0);
-          c.lineTo(x0 + k + 100, 0);
+          c.moveTo(x0 + k, h);
+          c.lineTo(x0 + k + 16, h);
+          c.lineTo(x0 + k + 16 + h, 0);
+          c.lineTo(x0 + k + h, 0);
           c.fill();
         }
         c.restore();
       }
       c.fillStyle = '#f0b36a';
-      c.font = 'bold 66px system-ui, -apple-system, "Segoe UI", sans-serif';
+      c.font = `bold ${Math.round(0.66 * h)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
-      c.fillText('GARAGE', 288, 54);
+      c.fillText(text, w / 2, 0.54 * h);
     }),
   });
-  return garageSignMaterial;
+  signMaterials.set(text, m);
+  return m;
 }
 
 /** Console display: a car profile on a blueprint grid (unlit, reads as a lit screen). */
@@ -222,6 +298,7 @@ const topArrowMaterial = new THREE.MeshBasicMaterial({ color: PORT_COLORS.out, p
 
 /** Height of a building's model (highlight boxes, marks floated over it). */
 export function buildingHeight(type: BuildingType): number {
+  if (type === 'dealer') return DEALER_TOP;
   return isBelt(type) ? 1.0 : type === 'hub' || type === 'smelter' ? 4.2 : type === 'drill' ? 4.1 : type === 'garage' ? GARAGE.height + 0.05 : 3.0;
 }
 
@@ -350,7 +427,8 @@ export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group
       for (const sx of [-1, 1]) add('factory-kit/structure-yellow-tall', [sx * (inner.halfW + T / 2), 0, GARAGE_DOOR.z - post / 2], [T / 0.3, H / 2, post / 1.1]);
       // Sign on the lintel, facing out.
       const t = garageMats.trim;
-      const sign = new THREE.Mesh(signGeometry, [t, t, t, t, signMaterial(), t]);
+      // 576 × 100 px for the 3 × 0.52 m panel.
+      const sign = new THREE.Mesh(signGeometry, [t, t, t, t, signMaterial('GARAGE', 576, 100), t]);
       sign.position.set(0, (GARAGE_SIGN.bottom + GARAGE_SIGN.top) / 2, GARAGE_DOOR.z - GARAGE_SIGN.depth / 2);
       sign.castShadow = true;
       g.add(sign);
@@ -368,6 +446,28 @@ export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group
       }
       add('factory-kit/box-large', [crates.x, 0, crates.z], 0.8);
       add('factory-kit/box-large', [crates.x, 0.44, crates.z], 0.6).rotation.y = 0.35;
+      break;
+    }
+    case 'dealer': {
+      // Shop (layout in dealerLayout): the store block at the back takes the parts through three hatches, the
+      // glass showroom in front shows the car being assembled (BuildingVisual), the sign stands on the roof.
+      const geo = dealerGeometry();
+      for (const key of Object.keys(geo.solid) as DealerMat[]) {
+        const m = new THREE.Mesh(geo.solid[key], dealerMats[key]);
+        m.castShadow = key !== 'check';
+        m.receiveShadow = true;
+        g.add(m);
+      }
+      const glass = new THREE.Mesh(geo.glass, glassMaterial);
+      glass.renderOrder = 2;
+      g.add(glass);
+      // 768 × 104 px for the 4.4 × 0.6 m sign (ten letters do not fit the garage's 576 px).
+      g.add(new THREE.Mesh(geo.sign, signMaterial('CONCESSION', 768, 104)));
+      // The garage's console on the store's front wall, behind the car on show.
+      const screen = new THREE.Mesh(screenPlane, screenMaterial());
+      screen.scale.set(1.24, 0.7, 1);
+      screen.position.set(0, 2.05, DEALER_STORE_FRONT + 0.01);
+      g.add(screen);
       break;
     }
     default: {
@@ -432,6 +532,7 @@ export class BuildingVisual {
     if (!isBelt(type) && type !== 'hub' && type !== 'garage') {
       this.lamp = new THREE.Mesh(lampGeometry, statusMaterial('noRecipe'));
       if (type === 'drill') this.lamp.position.set(-1, 3.95, 0);
+      else if (type === 'dealer') this.lamp.position.set(2.6, DEALER_SHOP.height + 0.22, DEALER_SIGN.z);
       else this.lamp.position.set(1.1, 2.45, -0.6);
       this.root.add(this.lamp);
     }

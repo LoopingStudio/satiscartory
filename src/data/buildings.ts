@@ -7,7 +7,7 @@ export type Side = 0 | 1 | 2 | 3;
 /** Local side of the garage door (rotation 0: +Z, the short side). */
 export const GARAGE_DOOR_SIDE: Side = 0;
 
-export type BuildingType = 'conveyor' | 'splitter' | 'merger' | 'drill' | 'smelter' | 'press' | 'assembler' | 'garage' | 'hub';
+export type BuildingType = 'conveyor' | 'splitter' | 'merger' | 'drill' | 'smelter' | 'press' | 'assembler' | 'garage' | 'dealer' | 'hub';
 
 export interface PortDef {
   /** Local cell offset inside the footprint (rotation 0). */
@@ -152,6 +152,20 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     buildable: true,
     hollow: true,
   },
+  dealer: {
+    type: 'dealer',
+    name: 'Concession',
+    description: 'Reçoit les pièces de voiture par l’arrière, monte la voiture la plus chère possible et la vend contre des crédits.',
+    footprint: [3, 2],
+    // Three inputs on the back long side (one part line each, or an assembler pushed against it); no output.
+    ports: [
+      { cell: [0, 0], side: 2, dir: 'in' },
+      { cell: [1, 0], side: 2, dir: 'in' },
+      { cell: [2, 0], side: 2, dir: 'in' },
+    ],
+    cost: { plate: 60, iron_rod: 30, bolt: 120 },
+    buildable: true,
+  },
   hub: {
     type: 'hub',
     name: 'Hangar central',
@@ -165,10 +179,21 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
 };
 
 /**
- * Build menu order = shortcut keys 1-8. The production chain keeps 1-6 in unlock order; splitter and
- * merger (tier 1, added later) come last as 7 and 8 so that the older keys did not move.
+ * Build menu order = shortcut keys 1-9. The production chain keeps 1-6 in unlock order; splitter and merger
+ * (tier 1, added later) come next as 7 and 8, the dealer (tier 6) as 9, so that the older keys did not move.
  */
-export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'press', 'assembler', 'garage', 'splitter', 'merger'];
+export const BUILD_MENU: BuildingType[] = ['conveyor', 'drill', 'smelter', 'press', 'assembler', 'garage', 'splitter', 'merger', 'dealer'];
+
+/** Build menu sections (the number keys follow BUILD_MENU). */
+export const BUILD_CATEGORIES: { name: string; types: BuildingType[] }[] = [
+  { name: 'Logistique', types: ['conveyor', 'splitter', 'merger'] },
+  { name: 'Extraction', types: ['drill'] },
+  { name: 'Production', types: ['smelter', 'press', 'assembler'] },
+  { name: 'Véhicules', types: ['garage', 'dealer'] },
+];
+
+/** The build menu's order, which the pad's ◀ ▶ follow. */
+export const BUILD_ORDER: BuildingType[] = BUILD_CATEGORIES.flatMap((c) => c.types);
 
 /** Belt-height logistics piece (conveyor, splitter, merger). */
 export function isBelt(type: BuildingType): boolean {

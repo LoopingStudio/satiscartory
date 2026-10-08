@@ -8,7 +8,7 @@ import { TIERS } from './tiers';
 import type { Inventory, ItemId } from './items';
 import { FACTORY_HZ } from '../config/constants';
 
-const base: ObjectiveContext = { buildings: [{ type: 'hub' }], storage: {}, cars: 0, delivered: {}, crafted: {}, blueprints: [], racesWithOwnCar: 0, tier: 0 };
+const base: ObjectiveContext = { buildings: [{ type: 'hub' }], storage: {}, cars: 0, delivered: {}, crafted: {}, blueprints: [], racesWithOwnCar: 0, tier: 0, carsSold: 0 };
 const done = (c: ObjectiveContext) => OBJECTIVES.filter((o) => o.done(c)).map((o) => o.id);
 const ids = OBJECTIVES.map((o) => o.id);
 
@@ -44,7 +44,10 @@ describe('onboarding objectives', () => {
       { tier: 5, buildings: [{ type: 'garage' }] },
       { tier: 5, cars: 1, blueprints: ['kart'] },
       { tier: 5, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 },
-      { tier: 5, cars: 2, blueprints: ['kart', 'sport'], racesWithOwnCar: 1 },
+      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 }, // Commerce tier
+      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, buildings: [{ type: 'dealer' }] },
+      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, carsSold: 1 },
+      { tier: 6, cars: 2, blueprints: ['kart', 'sport'], racesWithOwnCar: 1, carsSold: 1 },
     ];
     expect(play(steps.map((s) => ({ ...base, ...s })))).toEqual(ids.map((id) => [id]));
   });
@@ -60,9 +63,15 @@ describe('onboarding objectives', () => {
 
   it('saves from before the tiers (everything unlocked) skip the bootstrap steps', () => {
     const old = { ...base, tier: TIERS.length };
-    // Everything but the steps that need cars, parts or a garage built.
-    expect(done(old)).toEqual(ids.filter((id) => !['car_parts', 'garage', 'assembled', 'race', 'sport'].includes(id)));
-    expect(done({ ...old, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 })).toEqual(ids.filter((id) => id !== 'sport'));
+    // Everything but the steps that need cars, parts, a garage or a dealer built, a sale.
+    expect(done(old)).toEqual(ids.filter((id) => !['car_parts', 'garage', 'assembled', 'race', 'dealer', 'sell', 'sport'].includes(id)));
+    expect(done({ ...old, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 })).toEqual(ids.filter((id) => !['dealer', 'sell', 'sport'].includes(id)));
+  });
+
+  it('selling a car completes « sell », a dealer on the map « dealer »', () => {
+    expect(done({ ...base, tier: 6, carsSold: 1 })).toContain('sell');
+    expect(done({ ...base, tier: 6, carsSold: 1 })).not.toContain('dealer');
+    expect(done({ ...base, tier: 6, buildings: [{ type: 'dealer' }] })).toContain('dealer');
   });
 
   it('a new game starts with an empty hub, and tier 1 plus a first iron chain take under two minutes by hand', () => {

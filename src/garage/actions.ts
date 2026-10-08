@@ -1,4 +1,4 @@
-import { BLUEPRINTS, type BlueprintId } from '../data/blueprints';
+import { CAR_PARTS, type BlueprintId } from '../data/blueprints';
 import { ITEM_IDS, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import type { GameState } from '../state/GameState';
 import type { Wallet } from '../state/Inventory';
@@ -11,8 +11,7 @@ import { bayOccupant, bayPose, carInBay, type BayBlocker, type GarageSpot } from
  * Callers persist (SaveManager.save) and re-sync the physical cars after a change.
  */
 
-/** Every item a car slot accepts (chassis, engine, wheels…): what the garage counts. */
-export const CAR_PARTS: ItemId[] = [...new Set(Object.values(BLUEPRINTS).flatMap((bp) => bp.slots.flatMap((s) => s.accepts)))];
+export { CAR_PARTS };
 
 /** Car parts in stock (backpack + hub). */
 export function partStock(state: GameState): ItemCounts {
@@ -98,6 +97,20 @@ export function disassembleCar(state: GameState, carId: string): { car: CarInsta
   state.cars = state.cars.filter((c) => c !== car);
   if (state.selectedCarId === car.id) state.selectedCarId = state.cars[0]?.id ?? null;
   return { car, refund, toHub };
+}
+
+/**
+ * Sells a car: it leaves the game with its parts, its price (the dealer's: data/sales.ts carPrice) is credited
+ * and counted by the sim. The race car falls back to the first remaining car (or the loaner); car numbers are
+ * never reused. Null if there is no such car. Callers only offer it for a car standing in the bay, like « Démonter ».
+ */
+export function sellCar(state: GameState, carId: string): { car: CarInstance; price: number } | null {
+  const car = findCar(state, carId);
+  if (!car) return null;
+  const price = state.sim.sell(car.blueprint, car.parts);
+  state.cars = state.cars.filter((c) => c !== car);
+  if (state.selectedCarId === car.id) state.selectedCarId = state.cars[0]?.id ?? null;
+  return { car, price };
 }
 
 /**

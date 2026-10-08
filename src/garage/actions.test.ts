@@ -4,7 +4,11 @@ import { GameState } from '../state/GameState';
 import { BLUEPRINTS } from '../data/blueprints';
 import { defaultChoices } from './assembly';
 import { bayPose, type GarageSpot } from './parking';
-import { applyChange, assembleCar, carLocation, checkAssembleIn, disassembleCar, partStock, selectRaceCar, swapCarPart } from './actions';
+import { applyChange, assembleCar, carLocation, checkAssembleIn, disassembleCar, partStock, selectRaceCar, sellCar, swapCarPart } from './actions';
+import { FactorySim, type SaleEvent } from '../factory/sim/FactorySim';
+import type { DealerB } from '../factory/sim/types';
+import { DEALER } from '../data/balance';
+import { carPrice } from '../data/sales';
 
 const KART = defaultChoices(BLUEPRINTS.kart);
 const g1: GarageSpot = { id: 50, x: 40, z: 40, rot: 0 };
@@ -90,6 +94,47 @@ describe('garage actions', () => {
     expect(s.sim.count('wheel')).toBe(4);
     expect(s.selectedCarId).toBeNull();
     expect(disassembleCar(s, a.id)).toBeNull();
+  });
+
+  it('selling credits the dealer’s price, counts the sale and removes the car; numbers are never reused', () => {
+    const s = stocked();
+    const sold: SaleEvent[] = [];
+    s.sim.events.on('sold', (e) => sold.push(e));
+    const a = assembleCar(s, 'kart', KART, g1)!;
+    const b = assembleCar(s, 'kart', KART, g2)!;
+    const parts = partStock(s);
+    expect(sellCar(s, b.id)).toEqual({ car: b, price: 4480 });
+    expect([s.sim.credits, s.sim.sales, s.sim.carsSold]).toEqual([4480, { kart: 1 }, 1]);
+    expect(sold).toEqual([{ blueprint: 'kart', parts: b.parts, price: 4480, dealer: null }]);
+    // The car leaves with its parts: nothing comes back.
+    expect(partStock(s)).toEqual(parts);
+    expect(s.cars).toEqual([a]);
+    expect(s.selectedCarId).toBe(a.id);
+    expect(s.carCounter).toBe(2);
+    expect(sellCar(s, b.id)).toBeNull();
+    expect(s.sim.credits).toBe(4480);
+    s.sim.give({ chassis: 1, engine: 1, wheel: 4 });
+    expect(assembleCar(s, 'kart', KART, g2)!.id).toBe('car-3');
+    sellCar(s, a.id);
+    expect(s.selectedCarId).toBe('car-3');
+    sellCar(s, 'car-3');
+    expect([s.cars, s.selectedCarId, s.sim.credits]).toEqual([[], null, 3 * 4480]);
+  });
+
+  it('a car sells for the same price at the garage and at a dealer', () => {
+    const s = stocked();
+    s.sim.give({ wheel_racing: 4 });
+    const car = assembleCar(s, 'kart', KART, g1)!;
+    expect(swapCarPart(s, car.id, 'wheels', 'wheel_racing')).toBe(true);
+    const price = sellCar(s, car.id)!.price;
+    expect(price).toBe(carPrice('kart', car.parts));
+    expect(price).toBe(5680);
+    const sim = new FactorySim({ width: 32, height: 32, hub: null });
+    const r = sim.place('dealer', 4, 4, 0, { free: true });
+    if (!r.ok) throw new Error(r.check.error);
+    (r.building as DealerB).stock = { chassis: 1, engine: 1, wheel_racing: 4 };
+    sim.run(DEALER.SELL_TICKS + 1);
+    expect(sim.credits).toBe(price);
   });
 
   it('swapping a part trades with the wallet; the same part again is a no-op', () => {

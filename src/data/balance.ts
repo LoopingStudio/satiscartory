@@ -41,3 +41,19 @@ export const HAND = {
   /** Seconds E is held on a belt to pick up its whole line (a press takes the aimed tile). */
   BELT_LINE_SECONDS: 0.5,
 } as const;
+
+/** Dealer (« Concession »): time to assemble and sell one car. */
+export const DEALER = {
+  /** Ticks per car (200 = 10 s). */
+  SELL_TICKS: 200,
+} as const;
+
+/**
+ * Car prices (data/sales.ts): parts are valued in machine ticks, the car sells for their sum × MARGIN_NUM /
+ * MARGIN_DEN, rounded to ROUND credits.
+ */
+export const SALE = {
+  MARGIN_NUM: 5,
+  MARGIN_DEN: 4,
+  ROUND: 10,
+} as const;

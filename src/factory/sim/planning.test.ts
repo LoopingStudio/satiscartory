@@ -88,6 +88,20 @@ describe('ports', () => {
     expect(s.isDeadEnd(open.id)).toBe(false);
   });
 
+  it('lists the dealer’s three inputs on its back side, and a belt behind it turns to feed it', () => {
+    const s = sim();
+    const d = place(s, 'dealer', 10, 10, 0); // cells (10..12, 10..11), back side -Z
+    expect(s.portsOf(d.id).map((p) => [p.cx, p.cz, p.side, p.dir, p.state])).toEqual([
+      [10, 10, 2, 'in', 'free'],
+      [11, 10, 2, 'in', 'free'],
+      [12, 10, 2, 'in', 'free'],
+    ]);
+    expect(snapConveyorRot(s, 11, 9, 1)).toEqual({ rot: 0, linked: true });
+    // Turned a half turn, its inputs face +Z.
+    const t = place(s, 'dealer', 20, 20, 2);
+    expect(s.portsOf(t.id).map((p) => [p.cz, p.side])).toEqual([[21, 0], [21, 0], [21, 0]]);
+  });
+
   it('lists no ports for the hub and the garage', () => {
     const s = sim({ hub: { x: 10, z: 10, rot: 0 } });
     const hub = [...s.buildings.values()].find((b) => b.type === 'hub')!;
@@ -99,7 +113,7 @@ describe('ports', () => {
 
 describe('planLinks', () => {
   it('predicts exactly the links that placing the plan makes (random layouts)', () => {
-    const types: BuildingType[] = ['conveyor', 'conveyor', 'conveyor', 'splitter', 'merger', 'drill', 'smelter', 'press', 'assembler'];
+    const types: BuildingType[] = ['conveyor', 'conveyor', 'conveyor', 'splitter', 'merger', 'drill', 'smelter', 'press', 'assembler', 'dealer'];
     const rnd = mulberry32(7);
     const pick = <T>(a: readonly T[]) => a[Math.floor(rnd() * a.length)]!;
     let checked = 0;

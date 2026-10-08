@@ -16,6 +16,7 @@ export const TIERS: TierDef[] = [
   { name: 'Constructeur', description: 'Plaques, tiges, boulons et pneus à la chaîne.', cost: { plate: 30, iron_rod: 20, bolt: 40 }, unlocks: ['press'] },
   { name: 'Assemblage', description: 'Assembleuse : les pièces de voiture.', cost: { plate: 60, iron_rod: 40, bolt: 120, tire: 10 }, unlocks: ['assembler'] },
   { name: 'Garage', description: 'Garages : assembler, garer et conduire tes voitures dans l’usine.', cost: { plate: 80, iron_rod: 60, bolt: 160, tire: 8 }, unlocks: ['garage'] },
+  { name: 'Commerce', description: 'Concession : vends des voitures montées avec tes pièces en trop, contre des crédits.', cost: { chassis: 2, engine: 2, wheel: 8, panel: 4 }, unlocks: ['dealer'] },
 ];
 
 /** Tier (1-based) that unlocks a building; 0 = always available (hub). */

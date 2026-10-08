@@ -3,6 +3,8 @@ import type { Inventory, ItemId } from '../../data/items';
 import type { ResourceId } from '../../data/factoryMap';
 import type { Rot } from './dirs';
 import type { TerrainId } from '../../data/factoryTerrain';
+import type { BlueprintId } from '../../data/blueprints';
+import type { CarConfig } from '../../data/sales';
 
 export interface BeltItem {
   item: ItemId;
@@ -79,7 +81,22 @@ export interface GarageB extends Base {
   type: 'garage';
 }
 
-export type Building = ConveyorB | NodeB | DrillB | MachineB | GarageB | HubB;
+/**
+ * Dealer (« Concession »): takes every car part through its back inputs, with no cap (a mixed belt never waits
+ * behind a part it has too many of), assembles the most profitable car its stock allows and sells it after
+ * DEALER.SELL_TICKS (data/sales.ts).
+ */
+export interface DealerB extends Base {
+  type: 'dealer';
+  /** Waiting car parts (no cap). */
+  stock: Inventory;
+  /** Car being assembled (its parts already taken from the stock), or null. */
+  car: CarConfig | null;
+  /** Ticks spent on `car`. */
+  progress: number;
+}
+
+export type Building = ConveyorB | NodeB | DrillB | MachineB | GarageB | DealerB | HubB;
 
 export interface Link {
   target: number;
@@ -141,6 +158,10 @@ export interface FactorySave {
   storage: Inventory;
   delivered: Inventory;
   crafted: Inventory;
+  /** Credits earned selling cars (absent before the dealer: 0). */
+  credits?: number;
+  /** Cars sold per blueprint (dealers and garages). */
+  sales?: Partial<Record<BlueprintId, number>>;
   buildings: Building[];
 }
 

@@ -8,7 +8,7 @@ import { FactoryView, SUN_OFFSET } from './view/FactoryView';
 import { SKY } from './view/terrain/SkyDome';
 import { GRASS_PUSHERS } from './view/terrain/GrassField';
 import { FactoryWorld } from './FactoryWorld';
-import { BUILD_ORDER, FactoryHud } from './FactoryHud';
+import { FactoryHud } from './FactoryHud';
 import { BuildController, describeError, describeFill, describeLinks, type Tool } from './build/BuildController';
 import { CharacterController } from '../player/CharacterController';
 import { PlayerAvatar } from '../player/PlayerAvatar';
@@ -16,7 +16,7 @@ import { OrbitCamera } from '../player/OrbitCamera';
 import { FACTORY_CELL, GRAVITY_FACTORY, PLAYER_RADIUS } from '../config/constants';
 import { RAPIER } from '../core/physics/PhysicsWorld';
 import { FACTORY_MAP } from '../data/factoryMap';
-import { BUILDINGS, BUILD_MENU, isBelt, type BuildingType } from '../data/buildings';
+import { BUILDINGS, BUILD_MENU, BUILD_ORDER, isBelt, type BuildingType } from '../data/buildings';
 import { ITEMS, ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { RECIPES_BY_ID, recipesFor } from '../data/recipes';
 import { TIERS, tierOf } from '../data/tiers';
@@ -953,6 +953,7 @@ export class FactoryMode implements Mode {
       blueprints: this.state.cars.map((c) => c.blueprint),
       racesWithOwnCar: Object.values(this.state.records).filter((r) => r.carId).length,
       tier: this.state.tier,
+      carsSold: this.sim.carsSold,
     };
     const items = OBJECTIVES.map((o) => {
       const done = !!this.state.objectives[o.id] || o.done(ctx);

@@ -4,7 +4,10 @@ import { FactorySim } from '../factory/sim/FactorySim';
 import { ITEMS, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { BUILDINGS } from '../data/buildings';
 import { RECIPES_BY_ID, recipesFor } from '../data/recipes';
-import { isMachine, type MachineB, type DrillB } from '../factory/sim/types';
+import { isMachine, type MachineB, type DrillB, type DealerB } from '../factory/sim/types';
+import { carCost } from '../data/sales';
+import { CAR_PARTS } from '../data/blueprints';
+import { DEALER } from '../data/balance';
 
 describe('Inventory (backpack)', () => {
   it('stacks up to the per-item stack size and reports leftovers', () => {
@@ -150,6 +153,58 @@ describe('collecting from machines into the backpack', () => {
     sim.setRecipe(f.building.id, 'iron_ingot', inv);
     expect(sim.loadFrom(f.building.id, inv)).toBe(3);
     expect(inv.count('iron_ore')).toBe(0);
+  });
+
+  it('part conservation with a dealer: load, sell, take back and dismantle; credits are the prices sold', () => {
+    const sim = new FactorySim({ width: 16, height: 16, storage: { plate: 100, iron_rod: 100, bolt: 200, chassis: 4, engine: 3, wheel: 9, wheel_racing: 6, panel: 7, spoiler: 2 }, hub: null });
+    const inv = new Inventory(4);
+    inv.add('wheel', 3);
+    inv.add('panel', 2);
+    const w = new Wallet(inv, sim.hub);
+    const sold: ItemCounts = {};
+    let prices = 0;
+    sim.events.on('sold', (e) => {
+      prices += e.price;
+      for (const [k, v] of Object.entries(carCost(e.blueprint, e.parts)) as [ItemId, number][]) sold[k] = (sold[k] ?? 0) + v;
+    });
+    const total = () => {
+      const all: ItemCounts = {};
+      const put = (item: ItemId, n: number) => (all[item] = (all[item] ?? 0) + n);
+      for (const [k, v] of Object.entries(sim.storage) as [ItemId, number][]) put(k, v);
+      for (const [k, v] of Object.entries(inv.totals()) as [ItemId, number][]) put(k, v);
+      for (const [k, v] of Object.entries(sold) as [ItemId, number][]) put(k, v);
+      for (const b of sim.buildings.values()) {
+        if (b.type !== 'dealer') continue;
+        for (const [k, v] of Object.entries(BUILDINGS.dealer.cost) as [ItemId, number][]) put(k, v);
+        for (const [k, v] of Object.entries(b.stock) as [ItemId, number][]) put(k, v);
+        if (b.car) for (const [k, v] of Object.entries(carCost(b.car.blueprint, b.car.parts)) as [ItemId, number][]) put(k, v);
+      }
+      return Object.fromEntries(Object.entries(all).filter(([, v]) => v));
+    };
+    const start = total();
+    const check = () => {
+      expect(total()).toEqual(start);
+      expect(sim.credits).toBe(prices);
+    };
+    const r = sim.place('dealer', 2, 2, 0, { wallet: w });
+    if (!r.ok) throw new Error(r.check.error);
+    const id = r.building.id;
+    check();
+    expect(sim.loadDealer(id, w).count).toBeGreaterThan(0);
+    check();
+    sim.run(DEALER.SELL_TICKS + 30); // one car sold, the next one under way
+    check();
+    expect(sim.carsSold).toBe(1);
+    sim.unloadDealer(id, inv);
+    check();
+    sim.loadDealer(id, w);
+    sim.run(DEALER.SELL_TICKS / 2);
+    expect((sim.buildings.get(id) as DealerB).car).not.toBeNull();
+    check();
+    sim.remove(id, inv);
+    check();
+    for (const p of CAR_PARTS) expect(sold[p] ?? 0, p).toBeGreaterThanOrEqual(0);
+    expect(prices).toBeGreaterThan(0);
   });
 
   it('item conservation: place, load, collect and dismantle never create or lose items', () => {

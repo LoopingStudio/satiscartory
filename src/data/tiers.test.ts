@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TIERS, isUnlocked, tierOf } from './tiers';
-import { BUILDINGS, BUILD_MENU, type BuildingType } from './buildings';
+import { BUILDINGS, BUILD_CATEGORIES, BUILD_MENU, BUILD_ORDER, type BuildingType } from './buildings';
+import { CAR_PARTS } from './blueprints';
 import { RECIPES, type Station } from './recipes';
 import { FACTORY_MAP, RESOURCES } from './factoryMap';
 import { ITEMS, ITEM_IDS, type Inventory, type ItemId } from './items';
@@ -56,10 +57,25 @@ describe('hub tiers', () => {
     const unlocked = TIERS.flatMap((t) => t.unlocks);
     expect(new Set(unlocked).size).toBe(unlocked.length);
     for (const type of unlocked) expect(BUILD_MENU, type).toContain(type);
-    // hotkeys 1-6 follow the unlock order; splitter and merger (tier 1) were appended as 7 and 8
+    // hotkeys 1-6 follow the unlock order; splitter and merger (tier 1) were appended as 7 and 8, the dealer as 9
     const order = BUILD_MENU.slice(0, 6).map(tierOf);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(BUILD_MENU.slice(6)).toEqual(['splitter', 'merger']);
+    expect(BUILD_MENU.slice(6)).toEqual(['splitter', 'merger', 'dealer']);
+  });
+
+  it('the build menu shows every building once, the dealer next to the garage', () => {
+    expect([...BUILD_ORDER].sort()).toEqual([...BUILD_MENU].sort());
+    expect(new Set(BUILD_ORDER).size).toBe(BUILD_ORDER.length);
+    expect(BUILD_CATEGORIES.find((c) => c.name === 'Véhicules')?.types).toEqual(['garage', 'dealer']);
+  });
+
+  it('Commerce (tier 6) is paid in car parts and unlocks the dealer', () => {
+    const t = TIERS[5]!;
+    expect(TIERS.length).toBe(6);
+    expect(t.name).toBe('Commerce');
+    expect(t.unlocks).toEqual(['dealer']);
+    for (const item of Object.keys(t.cost) as ItemId[]) expect(CAR_PARTS, item).toContain(item);
+    expect(tierOf('dealer')).toBe(6);
   });
 
   it('tiers have names, at least one unlock and a valid cost', () => {

@@ -5,9 +5,12 @@ import { FactorySim } from '../src/factory/sim/FactorySim';
 import { FactoryWorld } from '../src/factory/FactoryWorld';
 import { Terrain } from '../src/factory/sim/terrain';
 import { CharacterController } from '../src/player/CharacterController';
-import { GRAVITY_FACTORY, PHYS_DT } from '../src/config/constants';
+import { FACTORY_CELL, GRAVITY_FACTORY, PHYS_DT } from '../src/config/constants';
 import { mulberry32 } from '../src/core/rng';
 import { buildTerrainGeometry, drawnHeight } from '../src/factory/view/terrain/TerrainMesh';
+import { DEALER_SHOP } from '../src/factory/view/dealerLayout';
+import { rotateLocal } from '../src/factory/view/beltPath';
+import { rotatedSize, type Rot } from '../src/factory/sim/dirs';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -188,6 +191,33 @@ describe('buildings on the relief (physics)', () => {
     const py = r.ok ? r.building.py! / 100 : 0;
     // Top of the press: pad + 2.1 m.
     expect(topY(fw, 30, 13, (c) => !fw.isGround(c))).toBeCloseTo(py + 2.1, 2);
+    fw.dispose();
+  });
+
+  it('dealer: a 3 m store block at the back, a 2.62 m glass showroom in front, on its pad, at every rotation', () => {
+    const sim = rampSim(10);
+    const fw = new FactoryWorld(sim);
+    const spots: [number, number, Rot][] = [[1, 1, 0], [1, 5, 1], [1, 10, 2], [1, 14, 3], [13, 6, 0]];
+    const placed = spots.map(([x, z, rot]) => {
+      const r = sim.place('dealer', x, z, rot, { free: true });
+      if (!r.ok) throw new Error(`dealer at ${x},${z}: ${r.check.error}`);
+      return r.building;
+    });
+    fw.flush();
+    fw.physics.step(0);
+    const solid = (c: RAPIER.Collider) => !fw.isGround(c);
+    const p = { x: 0, z: 0 };
+    for (const b of placed) {
+      const [rw, rh] = rotatedSize(3, 2, b.rot);
+      const cx = (b.x + rw / 2) * FACTORY_CELL;
+      const cz = (b.z + rh / 2) * FACTORY_CELL;
+      const py = (b.py ?? 0) / 100;
+      for (const [lz, top] of [[-1.4, DEALER_SHOP.height], [0.55, DEALER_SHOP.glassTop]] as const) {
+        rotateLocal(0, lz, b.rot, p);
+        expect(topY(fw, cx + p.x, cz + p.z, solid), `${b.x},${b.z} r${b.rot} z${lz}`).toBeCloseTo(py + top, 2);
+      }
+    }
+    expect(placed[4]!.py).toBeGreaterThan(0);
     fw.dispose();
   });
 });

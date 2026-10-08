@@ -22,6 +22,49 @@ describe('GameState migrations', () => {
   });
 });
 
+describe('GameState credits', () => {
+  const reload = (s: GameState) => GameState.fromSave(JSON.parse(JSON.stringify(s.serialize())));
+  const KART = { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } as const;
+
+  it('credits and sales live in the sim: saved, reloaded, carried by replaceWith', () => {
+    const s = new GameState();
+    expect([s.sim.credits, s.sim.sales]).toEqual([0, {}]);
+    s.sim.sell('kart', KART);
+    const r = reload(s);
+    expect([r.sim.credits, r.sim.sales]).toEqual([4480, { kart: 1 }]);
+    const a = new GameState();
+    a.replaceWith(r);
+    expect([a.sim.credits, a.sim.carsSold]).toEqual([4480, 1]);
+  });
+
+  it('a save from before the dealer starts with no credits', () => {
+    const data = new GameState().serialize();
+    delete data.factory.credits;
+    delete data.factory.sales;
+    const s = GameState.fromSave(data);
+    expect([s.sim.credits, s.sim.sales, s.sim.carsSold]).toEqual([0, {}, 0]);
+  });
+
+  it('a save that had every tier of its version gets Commerce (tier 6) for free, the others pay for it', () => {
+    const load = (tier: number, tierMax?: number) => {
+      const data = new GameState().serialize();
+      data.tier = tier;
+      if (tierMax === undefined) delete data.tierMax;
+      else data.tierMax = tierMax;
+      return GameState.fromSave(data);
+    };
+    expect(TIERS.length).toBe(6);
+    expect(load(5, 5).tier).toBe(6);
+    expect(load(5, 5).isUnlocked('dealer')).toBe(true);
+    expect(load(4, 5).tier).toBe(4);
+    expect(load(5, 6).tier).toBe(5);
+    expect(load(5, 6).isUnlocked('dealer')).toBe(false);
+    // Before tierMax was saved, a full save had 4 tiers.
+    expect(load(4).tier).toBe(6);
+    expect(new GameState().serialize().tierMax).toBe(6);
+  });
+});
+
 describe('GameState tiers', () => {
   const reload = (s: GameState) => GameState.fromSave(JSON.parse(JSON.stringify(s.serialize())));
 

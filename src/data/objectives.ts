@@ -15,6 +15,8 @@ export interface ObjectiveContext {
   racesWithOwnCar: number;
   /** Hub tiers unlocked. */
   tier: number;
+  /** Cars sold (dealers and garages). */
+  carsSold: number;
 }
 
 export interface Objective {
@@ -120,6 +122,24 @@ export const OBJECTIVES: Objective[] = [
     text: 'Termine une course avec ta voiture',
     hint: 'Menu Courses, choisis un circuit et vise une médaille !',
     done: (c) => c.racesWithOwnCar > 0,
+  },
+  {
+    id: 'tier6',
+    text: 'Débloque le palier 6 (Commerce)',
+    hint: '{interact} sur le hangar → Paliers. Il se paie en pièces de voiture : 2 châssis, 2 moteurs, 8 roues, 4 panneaux.',
+    done: (c) => c.tier >= 6,
+  },
+  {
+    id: 'dealer',
+    text: 'Construis une concession',
+    hint: '{buildMenu} → Concession {hotkey9}. Amène-lui des pièces de voiture par convoyeur, par l’arrière : elle monte la voiture la plus chère possible et la vend.',
+    done: (c) => c.buildings.some((b) => b.type === 'dealer'),
+  },
+  {
+    id: 'sell',
+    text: 'Vends une première voiture',
+    hint: '{interact} sur la concession → « Charger » y met les voitures complètes de ton surplus. Au garage, « Vendre » vend la voiture garée.',
+    done: (c) => c.carsSold > 0,
   },
   {
     id: 'sport',

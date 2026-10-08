@@ -1,4 +1,4 @@
-import { BUILDINGS, BUILD_MENU, type BuildingType } from '../data/buildings';
+import { BUILDINGS, BUILD_CATEGORIES, BUILD_MENU, type BuildingType } from '../data/buildings';
 import { ITEMS, ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { recipesFor, RECIPES_BY_ID, type Recipe } from '../data/recipes';
 import { DRILL, MACHINE } from '../data/balance';
@@ -14,16 +14,6 @@ import type { ItemIcons } from '../core/assets/IconRenderer';
 import { INVENTORY } from '../data/inventory';
 import { TIERS, tierOf } from '../data/tiers';
 import { FACTORY_CELL } from '../config/constants';
-
-/** Build menu sections (the 1-8 shortcuts follow BUILD_MENU). */
-const BUILD_CATEGORIES: { name: string; types: BuildingType[] }[] = [
-  { name: 'Logistique', types: ['conveyor', 'splitter', 'merger'] },
-  { name: 'Extraction', types: ['drill'] },
-  { name: 'Production', types: ['smelter', 'press', 'assembler'] },
-  { name: 'Véhicules', types: ['garage'] },
-];
-/** The build menu's order, which the pad's ◀ ▶ follow. */
-export const BUILD_ORDER: BuildingType[] = BUILD_CATEGORIES.flatMap((c) => c.types);
 
 /** What a building is for, in the build menu's detail pane (HTML; machines also list their recipes). */
 const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
