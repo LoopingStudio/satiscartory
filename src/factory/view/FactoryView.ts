@@ -133,6 +133,10 @@ export class FactoryView {
         this.textures?.occupancyChanged(cellsOf(b));
         this.decor?.refreshCells(cellsOf(b));
       }),
+      // A dealer's sale plays on its showroom (a garage's sale has nothing to show here).
+      sim.events.on('sold', (e) => {
+        if (e.dealer !== null) this.visuals.get(e.dealer)?.onSold(e.price);
+      }),
       sim.events.on('topology', () => {
         this.conveyorsDirty = true;
         this.markersDirty = true;

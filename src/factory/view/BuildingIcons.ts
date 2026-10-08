@@ -31,7 +31,8 @@ export function buildingIcons(assets: AssetLoader, types: readonly BuildingType[
   scene.add(sun);
   const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 200);
   for (const type of missing) {
-    const model = buildModel(assets, type);
+    // Showcase: the dealer with a car on show.
+    const model = buildModel(assets, type, { showcase: true });
     const box = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
     const radius = box.getSize(new THREE.Vector3()).length() / 2 || 1;

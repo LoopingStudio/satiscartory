@@ -4,18 +4,21 @@ import type { AssetLoader } from '../../core/assets/AssetLoader';
 import { BUILDINGS, isBelt, type BuildingType } from '../../data/buildings';
 import { DX, DZ } from '../sim/dirs';
 import { BELT_TOP_Y, PORT_COLORS, smallArrowGeometry } from './portMarkers';
-import { ITEMS } from '../../data/items';
+import { ITEMS, type Inventory } from '../../data/items';
 import { RECIPES_BY_ID } from '../../data/recipes';
+import { formatCredits, type CarConfig } from '../../data/sales';
 import { FACTORY_CELL } from '../../config/constants';
 import { rotatedSize, type Rot } from '../sim/dirs';
 import type { FactorySim } from '../sim/FactorySim';
 import type { DeckPlane } from '../sim/terrain';
 import { deckShear } from './terrain/deck';
-import { isMachine, type Building } from '../sim/types';
+import { isMachine, type Building, type DealerB } from '../sim/types';
 import type { ModelKey } from '../../core/assets/manifest.gen';
+import { CarModel } from '../../car/CarModel';
+import { buildLook, type BuildLook } from '../../garage/build';
 import { HUB_BENCH } from './hubBench';
 import { GARAGE, GARAGE_BAY, GARAGE_CLUTTER, GARAGE_DOOR, GARAGE_INNER, GARAGE_LINTEL, GARAGE_WALLS } from './garageLayout';
-import { DEALER_HATCHES, DEALER_SHOP, DEALER_SIGN, DEALER_STORE_FRONT, DEALER_TOP } from './dealerLayout';
+import { DEALER_BAR, DEALER_DISPLAY, DEALER_HATCHES, DEALER_SHOP, DEALER_SIGN, DEALER_STORE_FRONT, DEALER_TOP, dealerBuild } from './dealerLayout';
 
 const STATUS_COLORS = { working: 0x3ddc84, idle: 0xffb347, blocked: 0xff5d5d, noRecipe: 0x8a8fb5 } as const;
 const statusMaterials = new Map<string, THREE.MeshStandardMaterial>();
@@ -125,6 +128,18 @@ const dealerMats = {
 type DealerMat = keyof typeof dealerMats;
 /** Showroom glass: drawn after the car on show (renderOrder), never in the depth buffer. */
 const glassMaterial = new THREE.MeshStandardMaterial({ color: 0xcfe8ff, transparent: true, opacity: 0.16, roughness: 0.05, metalness: 0.2, depthWrite: false });
+/** The sign's printed faces stand this far out of the middle of its board. */
+const DEALER_SIGN_FACE = 0.042;
+/** The car the build menu's dealer shows: the most expensive one (Sportive, racing wheels, spoiler). */
+const SHOWCASE_CAR: CarConfig = { blueprint: 'sport', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel_racing', panels: 'panel', spoiler: 'spoiler' } };
+/** Progress bar under the sign: a unit strip from its left end, stretched to the progress (unlit, shared, never disposed). */
+const barGeometry = new THREE.PlaneGeometry(1, DEALER_BAR.h).translate(0.5, 0, 0);
+const barMaterial = new THREE.MeshBasicMaterial({ color: STATUS_COLORS.working, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+/**
+ * A sale: the car on show sinks through the podium (depth in m, time in s, ease-in), its price rises over the sign
+ * (start height, rise, time, fade-out at the end, label height).
+ */
+const SALE_FX = { sinkDepth: 2, sinkTime: 0.9, labelY: DEALER_TOP + 0.4, labelRise: 0.9, labelTime: 1.6, labelFade: 0.6, labelHeight: 0.7 } as const;
 
 let dealerGeometries: { solid: Record<DealerMat, THREE.BufferGeometry>; glass: THREE.BufferGeometry; sign: THREE.BufferGeometry } | null = null;
 /** Static boxes of the dealer merged per material, its glass and its two-sided sign (built once, shared by every dealer and ghost). */
@@ -176,8 +191,8 @@ function dealerGeometry(): NonNullable<typeof dealerGeometries> {
   box(glass, -W + rail, W - rail, glassTop - 0.05, glassTop - 0.03, sf, D - rail);
   const merge = (list: THREE.BufferGeometry[]) => mergeGeometries(list, false) ?? new THREE.BufferGeometry();
   const sh = sg.top - sg.bottom;
-  const front = new THREE.PlaneGeometry(2 * sg.halfW, sh).translate(0, (sg.bottom + sg.top) / 2, sg.z + 0.042);
-  const back = new THREE.PlaneGeometry(2 * sg.halfW, sh).rotateY(Math.PI).translate(0, (sg.bottom + sg.top) / 2, sg.z - 0.042);
+  const front = new THREE.PlaneGeometry(2 * sg.halfW, sh).translate(0, (sg.bottom + sg.top) / 2, sg.z + DEALER_SIGN_FACE);
+  const back = new THREE.PlaneGeometry(2 * sg.halfW, sh).rotateY(Math.PI).translate(0, (sg.bottom + sg.top) / 2, sg.z - DEALER_SIGN_FACE);
   dealerGeometries = {
     solid: Object.fromEntries(Object.entries(parts).map(([k, list]) => [k, merge(list)])) as Record<DealerMat, THREE.BufferGeometry>,
     glass: merge(glass),
@@ -186,7 +201,7 @@ function dealerGeometry(): NonNullable<typeof dealerGeometries> {
   return dealerGeometries;
 }
 
-/** Canvas texture (shared, never disposed); null outside a browser. */
+/** Canvas texture, owned by the caller (the signs and screens share theirs, never disposed); null outside a browser. */
 function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.Texture | null {
   if (typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
@@ -200,6 +215,9 @@ function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2
   tex.anisotropy = 4;
   return tex;
 }
+
+/** Font of the words drawn on canvases (signs, sale labels). */
+const SIGN_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
 /** A word (« GARAGE », « CONCESSION ») on a dark panel between hazard stripes, w × h px (shared per word, never disposed). */
 const signMaterials = new Map<string, THREE.Material>();
@@ -231,7 +249,7 @@ function signMaterial(text: string, w: number, h: number): THREE.Material {
         c.restore();
       }
       c.fillStyle = '#f0b36a';
-      c.font = `bold ${Math.round(0.66 * h)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+      c.font = `bold ${Math.round(0.66 * h)}px ${SIGN_FONT}`;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
       c.fillText(text, w / 2, 0.54 * h);
@@ -293,6 +311,53 @@ function screenMaterial(): THREE.Material {
   return garageScreenMaterial;
 }
 
+/**
+ * Floating price of a sale (« +7 950 cr »): green with a dark outline, 512 × 128 px. Its texture and material are
+ * its own: free them with it (disposeLabel). Null outside a browser.
+ */
+function saleLabel(text: string): THREE.Sprite | null {
+  const [w, h] = [512, 128];
+  const map = canvasTexture(w, h, (c) => {
+    // Shrunk to fit a long price.
+    let size = 84;
+    c.font = `bold ${size}px ${SIGN_FONT}`;
+    const width = c.measureText(text).width;
+    if (width > w - 40) {
+      size = Math.floor((size * (w - 40)) / width);
+      c.font = `bold ${size}px ${SIGN_FONT}`;
+    }
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.lineJoin = 'round';
+    c.lineWidth = Math.max(4, Math.round(0.18 * size));
+    c.strokeStyle = '#1b2340';
+    c.strokeText(text, w / 2, 0.54 * h);
+    c.fillStyle = '#3ddc84';
+    c.fillText(text, w / 2, 0.54 * h);
+  });
+  if (!map) return null;
+  // Not tone mapped: reads as UI, the same green as the HUD's.
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false, toneMapped: false }));
+  sprite.scale.set((SALE_FX.labelHeight * w) / h, SALE_FX.labelHeight, 1);
+  sprite.renderOrder = 3;
+  return sprite;
+}
+
+/** Detaches a sale label and frees its texture and material (the sprite geometry is three's, shared). */
+function disposeLabel(label: THREE.Sprite): void {
+  label.removeFromParent();
+  label.material.map?.dispose();
+  label.material.dispose();
+}
+
+/** Puts a car model on the dealer's podium (dealer frame): side-on behind the long glass front, driver hidden. */
+function onPodium(model: CarModel): CarModel {
+  model.root.position.set(DEALER_DISPLAY.x, DEALER_DISPLAY.y, DEALER_DISPLAY.z);
+  model.root.rotation.y = DEALER_DISPLAY.yaw;
+  model.setDriver(false);
+  return model;
+}
+
 /** Arrows painted on splitter / merger tops (shared, never disposed). */
 const topArrowMaterial = new THREE.MeshBasicMaterial({ color: PORT_COLORS.out, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 
@@ -309,8 +374,12 @@ export function footprintCenter(type: BuildingType, x: number, z: number, rot: R
   return out.set((x + rw / 2) * FACTORY_CELL, 0, (z + rh / 2) * FACTORY_CELL);
 }
 
-/** Builds the static model group of a building type (also used for build ghosts). */
-export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group {
+/**
+ * Builds the static model group of a building type (also used for build ghosts). `showcase`: the build menu's
+ * picture, a dealer with a car on show (never on a ghost: it is rebuilt on every turn, nor on a live dealer, which
+ * shows the car it is assembling).
+ */
+export function buildModel(assets: AssetLoader, type: BuildingType, opts: { showcase?: boolean } = {}): THREE.Group {
   const g = new THREE.Group();
   // Kenney machines are tunnels open on their long sides (native ±X). Machines are 2 cells
   // wide along X with items crossing along Z, so their parts are added in a quarter-turned frame
@@ -468,6 +537,8 @@ export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group
       screen.scale.set(1.24, 0.7, 1);
       screen.position.set(0, 2.05, DEALER_STORE_FRONT + 0.01);
       g.add(screen);
+      // A complete car owns nothing (no ghost material): the picture may drop it with the rest.
+      if (opts.showcase) g.add(onPodium(new CarModel(assets, SHOWCASE_CAR)).root);
       break;
     }
     default: {
@@ -477,6 +548,126 @@ export function buildModel(assets: AssetLoader, type: BuildingType): THREE.Group
     }
   }
   return g;
+}
+
+/** Parts wait in a dealer's stock. */
+function hasStock(stock: Inventory): boolean {
+  for (const item in stock) if ((stock[item as keyof Inventory] ?? 0) > 0) return true;
+  return false;
+}
+
+/**
+ * Live showroom of a dealer (BuildingVisual): the car being assembled on the podium, put together part by part as
+ * its sale progresses (like a garage build), the progress bar under the sign, and each sale: the car sinks through
+ * the podium while its price rises over the sign. Exported for the tests (it builds no static model).
+ */
+export class DealerShow {
+  /** The car on show and the sim's config it was built for (a new car is a new object). */
+  private car: CarModel | null = null;
+  private config: CarConfig | null = null;
+  /** Progress and look last applied to the car (recomputed once per sim tick, re-applied only when the look changes). */
+  private f = -1;
+  private look: BuildLook | null = null;
+  private readonly bar = new THREE.Mesh(barGeometry, barMaterial);
+  /** The car just sold, sinking, and its price rising; their age (s). */
+  private sinking: CarModel | null = null;
+  private sinkAge = 0;
+  private label: THREE.Sprite | null = null;
+  private labelAge = 0;
+
+  constructor(
+    private readonly assets: AssetLoader,
+    private readonly root: THREE.Object3D,
+    private readonly id: number,
+  ) {
+    // Along the bottom of the sign's front face, between its hazard stripes.
+    this.bar.position.set(-DEALER_BAR.halfW, DEALER_BAR.y, DEALER_SIGN.z + DEALER_SIGN_FACE + 0.004);
+    this.bar.visible = false;
+    this.bar.userData.buildingId = id;
+    root.add(this.bar);
+  }
+
+  update(sim: FactorySim, d: DealerB, dt: number): void {
+    if (d.car !== this.config) this.show(d.car);
+    const f = d.car ? sim.progressOf(d) : 0;
+    if (d.car && f !== this.f) {
+      this.f = f;
+      this.setLook(buildLook(dealerBuild(d.car, f)));
+    }
+    this.bar.visible = !!d.car;
+    this.bar.scale.x = Math.max(1e-4, 2 * DEALER_BAR.halfW * f);
+    if (this.sinking) {
+      this.sinkAge += dt;
+      const u = Math.min(1, this.sinkAge / SALE_FX.sinkTime);
+      this.sinking.root.position.y = DEALER_DISPLAY.y - SALE_FX.sinkDepth * u * u;
+      if (u >= 1) this.dropSinking();
+    }
+    if (this.label) {
+      this.labelAge += dt;
+      const u = Math.min(1, this.labelAge / SALE_FX.labelTime);
+      this.label.position.y = SALE_FX.labelY + SALE_FX.labelRise * (1 - (1 - u) * (1 - u));
+      this.label.material.opacity = Math.max(0, Math.min(1, (SALE_FX.labelTime - this.labelAge) / SALE_FX.labelFade));
+      if (u >= 1) this.dropLabel();
+    }
+  }
+
+  /** The car on show was sold: it sinks, complete (the next car gets a model of its own), and its price rises. */
+  onSold(price: number): void {
+    if (this.car && this.config) {
+      this.setLook(buildLook(dealerBuild(this.config, 1)));
+      this.dropSinking();
+      this.sinking = this.car;
+      this.sinkAge = 0;
+      this.car = null;
+      this.config = null;
+    }
+    this.dropLabel();
+    this.label = saleLabel(`+${formatCredits(price)}`);
+    if (this.label) {
+      this.label.position.set(0, SALE_FX.labelY, DEALER_SIGN.z);
+      this.labelAge = 0;
+      this.root.add(this.label);
+    }
+  }
+
+  /** A new car (or none) on the podium; its look is applied by the caller. */
+  private show(config: CarConfig | null): void {
+    this.car?.dispose();
+    this.car = config ? onPodium(new CarModel(this.assets, config)) : null;
+    if (this.car) this.root.add(this.car.root);
+    this.config = config;
+    this.f = -1;
+    this.look = null;
+  }
+
+  /** Re-applies the build look only when it changed (setBuildLook re-instantiates the engine and the jack stands). */
+  private setLook(look: BuildLook): void {
+    if (!this.car) return;
+    const l = this.look;
+    if (l && l.body === look.body && l.wheels === look.wheels && l.engine === look.engine && l.spoiler === look.spoiler && l.wheelItem === look.wheelItem) return;
+    this.look = look;
+    this.car.setBuildLook(look);
+    // The new engine and stands too: picked as the dealer, like the rest of the model.
+    this.car.root.traverse((o) => (o.userData.buildingId = this.id));
+  }
+
+  private dropSinking(): void {
+    this.sinking?.dispose();
+    this.sinking = null;
+  }
+
+  private dropLabel(): void {
+    if (this.label) disposeLabel(this.label);
+    this.label = null;
+  }
+
+  dispose(): void {
+    this.car?.dispose();
+    this.car = null;
+    this.config = null;
+    this.dropSinking();
+    this.dropLabel();
+  }
 }
 
 /** Live visual of one building: model + status lamp + recipe icon + simple animations. */
@@ -496,6 +687,8 @@ export class BuildingVisual {
   private benchHandle: THREE.Object3D | null = null;
   private benchPiece: THREE.Object3D | null = null;
   private benchPieceY = 0;
+  /** Dealer only: the car on show, the progress bar, the sales. */
+  private dealer: DealerShow | null = null;
   private lastT: number | null = null;
   private phase = Math.random() * 10;
 
@@ -529,6 +722,7 @@ export class BuildingVisual {
       this.benchPiece = model.getObjectByName('bench-piece') ?? null;
       this.benchPieceY = this.benchPiece?.position.y ?? 0;
     }
+    if (type === 'dealer') this.dealer = new DealerShow(assets, this.root, building.id);
     if (!isBelt(type) && type !== 'hub' && type !== 'garage') {
       this.lamp = new THREE.Mesh(lampGeometry, statusMaterial('noRecipe'));
       if (type === 'drill') this.lamp.position.set(-1, 3.95, 0);
@@ -555,6 +749,10 @@ export class BuildingVisual {
     } else if (b.type === 'drill') {
       working = !!b.resource && b.outBuf.length < 5;
       if (this.lamp) this.lamp.material = statusMaterial(!b.resource ? 'noRecipe' : working ? 'working' : 'blocked');
+    } else if (b.type === 'dealer') {
+      // Green while a car is assembled, orange while parts wait for the rest of a car, grey when empty.
+      if (this.lamp) this.lamp.material = statusMaterial(b.car ? 'working' : hasStock(b.stock) ? 'idle' : 'noRecipe');
+      this.dealer?.update(sim, b, dt);
     }
     const k = t + this.phase;
     if (this.pistonTop) this.pistonTop.position.y = working ? Math.abs(Math.sin(k * (b.type === 'drill' ? 6 : 4))) * -0.35 : 0;
@@ -573,7 +771,14 @@ export class BuildingVisual {
       this.icon.rotation.y = t * 1.5;
       this.icon.position.y = ICON_Y + Math.sin(t * 2) * 0.1;
     }
-    void sim;
+  }
+
+  /** Dealer only: it just sold the car on show (FactoryView, on the sim's 'sold'). */
+  onSold(price: number): void {
+    // Not before the visual's first frame: the sim kept ticking while the view was away (a race rebuilds it), so the
+    // car sold was never on show here.
+    if (this.lastT === null) return;
+    this.dealer?.onSold(price);
   }
 
   private setIcon(recipeId: string | null): void {
@@ -632,6 +837,8 @@ export class BuildingVisual {
     this.root.removeFromParent();
     this.glow?.dispose();
     this.glow = null;
+    this.dealer?.dispose();
+    this.dealer = null;
   }
 }
 
