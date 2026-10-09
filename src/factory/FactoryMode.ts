@@ -279,7 +279,7 @@ export class FactoryMode implements Mode {
       nearHub: () => this.nearHub(),
       tier: () => this.state.tier,
       isUnlocked: (type) => this.state.isUnlocked(type),
-      repaired: () => !!this.state.objectives.repair,
+      creditsSpent: () => !!this.state.objectives.creditsSpent,
       unlockTier: (n) => {
         if (this.state.tier !== n - 1) return;
         const next = TIERS[this.state.tier];

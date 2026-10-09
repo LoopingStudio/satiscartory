@@ -4,7 +4,7 @@ import { FactorySim } from '../factory/sim/FactorySim';
 import { BLUEPRINTS, CAR_PARTS, blueprintById, type BlueprintId } from '../data/blueprints';
 import { ITEM_IDS, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { WEAR } from '../data/balance';
-import { carCost } from '../data/sales';
+import { carCost, creditsShown } from '../data/sales';
 import { repairCredits, repairItems, sanitizeWornSet, wornCarPrice, wornSetPrice, type WornSet } from '../data/wear';
 import { defaultChoices, type CarInstance } from './assembly';
 import { type GarageSpot } from './parking';
@@ -67,6 +67,7 @@ describe('wear actions: repairing a car', () => {
     expect(s.sim.count('tire')).toBe(8);
     expect(car.wear).toEqual({ engine: 40 });
     expect(s.objectives.repair).toBe(true);
+    expect(s.objectives.creditsSpent).toBeUndefined();
     // The last worn slot repaired: no `wear` key at all.
     expect(repairCarSlot(s, car.id, 'engine', 'items')).not.toBeNull();
     expect('wear' in car).toBe(false);
@@ -83,6 +84,31 @@ describe('wear actions: repairing a car', () => {
     expect(repairCarSlot(s, car.id, 'wheels', 'credits')).toEqual({ paid: { credits: 560 } });
     expect(s.sim.credits).toBe(40);
     expect('wear' in car).toBe(false);
+    expect(s.objectives.creditsSpent).toBe(true);
+  });
+
+  it('the balance shows once credits were earned or spent: not after a repair paid in items, still at 0 after one paid in credits', () => {
+    // Tier 5: the garage is there, the dealer not yet; nothing sold, no credit.
+    const { s, car } = withKart({ wheels: 25, engine: 400 });
+    s.tier = 5;
+    expect([s.isUnlocked('garage'), s.isUnlocked('dealer')]).toEqual([true, false]);
+    const shown = () => creditsShown({ credits: s.sim.credits, carsSold: s.sim.carsSold, creditsSpent: !!s.objectives.creditsSpent, dealerUnlocked: s.isUnlocked('dealer') });
+    expect(shown()).toBe(false);
+    // « Répare une pièce au garage » with a tire: the objective is done, no credit moved.
+    expect(repairCarSlot(s, car.id, 'wheels', 'items')).toEqual({ paid: { items: { tire: 1 } } });
+    expect(s.objectives.repair).toBe(true);
+    expect(s.sim.credits).toBe(0);
+    expect(shown()).toBe(false);
+    // A worn set sold: credits earned, shown; every one of them spent on a repair: still shown, at 0.
+    s.worn.push({ item: 'wheel', n: 4, wear: 600 });
+    expect(sellWornSet(s, s.worn[0]!)).not.toBeNull();
+    expect(shown()).toBe(true);
+    s.sim.credits = slotQuote(car, 'engine')!.credits;
+    expect(repairCarSlot(s, car.id, 'engine', 'credits')).not.toBeNull();
+    expect(s.sim.credits).toBe(0);
+    expect(shown()).toBe(true);
+    // Saved with the objectives (SaveData unchanged).
+    expect(GameState.fromSave(s.serialize()).objectives.creditsSpent).toBe(true);
   });
 
   it('refusals change nothing: a new slot, an unknown car or slot, missing items', () => {

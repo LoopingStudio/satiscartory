@@ -205,6 +205,24 @@ export function sanitizeCar(raw: unknown): CarConfig | null {
   return { blueprint: bp.id, parts: clean };
 }
 
+/** What decides whether the HUD shows the credit balance (creditsShown). */
+export interface CreditsSeen {
+  credits: number;
+  carsSold: number;
+  /** Credits were spent (a repair paid in credits: state.objectives.creditsSpent). */
+  creditsSpent: boolean;
+  dealerUnlocked: boolean;
+}
+
+/**
+ * The balance is shown once there is something to sell with (the dealer unlocked), and for good once some credits
+ * were earned (a car or a worn set sold: carsSold, or a balance above 0) or spent: a balance back to 0 stays shown. A
+ * repair paid in items neither earns nor spends any.
+ */
+export function creditsShown(c: CreditsSeen): boolean {
+  return c.credits > 0 || c.carsSold > 0 || c.creditsSpent || c.dealerUnlocked;
+}
+
 /** « 4 480 cr »: groups of three digits split by a plain space (the UI keeps it on one line). */
 export function formatCredits(n: number): string {
   const digits = String(Math.trunc(Math.abs(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');

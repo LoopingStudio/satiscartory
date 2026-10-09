@@ -71,6 +71,10 @@ export class GameState {
   selectedCarId: string | null = null;
   records: Record<string, TrackRecord> = {};
   settings: Settings = { ...DEFAULT_SETTINGS };
+  /**
+   * Onboarding objectives done (data/objectives.ts ids), and what the actions record for them (assembled, race,
+   * repair), plus creditsSpent: a repair was paid in credits (the HUD keeps the balance shown).
+   */
   objectives: Record<string, boolean> = {};
   carCounter = 0;
   /** Dev/test states (stress layout) are never saved. */

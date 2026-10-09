@@ -130,10 +130,17 @@ export function payCheck(state: GameState, q: RepairQuote, pay: Pay): PayCheck {
   return short > 0 ? { ok: false, short } : { ok: true };
 }
 
-/** Pays a quote, all or nothing (never a free repair: an empty quote is refused). What was paid, or null. */
+/**
+ * Pays a quote, all or nothing (never a free repair: an empty quote is refused). What was paid, or null. Credits
+ * spent set state.objectives.creditsSpent: the HUD keeps the balance shown (data/sales.ts creditsShown).
+ */
 function payQuote(state: GameState, q: RepairQuote, pay: Pay): Partial<RepairQuote> | null {
   if (!payCheck(state, q, pay).ok) return null;
-  if (pay === 'credits') return state.sim.spend(q.credits, 'repair') ? { credits: q.credits } : null;
+  if (pay === 'credits') {
+    if (!state.sim.spend(q.credits, 'repair')) return null;
+    state.objectives.creditsSpent = true;
+    return { credits: q.credits };
+  }
   const ids = ITEM_IDS.filter((id) => (q.items[id] ?? 0) > 0);
   if (!ids.length) return null;
   const wallet = state.wallet();

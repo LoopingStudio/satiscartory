@@ -345,6 +345,10 @@ kbd {
 /* Past the race limit (20 %): the garage's alert and the tag of a car row; the track selection's state line. */
 .wear-alert { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--bad); border-radius: 10px; background: rgba(255, 93, 93, 0.1); font-size: 13px; }
 .wear-tag { font-size: 11px; font-weight: 800; color: var(--bad); white-space: nowrap; }
+/* A car row's mini gauge with the tag under it, against the right edge: the name keeps its width. Its place
+   (« Dans ce garage ») goes under the model whole when the line is too narrow. */
+.car-row-wear { flex: none; margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.car-where { white-space: nowrap; }
 .wear-summary { gap: 6px; margin-top: 6px; font-size: 13px; }
 /* Wear while driving: the race pill under « km/h »; the damage flash above the speed (race) or the hint (factory,
    hidden on foot). `translate` animates apart from the centring transform. */

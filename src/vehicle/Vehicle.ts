@@ -46,8 +46,9 @@ export interface VehicleSpawn {
 const UP = new THREE.Vector3(0, 1, 0);
 /**
  * Ground tilted against the car (sine of the angle between the wheels' ground normal and the car's up axis): from
- * TILT_FROM (5°, about the most a body rolls in a hard turn) to TILT_FULL (10°), the shock measure drops more and
- * more of its part along that tilt (see measureImpact).
+ * TILT_FROM (5°) to TILT_FULL (10°), the shock measure drops more and more of its part along that tilt, up to what
+ * the ground can have pushed (see measureImpact). A body leans that much on flat ground too: the kart pitches about
+ * 5° under full throttle or brakes, the full Sportive rolls up to 7° in a hard turn; the bound keeps a hit then.
  */
 const TILT_FROM = Math.sin((5 * Math.PI) / 180);
 const TILT_FULL = Math.sin((10 * Math.PI) / 180);
@@ -81,7 +82,7 @@ export class Vehicle {
   lateralSpeed = 0;
   /**
    * Speed change (m/s) the contacts gave the body during the world step before the last step, in the car's plane:
-   * gravity is taken out, and so are the part along the car's up axis and along a ground tilted against the car
+   * gravity is taken out, and so are the part along the car's up axis, the push of a ground tilted against the car
    * (landings, bottoming out, the foot of a ramp) and a scripted speed (scriptVelocity). 0 after a teleport (reset),
    * a hold or skipImpact. impactX/Y/Z: that change (world axes).
    */
@@ -98,10 +99,17 @@ export class Vehicle {
   private readonly right = new THREE.Vector3();
   /** Body speed right after the last updateVehicle (every impulse of this class is in): the next step measures from it. */
   private readonly vOut = new THREE.Vector3();
+  /**
+   * The car's up axis at that updateVehicle, the pose its wheel contact normals were read in: the ground's tilt is
+   * read against it, not against the pose after the world step (a hit that rolls the car would tilt a flat ground).
+   */
+  private readonly upOut = new THREE.Vector3();
   private readonly tmpV = new THREE.Vector3();
   private readonly groundN = new THREE.Vector3();
   private readonly wheelN = new THREE.Vector3();
   private readonly tilt = new THREE.Vector3();
+  /** Sine of the ground's tilt against the car, from the last groundTilt. */
+  private tiltSin = 0;
   /** vOut is a speed the next step may compare with (not at creation, nor after a teleport or a hold). */
   private measured = false;
   /** Coming measures to skip (skipImpact). */
@@ -293,6 +301,7 @@ export class Vehicle {
     else vc.updateVehicle(dt);
     // Drag, downforce and the wheel impulses are in: what the world step adds next is gravity and the contacts.
     body.linvel(this.vOut);
+    this.upOut.copy(this.up);
     this.measured = true;
 
     let contact = 0;
@@ -318,7 +327,10 @@ export class Vehicle {
    * `impact`: the speed now minus the speed after the last updateVehicle and minus gravity, without its part along
    * the car's up axis (the body's bottom sits at the wheel centers: a landing would count otherwise). When the ground
    * under the wheels is tilted against the car (a landing nose first, the foot or the top of a ramp), the body hit
-   * that ground: the part along the tilt goes too (it is the ground's normal push and scrape).
+   * that ground: the part along the tilt goes too (it is the ground's normal push and scrape), but no more than that
+   * ground can have given. It pushes along its normal N and scrapes at most as hard (friction ≤ 1): at a tilt θ, that
+   * is at most N (sin θ + 1) in the car's plane for at least N (cos θ − sin θ) along its up axis. A wall hit while the
+   * body leans (a hard turn, full brakes) lifts the car little or not at all: it stays.
    */
   private measureImpact(dt: number): void {
     let x = 0;
@@ -328,9 +340,16 @@ export class Vehicle {
     else if (this.measured) {
       const d = this.tmpV.copy(this.v).sub(this.vOut);
       d.y -= this.gravityY * dt;
-      d.addScaledVector(this.up, -d.dot(this.up));
-      const w = this.groundTilt();
-      if (w > 0) d.addScaledVector(this.tilt, -w * d.dot(this.tilt));
+      const lift = d.dot(this.up);
+      d.addScaledVector(this.up, -lift);
+      const w = lift > 0 ? this.groundTilt() : 0;
+      if (w > 0) {
+        const s = this.tiltSin;
+        const c = Math.sqrt(1 - s * s);
+        const room = c > s ? (lift * (s + 1)) / (c - s) : Infinity;
+        const along = d.dot(this.tilt);
+        d.addScaledVector(this.tilt, -w * Math.max(-room, Math.min(room, along)));
+      }
       x = d.x;
       y = d.y;
       z = d.z;
@@ -343,7 +362,8 @@ export class Vehicle {
 
   /**
    * How much the ground under the wheels (their mean contact normal at the last updateVehicle) is tilted against the
-   * car: 0 under TILT_FROM, 1 from TILT_FULL; the tilt's direction in the car's plane goes to `tilt`.
+   * car (its up axis at that same updateVehicle): 0 under TILT_FROM, 1 from TILT_FULL; its sine goes to `tiltSin`, its
+   * direction in the car's plane (the plane of now, where the shock is measured) to `tilt`.
    */
   private groundTilt(): number {
     const vc = this.controller;
@@ -353,9 +373,12 @@ export class Vehicle {
     }
     const len = n.length();
     if (len === 0) return 0;
-    const t = this.tilt.copy(n).addScaledVector(this.up, -n.dot(this.up));
-    const s = t.length() / len;
+    const t = this.tilt.copy(n).addScaledVector(this.upOut, -n.dot(this.upOut));
+    const s = Math.min(1, t.length() / len);
+    this.tiltSin = s;
     if (s <= TILT_FROM) return 0;
+    t.addScaledVector(this.up, -t.dot(this.up));
+    if (t.lengthSq() === 0) return 0;
     t.normalize();
     return Math.min(1, (s - TILT_FROM) / (TILT_FULL - TILT_FROM));
   }

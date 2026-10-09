@@ -4,7 +4,7 @@ import { recipesFor, RECIPES_BY_ID, type Recipe } from '../data/recipes';
 import { BELT, DEALER, DRILL, MACHINE } from '../data/balance';
 import { TICKS_PER_MIN, perMinLabel, rateNumber, recipeRates } from '../data/rates';
 import { BLUEPRINTS, CAR_PARTS } from '../data/blueprints';
-import { bestSale, carCost, carLabel, carPrice, formatCredits, nearestSale, planLoad, priceList, type CarConfig } from '../data/sales';
+import { bestSale, carCost, carLabel, carPrice, creditsShown, formatCredits, nearestSale, planLoad, priceList, type CarConfig } from '../data/sales';
 import { CREDITS_TITLE } from '../data/wearText';
 import { RESOURCES } from '../data/factoryMap';
 import { append, clear, createLayer, el } from '../ui/dom';
@@ -93,8 +93,8 @@ export interface HudCallbacks {
   /** Hub tiers: number unlocked, and whether a building is available. */
   tier(): number;
   isUnlocked(type: BuildingType): boolean;
-  /** A repair was made at a garage (it may have spent every credit there was): the balance stays shown. */
-  repaired(): boolean;
+  /** Credits were spent on a repair (maybe every credit there was): the balance stays shown. */
+  creditsSpent(): boolean;
   /** Pays and unlocks tier `n` (1-based); ignored unless it is the next one (stale button, double click). */
   unlockTier(n: number): void;
   /** Crafts a bench recipe once by hand; false if an input is missing. */
@@ -257,12 +257,9 @@ export class FactoryHud {
     }
   }
 
-  /**
-   * Credits are shown once there is something to sell with (the dealer unlocked), and for good once some were earned
-   * (a car or a worn set sold) or spent (a repair): a balance back to 0 stays shown.
-   */
+  /** The balance is shown once the dealer is unlocked, and for good once credits were earned or spent (creditsShown). */
   private showCredits(): boolean {
-    return this.sim.credits > 0 || this.sim.carsSold > 0 || this.cb.repaired() || this.cb.isUnlocked('dealer');
+    return creditsShown({ credits: this.sim.credits, carsSold: this.sim.carsSold, creditsSpent: this.cb.creditsSpent(), dealerUnlocked: this.cb.isUnlocked('dealer') });
   }
 
   /** The balance next to the hub's title, updated in place: a rise floats « +4 480 cr » under it. */

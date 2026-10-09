@@ -43,8 +43,13 @@ function bench(world: 'race' | 'factory', spec: CarSpec, model: string, spawn: V
   /** Sums of the impacts above the shock floor over consecutive steps (the meter's windows, uncapped in length). */
   const windows: number[] = [];
   let open = 0;
+  /** The body's speed right after the last car step: what the world step changes next (see planeDv). */
+  const out = new THREE.Vector3();
+  const gravityY = w.gravity.y * (world === 'factory' ? CAR_GRAVITY_SCALE : 1);
   const step = (c: VehicleControls = NO_CONTROLS) => {
     car.step(PHYS_DT, c);
+    const o = car.body.linvel();
+    out.set(o.x, o.y, o.z);
     meter.step(PHYS_DT, car, c);
     peak = Math.max(peak, car.impact);
     if (car.impact > WEAR.SHOCK_FLOOR) open += car.impact;
@@ -65,7 +70,38 @@ function bench(world: 'race' | 'factory', spec: CarSpec, model: string, spawn: V
     return p;
   };
   const wall = (x: number, z: number, hx: number, hz: number) => w.createCollider(RAPIER.ColliderDesc.cuboid(hx, 2, hz).setTranslation(x, 2, z));
-  return { w, car, meter, worn, step, run, takePeak, windows, wall };
+  /**
+   * The speed change the last world step gave the body in the car's plane, with no ground tilt taken out: the speed now
+   * minus the speed after the last car step and minus gravity, without its part along the car's up axis. The next
+   * step's impact when nothing is taken for a tilted ground (not right after a scriptVelocity).
+   */
+  const planeDv = () => {
+    const lv = car.body.linvel();
+    const r = car.body.rotation();
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
+    const d = new THREE.Vector3(lv.x, lv.y - gravityY * PHYS_DT, lv.z).sub(out);
+    return d.addScaledVector(up, -d.dot(up)).length();
+  };
+  return { w, car, meter, worn, step, run, takePeak, windows, wall, planeDv };
+}
+
+/**
+ * Steps `b` `seconds` with `c` and sums, over the steps where the contacts changed the speed by more than the shock
+ * floor in the car's plane, that change (planeDv) and the impact measured; `least`: the lowest impact / change.
+ */
+function shocks(b: ReturnType<typeof bench>, seconds: number, c: VehicleControls) {
+  let plane = 0;
+  let measured = 0;
+  let least = Infinity;
+  for (let i = 0; i < Math.round(seconds / PHYS_DT); i++) {
+    const dv = b.planeDv();
+    b.step(c);
+    if (dv <= WEAR.SHOCK_FLOOR) continue;
+    plane += dv;
+    measured += b.car.impact;
+    least = Math.min(least, b.car.impact / dv);
+  }
+  return { plane, measured, least };
 }
 
 const quatX = (deg: number) => {
@@ -175,6 +211,22 @@ describe.each(WORLDS)('Vehicle wear readings (%s world)', (world) => {
     // Away from the wall (−Z).
     expect(b.meter.last.dz).toBeLessThan(-0.9);
     expect(b.worn.wear!.chassis).toBeGreaterThan(30);
+    b.w.free();
+  });
+
+  // The hit rolls the car 5 to 7° during its world step: read against the pose after it, the flat ground would look
+  // tilted, and the wall's push along that roll would be taken for the ground's.
+  it.each(CARS)('%s into a wall at 45° at 25 m/s on flat ground, full throttle: the whole speed change in the plane of the car counts', (_n, spec, model) => {
+    const full = { ...NO_CONTROLS, throttle: 1 };
+    const b = bench(world, spec, model, { position: new THREE.Vector3(0, 0.6, 0), yaw: Math.PI / 4 });
+    b.wall(0, 18, 60, 0.5);
+    b.run(0.5);
+    b.car.scriptVelocity(25 * Math.SQRT1_2, 0, 25 * Math.SQRT1_2);
+    b.step(full);
+    const s = shocks(b, 2, full);
+    expect(s.plane).toBeGreaterThan(15);
+    expect(s.least).toBeGreaterThan(0.999);
+    expect(Math.max(...b.windows)).toBeGreaterThan(15);
     b.w.free();
   });
 
@@ -291,5 +343,37 @@ describe.each(WORLDS)('Vehicle wear readings (%s world)', (world) => {
     };
     // Both ways from the frictions of the tuning: −17 % at the race limit (WEAR.EFFECT.grip on the wear curve).
     expect(cornering(true) / cornering(false)).toBeCloseTo(1 + wearEffects(spec, wear).grip, 1);
+  });
+});
+
+describe('Vehicle wear readings: a hit while the body leans', () => {
+  // The racing tires corner hardest: in a hard turn at 45 m/s this body rolls about 7° on flat ground.
+  const SPORT_FULL: CarSpec = { blueprint: 'sport', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel_racing', panels: 'panel', spoiler: 'spoiler' } };
+
+  it('the full Sportive leaning out of a hard turn at 45 m/s, pushed into a wall on that side: the whole speed change counts', () => {
+    const turn = { ...NO_CONTROLS, throttle: 1, steer: -0.6 };
+    const b = bench('race', SPORT_FULL, 'sedan-sports');
+    b.run(0.5);
+    b.car.scriptVelocity(0, 0, 45);
+    b.run(1, turn);
+    // Turning right, the body leans out to its left (+X).
+    const q = b.car.curQuat;
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const left = new THREE.Vector3(1, 0, 0).applyQuaternion(q).setY(0).normalize();
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+    expect(THREE.MathUtils.radToDeg(Math.acos(up.y))).toBeGreaterThan(6);
+    expect(up.dot(left)).toBeGreaterThan(0);
+    // A wall along the car 30 cm off its left side, and a push into it (scripted: no shock by itself).
+    const he = (b.car.collider.shape as RAPIER.Cuboid).halfExtents;
+    const at = b.car.curPos.clone().addScaledVector(left, he.x + 0.3 + 0.5);
+    const rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(fwd.x, fwd.z));
+    b.w.createCollider(RAPIER.ColliderDesc.cuboid(0.5, 2, 40).setTranslation(at.x, 2, at.z).setRotation({ x: rot.x, y: rot.y, z: rot.z, w: rot.w }));
+    const v = b.car.body.linvel();
+    b.car.scriptVelocity(v.x + left.x * 12, v.y, v.z + left.z * 12);
+    b.step(turn);
+    const s = shocks(b, 0.5, turn);
+    expect(s.plane).toBeGreaterThan(4);
+    expect(s.measured / s.plane).toBeGreaterThan(0.999);
+    b.w.free();
   });
 });

@@ -397,8 +397,9 @@ export class GaragePanel {
       if (current) selected = b;
       return b;
     };
-    // A worn car shows its most worn part on a mini gauge, and in the pad tip (PadNav reads the focused row only);
-    // past the race limit, the tag « À réparer ».
+    // A worn car shows its most worn part on a mini gauge against the right edge, and in the pad tip (PadNav reads
+    // the focused row only); past the race limit, the tag « À réparer » under the gauge (side by side, they would
+    // leave the name too narrow: « Kart Oopi » over « n°1 »).
     const row = (id: string | null, name: string, sub: HTMLElement, worn: CarInstance | null = null) => {
       const viewing = this.view.kind === 'car' && this.view.id === id;
       const racing = (this.state.selectedCarId ?? null) === id;
@@ -408,9 +409,9 @@ export class GaragePanel {
         el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', 'data-pad-tab': true, 'data-pad-tip': carRowTip(racing, state, blocked), onclick: () => this.show({ kind: 'car', id }) },
           el('span', { class: 'car-star', title: racing ? 'Voiture de course' : '' }, racing ? '★' : '☆'),
           el('span', { class: 'col', style: 'gap:0' }, el('b', {}, name), sub),
-          worn && state ? el('span', { class: 'spacer' }) : null,
-          worn && state ? wearGauge(worstWear(worn), 'mini', `État : ${state}`) : null,
-          blocked ? el('span', { class: 'wear-tag' }, TO_REPAIR_TAG) : null,
+          worn && state
+            ? el('span', { class: 'car-row-wear' }, wearGauge(worstWear(worn), 'mini', `État : ${state}`), blocked ? el('span', { class: 'wear-tag' }, TO_REPAIR_TAG) : null)
+            : null,
         ),
         viewing,
       );
@@ -421,7 +422,7 @@ export class GaragePanel {
       l.appendChild(
         row(c.id, c.name, el('span', { class: 'small' },
           el('span', { class: 'muted' }, `${blueprintOf(c)?.name ?? c.blueprint} · `),
-          el('span', { class: loc === 'here' ? 'good' : 'muted' }, LOCATION_LABEL[loc]),
+          el('span', { class: `car-where ${loc === 'here' ? 'good' : 'muted'}` }, LOCATION_LABEL[loc]),
         ), c),
       );
     }
