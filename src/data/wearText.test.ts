@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BLUEPRINTS, BLUEPRINT_IDS, type SlotId } from './blueprints';
 import { WEAR } from './balance';
+import type { WearCar } from './wear';
 import { wearEffects } from '../car/wornTuning';
+import { WearMeter } from '../car/wearMeter';
 import * as T from './wearText';
 import { SLOT_WORD, capFirst, carRowTip, pct, stateText, wearTone } from './wearText';
 
@@ -30,6 +32,12 @@ describe('wear texts', () => {
     expect([capFirst('état'), capFirst('')]).toEqual(['État', '']);
   });
 
+  it('carRowTip of a car past the limit ends with « à réparer »', () => {
+    const blocked = stateText({ blueprint: 'kart', parts: { wheels: 'wheel' }, wear: { wheels: 820 } });
+    expect(carRowTip(true, blocked, true)).toBe('Voiture de course · état : roues 18 % · à réparer');
+    expect(carRowTip(false, blocked, true)).toBe('État : roues 18 % · à réparer');
+  });
+
   it('every slot has its word; the house typography (no non-breaking space, no straight apostrophe)', () => {
     for (const id of BLUEPRINT_IDS) for (const s of BLUEPRINTS[id].slots) expect(SLOT_WORD[s.id]).toBeTruthy();
     for (const t of [carRowTip(true, 'roues 46 %')!, carRowTip(false, 'roues 46 %')!]) expect(t).not.toMatch(/[\u00a0\u202f']/);
@@ -37,6 +45,69 @@ describe('wear texts', () => {
     for (const t of texts) {
       expect(t).not.toMatch(/[  ']/);
       expect(t).toBe(t.toLowerCase());
+    }
+  });
+});
+
+describe('wear texts of the race limit (a car to repair)', () => {
+  const KART = 'Kart Oopi n°1';
+  const kart = (wear?: WearCar['wear']): WearCar => ({ blueprint: 'kart', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' }, ...(wear ? { wear } : {}) });
+  const FULL = { chassis: 'chassis', engine: 'engine', wheels: 'wheel_racing', panels: 'panel', spoiler: 'spoiler' };
+
+  it('blockText: the blocked slots in the blueprint’s order with their state; null at 800 ‰, when new, without the part', () => {
+    expect(T.blockText(kart({ wheels: 820 }))).toBe('roues à 18 %');
+    expect(T.blockText({ blueprint: 'sport', parts: FULL, wear: { panels: 880, wheels: 820, engine: 700 } })).toBe('roues à 18 %, carrosserie à 12 %');
+    expect(T.blockText({ blueprint: 'sport', parts: FULL, wear: { spoiler: WEAR.MAX } })).toBe('aileron à 0 %');
+    expect(T.blockText(kart({ wheels: WEAR.BLOCK_ABOVE }))).toBeNull();
+    expect(T.blockText(kart())).toBeNull();
+    const { spoiler: _, ...noSpoiler } = FULL;
+    expect(T.blockText({ blueprint: 'sport', parts: noSpoiler, wear: { spoiler: WEAR.MAX } })).toBeNull();
+    expect(T.blockText({ blueprint: 'constructor', parts: FULL, wear: { wheels: WEAR.MAX } })).toBeNull();
+  });
+
+  it('the race: fallback toast, halted panel, finish panel', () => {
+    expect(T.fallbackText(KART)).toBe('Kart Oopi n°1 est à réparer au garage : tu cours avec le kart de location');
+    expect(T.haltedText(KART, 'roues à 18 %')).toBe('Kart Oopi n°1 ne peut plus prendre le départ : roues à 18 %.');
+    expect(T.finishBlockedText(KART, 'roues à 18 %')).toBe('Kart Oopi n°1 est à réparer au garage : roues à 18 %.');
+    expect([T.TO_REPAIR_AT_GARAGE, T.RACE_LOANER]).toEqual(['À réparer au garage', 'Courir avec le kart de location']);
+  });
+
+  it('the track selection: option, disabled « Courir », the line under the car, the state line', () => {
+    expect(T.blockedOption(KART)).toBe('Kart Oopi n°1 (à réparer)');
+    expect(T.blockedRaceTip('roues à 18 %')).toBe('Roues à 18 % : répare-la au garage, ou cours avec le kart de location.');
+    expect(T.blockedRaceLine(KART, 'roues à 18 %')).toBe('Roues à 18 % : Kart Oopi n°1 ne prend plus le départ. Répare-la au garage, ou cours avec le kart de location.');
+    expect([T.LOANER_STATE, T.NEW_STATE]).toEqual(['Prêté par le circuit : il ne s’use pas.', 'État : neuve']);
+  });
+
+  it('the garage: the alert (the limit read from WEAR) and the disabled « Courir », in the bay or elsewhere', () => {
+    expect(T.blockAlert('roues à 18 %', true)).toBe('À réparer : roues à 18 %. Sous 20 %, une voiture ne prend plus le départ d’une course ; dans l’usine, elle roule encore.');
+    expect(T.blockAlert('roues à 18 %', false)).toBe('À réparer : roues à 18 %. Amène-la dans la place d’un garage pour la réparer ; dans l’usine, elle roule encore.');
+    expect(T.garageRaceTip('roues à 18 %', true)).toBe('À réparer : roues à 18 %. Répare-la ici, ou cours avec le kart de location.');
+    expect(T.garageRaceTip('roues à 18 %', false)).toBe('À réparer : roues à 18 %. Amène-la dans la place d’un garage pour la réparer, ou cours avec le kart de location.');
+    expect(T.TO_REPAIR_TAG).toBe('À réparer');
+  });
+
+  it('the driver’s seat: Enter refused, getting in, the bottom hint’s state (null when new)', () => {
+    expect(T.seatRefusedText('roues à 18 %')).toBe('À réparer au garage : roues à 18 %');
+    expect(T.boardedBlockedText(KART, 'roues à 18 %')).toBe('Kart Oopi n°1 est à réparer : roues à 18 %. Elle roule encore jusqu’au garage.');
+    expect(T.driveState(kart())).toBeNull();
+    expect(T.driveState(kart({ wheels: 540, engine: 100 }))).toBe('roues 46 %');
+    expect(T.driveState(kart({ wheels: WEAR.BLOCK_ABOVE }))).toBe('roues 20 %');
+    expect(T.driveState(kart({ wheels: 820 }))).toBe('roues 18 % : à réparer au garage');
+  });
+
+  it('the house typography', () => {
+    const block = 'roues à 18 %, carrosserie à 12 %';
+    const texts = [
+      T.TO_REPAIR, T.TO_REPAIR_TAG, T.TO_REPAIR_AT_GARAGE, T.RACE_LOANER, T.HALTED_NOTE, T.LOANER_STATE, T.NEW_STATE,
+      T.fallbackText(KART), T.haltedText(KART, block), T.finishBlockedText(KART, block), T.blockedOption(KART), T.blockedRaceTip(block),
+      T.blockedRaceLine(KART, block), T.blockAlert(block, true), T.blockAlert(block, false), T.garageRaceTip(block, true),
+      T.garageRaceTip(block, false), T.seatRefusedText(block), T.boardedBlockedText(KART, block), T.driveState(kart({ wheels: 820 }))!,
+      T.blockText({ blueprint: 'sport', parts: FULL, wear: { panels: 880, wheels: 820 } })!, T.carRowTip(true, 'roues 18 %', true)!,
+    ];
+    for (const t of texts) {
+      expect(t).not.toMatch(/[  ']/);
+      expect(t).not.toMatch(/\S[:;%?]|\s{2}/);
     }
   });
 });
@@ -169,6 +240,86 @@ describe('wear texts of the garage (repairs, reserve)', () => {
       // A drop is « −290 cr », never an ASCII hyphen before a number.
       expect(t).not.toMatch(/-\s?\d/);
       // A plain space before « : », « ; », « % » and « ? » (never glued, never doubled).
+      expect(t).not.toMatch(/\S[:;%?]|\s{2}/);
+    }
+  });
+});
+
+describe('wear texts while driving (race pill, damage flash, finish, limit crossed, aim)', () => {
+  const kart = (wear?: WearCar['wear']): WearCar => ({ blueprint: 'kart', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' }, ...(wear ? { wear } : {}) });
+  const hit = (cause: T.HitCause, slot: SlotId, permille: number) => ({ cause, slot, permille });
+
+  it('HIT_CAUSE covers the shock and every put-back cause of WEAR.RESET', () => {
+    expect(Object.keys(T.HIT_CAUSE).sort()).toEqual(['shock', ...Object.keys(WEAR.RESET)].sort());
+    expect(T.HIT_CAUSE).toMatchObject({ shock: 'Choc', flip: 'Tonneau', fall: 'Chute', water: 'Dans l’eau' });
+  });
+
+  it('hitText: the most hit part in whole percent (at least 1) from FLASH_MIN on; null under it or for garbage', () => {
+    expect(T.hitText(hit('shock', 'panels', 25))).toBe('Choc : carrosserie −3 %');
+    expect(T.hitText(hit('flip', 'chassis', 15))).toBe('Tonneau : châssis −2 %');
+    expect(T.hitText(hit('fall', 'chassis', 20))).toBe('Chute : châssis −2 %');
+    expect(T.hitText(hit('water', 'panels', 15))).toBe('Dans l’eau : carrosserie −2 %');
+    expect(T.hitText(hit('shock', 'spoiler', WEAR.FLASH_MIN))).toBe('Choc : aileron −1 %');
+    expect(T.hitText(hit('shock', 'chassis', WEAR.SHOCK_MAX))).toBe('Choc : châssis −30 %');
+    expect(T.hitText(hit('shock', 'chassis', WEAR.FLASH_MIN - 0.01))).toBeNull();
+    expect(T.hitText(hit('shock', 'chassis', NaN))).toBeNull();
+    // « Retour arrière » and stuck (2 to 3 ‰) never flash: the Trackmania respawn is barely punished.
+    for (const cause of ['key', 'stuck'] as const) for (const s of ['chassis', 'panels', 'spoiler'] as const) expect(T.hitText(hit(cause, s, WEAR.RESET[cause][s]))).toBeNull();
+  });
+
+  it('hitText reads the meter’s last hit as it is (the most hit part of a put-back)', () => {
+    const sport = { blueprint: 'sport', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel', panels: 'panel' } } as WearCar;
+    const meter = new WearMeter(sport);
+    meter.putBack('key');
+    expect(meter.last.seq).toBe(1);
+    expect(T.hitText(meter.last)).toBeNull();
+    meter.putBack('flip');
+    expect(T.hitText(meter.last)).toBe('Tonneau : carrosserie −3 %');
+    const k = kart();
+    const m = new WearMeter(k);
+    m.putBack('water');
+    expect(T.hitText(m.last)).toBe('Dans l’eau : châssis −1 %');
+  });
+
+  it('pillText: « Roues 46 % » by the most worn part, « Neuve » when new', () => {
+    expect(T.pillText(kart())).toBe('Neuve');
+    expect(T.pillText(kart({ wheels: 540, engine: 100 }))).toBe('Roues 46 %');
+    expect(T.pillText(kart({ chassis: 3 }))).toBe('Châssis 99 %');
+    expect(T.pillText({ blueprint: 'sport', parts: { panels: 'panel' }, wear: { panels: WEAR.MAX } })).toBe('Carrosserie 0 %');
+    expect(T.pillText({ blueprint: 'constructor', parts: {}, wear: { wheels: 500 } })).toBe('Neuve');
+  });
+
+  it('attemptText: the % shown each part lost in the attempt, the most first; « moins de 1 % »; null without wear', () => {
+    expect(T.attemptText('kart', {}, { wheels: 30, engine: 10 })).toBe('Usure de cet essai : roues −3 % · moteur −1 %');
+    expect(T.attemptText('kart', undefined, { wheels: 30, engine: 10 })).toBe('Usure de cet essai : roues −3 % · moteur −1 %');
+    // A tie keeps the blueprint's order.
+    expect(T.attemptText('kart', { wheels: 100 }, { chassis: 20, wheels: 120 })).toBe('Usure de cet essai : châssis −2 % · roues −2 %');
+    // Worn, but no percentage dropped (99 % → 99 %).
+    expect(T.attemptText('kart', { wheels: 5 }, { wheels: 9 })).toBe('Usure de cet essai : moins de 1 %');
+    expect(T.attemptText('kart', { wheels: 5 }, { wheels: 5 })).toBeNull();
+    expect(T.attemptText('kart', undefined, undefined)).toBeNull();
+    expect(T.attemptText('constructor', {}, { wheels: 30 })).toBeNull();
+    // Across the race limit: 21 % → 18 %.
+    expect(T.attemptText('kart', { wheels: 790 }, { wheels: 820 })).toBe('Usure de cet essai : roues −3 %');
+  });
+
+  it('the race limit crossed (toasts, once) and a parked car to repair aimed at', () => {
+    expect(T.lastAttemptText('roues à 19 %')).toBe('Roues à 19 % : dernier essai avant réparation au garage');
+    expect(T.repairBeforeRaceText('roues à 19 %')).toBe('Roues à 19 % : à réparer au garage avant la prochaine course');
+    expect(T.aimBlockedText(kart({ wheels: 820, engine: 300 }))).toBe('à réparer (roues 18 %)');
+    expect(T.aimBlockedText(kart({ wheels: WEAR.BLOCK_ABOVE }))).toBeNull();
+    expect(T.aimBlockedText(kart())).toBeNull();
+  });
+
+  it('the house typography: no non-breaking space, no straight apostrophe, drops with U+2212, spaced « : » and « % »', () => {
+    const texts = [
+      ...Object.values(T.HIT_CAUSE), T.hitText(hit('water', 'panels', 25))!, T.pillText(kart({ wheels: 540 })), T.pillText(kart()),
+      T.attemptText('kart', {}, { wheels: 30, engine: 10 })!, T.attemptText('kart', { wheels: 5 }, { wheels: 9 })!,
+      T.lastAttemptText('roues à 19 %, carrosserie à 12 %'), T.repairBeforeRaceText('roues à 19 %'), T.aimBlockedText(kart({ wheels: 820 }))!,
+    ];
+    for (const t of texts) {
+      expect(t).not.toMatch(/[\u00a0\u202f']/);
+      expect(t).not.toMatch(/-\s?\d/);
       expect(t).not.toMatch(/\S[:;%?]|\s{2}/);
     }
   });

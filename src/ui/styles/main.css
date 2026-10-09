@@ -342,6 +342,20 @@ kbd {
 .wear-gauge.mini { width: 42px; height: 6px; border-radius: 3px; }
 .wear-pct { min-width: 38px; text-align: right; font-family: var(--mono); font-size: 13px; font-weight: 800; white-space: nowrap; }
 .slot-head { gap: 8px; }
+/* Past the race limit (20 %): the garage's alert and the tag of a car row; the track selection's state line. */
+.wear-alert { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--bad); border-radius: 10px; background: rgba(255, 93, 93, 0.1); font-size: 13px; }
+.wear-tag { font-size: 11px; font-weight: 800; color: var(--bad); white-space: nowrap; }
+.wear-summary { gap: 6px; margin-top: 6px; font-size: 13px; }
+/* Wear while driving: the race pill under « km/h »; the damage flash above the speed (race) or the hint (factory,
+   hidden on foot). `translate` animates apart from the centring transform. */
+.race-wear { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 2px 9px; border-radius: 999px; background: rgba(20, 22, 40, 0.7); font-size: 13px; font-weight: 800; white-space: nowrap; }
+.wear-hit { position: absolute; z-index: 1; padding: 2px 9px; border-radius: 999px; background: var(--panel-solid); border: 1px solid var(--bad); color: #ffd0d0; font-size: 13px; font-weight: 800; white-space: nowrap; opacity: 0; pointer-events: none; }
+.speedo-wrap .wear-hit { right: 0; bottom: calc(100% + 6px); }
+.bottom-stack .wear-hit { left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); }
+.factory-hud:not(.driving) .wear-hit { display: none; }
+.wear-hit.flash { animation: wear-hit 1.8s ease-out forwards; }
+@keyframes wear-hit { 0% { opacity: 0; translate: 0 6px; } 12% { opacity: 1; translate: 0 0; } 75% { opacity: 1; } 100% { opacity: 0; translate: 0 -6px; } }
+.finish-wear { margin-top: 6px; font-size: 13px; }
 /* Repairs (garage): items with « j'ai / il faut » chips or credits, buttons that wrap inside the right column. */
 .repair-row { flex-wrap: wrap; gap: 6px; }
 .repair-btn { display: inline-flex; align-items: center; gap: 6px; }

@@ -91,10 +91,53 @@ export function shownConditions(car: WearCar, out: number[]): boolean {
   return changed;
 }
 
+/** What a HUD shows of a car's wear: its most worn slot (null when new) and that slot's state (%). */
+export interface ShownWorst {
+  slot: SlotId | null;
+  pct: number;
+}
+
+/**
+ * Writes the car's most worn slot and its state shown (%, 100 when new) into `out`; true when either changed (always
+ * the first time from `{ slot: null, pct: -1 }`). Allocates nothing: a check for every frame (the race pill).
+ */
+export function shownWorst(car: WearCar, out: ShownWorst): boolean {
+  const s = worstSlotOf(car);
+  const slot = s ? s.id : null;
+  const pct = condition(s ? slotWear(car, s.id) : 0);
+  if (slot === out.slot && pct === out.pct) return false;
+  out.slot = slot;
+  out.pct = pct;
+  return true;
+}
+
 /** Installed slots worn above WEAR.BLOCK_ABOVE, in the blueprint's order (the car does not start a race). */
 export function blockedSlots(car: WearCar): SlotId[] {
   const bp = blueprintById(car.blueprint);
   return bp ? bp.slots.filter((s) => slotWear(car, s.id) > WEAR.BLOCK_ABOVE).map((s) => s.id) : [];
+}
+
+/** The car does not start a race: an installed part is worn above WEAR.BLOCK_ABOVE (spoiler included). No allocation. */
+export function isBlocked(car: WearCar): boolean {
+  return worstWear(car) > WEAR.BLOCK_ABOVE;
+}
+
+/** Why a car does not start a race: its slots worn above WEAR.BLOCK_ABOVE (a fuel ticket may add its own kind). */
+export interface RaceBlock<C extends WearCar = WearCar> {
+  kind: 'wear';
+  car: C;
+  /** In the blueprint's order. */
+  slots: SlotId[];
+}
+
+/**
+ * What keeps `car` from starting a race, null when it may (and for the loaner, `null`). Taking a worn-out optional
+ * part off (the spoiler, « Aucun ») lifts it.
+ */
+export function raceBlocker<C extends WearCar>(car: C | null): RaceBlock<C> | null {
+  if (!car) return null;
+  const slots = blockedSlots(car);
+  return slots.length ? { kind: 'wear', car, slots } : null;
 }
 
 /** The slot gets new parts (or none): its wear goes, and `wear` with it when nothing else is worn. */

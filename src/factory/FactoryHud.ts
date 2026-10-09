@@ -10,6 +10,7 @@ import { RESOURCES } from '../data/factoryMap';
 import { append, clear, createLayer, el } from '../ui/dom';
 import { dual, html, keyCap, padGlyph, renderTokens } from '../ui/padHints';
 import { setPadHandlers } from '../ui/padNav';
+import { WearFlash } from '../ui/wearHud';
 import type { FactorySim } from './sim/FactorySim';
 import { isMachine, type Building, type DealerB, type DrillB, type MachineB } from './sim/types';
 import type { Tool } from './build/BuildController';
@@ -137,8 +138,10 @@ export class FactoryHud {
   private creditsSeen: number | null = null;
   private bagBar = el('div', { class: 'bag-bar' });
   private hint = el('div', { class: 'hint' });
+  /** Damage flash of the driven car, above the hint (hidden on foot: .factory-hud:not(.driving)). */
+  private wearFlash = new WearFlash();
   /** Bottom of the screen: hint, then the backpack's first row (buildings are picked in the build menu). */
-  private bottom = el('div', { class: 'bottom-stack' }, this.hint, this.bagBar);
+  private bottom = el('div', { class: 'bottom-stack' }, this.wearFlash.el, this.hint, this.bagBar);
   /** Active build tool (highlighted in the build menu). */
   private tool: Tool = { kind: 'none' };
   /** Building shown in the build menu's detail pane (hovered card). */
@@ -224,6 +227,15 @@ export class FactoryHud {
 
   setHint(html: string): void {
     if (this.hint.innerHTML !== html) this.hint.innerHTML = html;
+  }
+
+  /**
+   * Flashes the driven car's damage above the hint (« Choc : carrosserie −3 % »); null drops a flash under way (getting
+   * in or out of a car: shown again, it does not replay).
+   */
+  flashWear(text: string | null): void {
+    if (text) this.wearFlash.show(text);
+    else this.wearFlash.stop();
   }
 
   setCrosshair(visible: boolean): void {

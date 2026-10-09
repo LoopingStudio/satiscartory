@@ -143,7 +143,10 @@ export class WearMeter {
     if (slot) this.hit(cause, slot, most, 0, 0, 0);
   }
 
-  /** The drive is over: closes the shock and rounds the fractions (half a thousandth or more counts as one). */
+  /**
+   * The drive is over: closes the shock and rounds the fractions (half a thousandth or more counts as one). Counting
+   * may go on from there (FactoryCars.raceBlockerOnExit rounds just before getting out, and the car may stay in).
+   */
   end(): void {
     this.closeShock();
     for (const s of SLOTS) {

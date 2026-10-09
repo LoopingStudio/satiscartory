@@ -795,6 +795,45 @@ describe('FactoryCars: wear while driving', () => {
     f.cars.dispose();
     f.fw.dispose();
   });
+
+  it('Entrée to race reads the wear the car gets out with: one that the rounding takes past the limit stays in', () => {
+    const f = setup();
+    f.state.cars.push(carAt('k', KART, { x: 30, y: 0, z: 40, yaw: 0 }));
+    f.car('k').wear = { engine: WEAR.BLOCK_ABOVE };
+    f.cars.sync();
+    f.cars.enter('k');
+    f.run(1);
+    /** The meter's fractions of a thousandth (test-only peek), set by hand below. */
+    const rest = (meterOf(f.cars) as unknown as { rest: Record<string, number> }).rest;
+    const at = (engine: number, fraction: number) => {
+      f.car('k').wear!.engine = engine;
+      rest.engine = fraction;
+    };
+    // Too fast to get out: nothing is rounded.
+    f.run(2, ['throttle']);
+    expect(f.cars.canExit()).toBe(false);
+    at(WEAR.BLOCK_ABOVE, 0.6);
+    expect(f.cars.raceBlockerOnExit()).toBeNull();
+    expect(meterOf(f.cars).exact('engine')).toBeCloseTo(WEAR.BLOCK_ABOVE + 0.6, 9);
+    // Stopped, under half a thousandth: rounded down, it may race (the exit follows).
+    f.stop();
+    at(WEAR.BLOCK_ABOVE, 0.4);
+    expect(f.cars.raceBlockerOnExit()).toBeNull();
+    expect(meterOf(f.cars).exact('engine')).toBe(WEAR.BLOCK_ABOVE);
+    // Half a thousandth or more: rounded in, past the limit, the car stays driven; it is not rounded again.
+    at(WEAR.BLOCK_ABOVE, 0.6);
+    expect(f.cars.raceBlockerOnExit()).toEqual({ kind: 'wear', car: f.car('k'), slots: ['engine'] });
+    expect(f.cars.drivingId).toBe('k');
+    expect(f.car('k').wear!.engine).toBe(WEAR.BLOCK_ABOVE + 1);
+    rest.engine = 0.7;
+    expect(f.cars.raceBlockerOnExit()?.slots).toEqual(['engine']);
+    expect(meterOf(f.cars).exact('engine')).toBeCloseTo(WEAR.BLOCK_ABOVE + 1.7, 9);
+    // On foot: nothing to check.
+    expect(f.cars.exit()).not.toBeNull();
+    expect(f.cars.raceBlockerOnExit()).toBeNull();
+    f.cars.dispose();
+    f.fw.dispose();
+  });
 });
 
 describe('FactoryCars: wear on the relief', () => {

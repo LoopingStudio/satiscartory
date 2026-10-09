@@ -14,9 +14,9 @@ import { FACTORY_CELL, PLAYER_HEIGHT, PLAYER_RADIUS } from '../../config/constan
 import { CarModel } from '../../car/CarModel';
 import { computeCarStats } from '../../car/stats';
 import { tuningFromStats, type VehicleTuning } from '../../car/tuning';
-import { WearMeter, autoResetCause, type ResetCause } from '../../car/wearMeter';
+import { WearMeter, autoResetCause, type ResetCause, type WearHit } from '../../car/wearMeter';
 import { wornTuning } from '../../car/wornTuning';
-import { shownConditions } from '../../data/wear';
+import { isBlocked, raceBlocker, shownConditions, type RaceBlock } from '../../data/wear';
 import { CAR_GROUPS } from '../collisionGroups';
 import { Vehicle, NO_CONTROLS } from '../../vehicle/Vehicle';
 import { ChaseCamera } from '../../vehicle/ChaseCamera';
@@ -316,6 +316,16 @@ export class FactoryCars {
     return this.driving?.id ?? null;
   }
 
+  /** The driven car (null on foot): its wear is written in place while it drives (HUD). */
+  get drivingCar(): CarInstance | null {
+    return this.wearTuning?.car ?? null;
+  }
+
+  /** The driven car's last damage (WearMeter.last, written in place; null on foot): the HUD flashes a new `seq`. */
+  get wearLast(): WearHit | null {
+    return this.meter?.last ?? null;
+  }
+
   /** Interpolated position of the driven car at the last update() (null on foot): light rig, HUD. */
   get drivingPosition(): THREE.Vector3 | null {
     return this.driving ? this.pos : null;
@@ -362,6 +372,18 @@ export class FactoryCars {
     this.drownTime = 0;
     this.chase = null;
     return true;
+  }
+
+  /**
+   * What keeps the driven car from racing once out (null: it may, or on foot). Getting out ends its wear meter
+   * (WearMeter.end: the open shock charged, the fractions rounded), which can take a car at the race limit past it:
+   * when the driver may get out, that is done now, so Entrée keeps such a car in like one already past the limit.
+   * At most once per drive: either the exit follows, or the car is then past the limit (not rounded again).
+   */
+  raceBlockerOnExit(): RaceBlock<CarInstance> | null {
+    const car = this.driving ? this.carOf(this.driving.id) : null;
+    if (car && !isBlocked(car) && this.canExit()) this.meter?.end();
+    return raceBlocker(car);
   }
 
   /** Slow enough (< FACTORY_CAR.EXIT_SPEED) and level enough to get out. False on foot. */

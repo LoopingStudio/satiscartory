@@ -18,6 +18,7 @@ const PURE = [
   'src/race/RaceSession.ts',
   'src/race/crossing.ts',
   'src/race/medals.ts',
+  'src/race/raceCar.ts',
   'src/core/gamepad.ts',
   'src/ui/spatialNav.ts',
 ];

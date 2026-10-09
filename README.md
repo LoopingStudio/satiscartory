@@ -21,7 +21,7 @@ Le jeu tourne ensuite sur http://localhost:5173.
 
 | Commande | Rôle |
 |---|---|
-| `npm test` | Tests Vitest : simulation d'usine, progression (minage à la main, établi, paliers), garage et voitures dans l'usine, concession et ventes (prix, crédits), circuits, course, véhicule Rapier sans rendu, bot de course. |
+| `npm test` | Tests Vitest : simulation d'usine, progression (minage à la main, établi, paliers), garage et voitures dans l'usine, usure et réparations, concession et ventes (prix, crédits), circuits, course, véhicule Rapier sans rendu, bot de course. |
 | `npm run build` | Vérification de types et build de production. |
 | `npm run manifest` | Régénère le manifest typé des modèles. |
 | `node scripts/probe-connectors.mjs` | Mesure les tuiles de route dans les GLB. |
@@ -45,7 +45,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | E sur un convoyeur | Prendre les objets de cette case dans le sac ; maintenu 0,5 s : ceux de toute la ligne (les convoyeurs reliés, en amont et en aval). Ce qui ne rentre pas dans le sac reste sur le convoyeur |
 | E | Utiliser une machine ou une foreuse : recette (ingrédients en icônes, cadence par minute), « Charger » (sac puis hangar), « Prendre » (production vers le sac), cadence sur la dernière minute et à plein régime. En visant une machine, le bas de l'écran donne déjà sa cadence (« Pneu 15/min (75 %) ») |
 | E sur le hangar | Onglets Hangar (échanges sac ↔ hangar), Établi (fabrication à la main), Paliers (déblocage des bâtiments) et Statistiques (production et consommation par minute de toute l'usine) |
-| E sur un garage | Panneau du garage : assembler une voiture dans sa place (d'un coup, ou pièce par pièce avec « Poser maintenant »), changer ses pièces, la démonter ou la vendre, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
+| E sur un garage | Panneau du garage : assembler une voiture dans sa place (d'un coup, ou pièce par pièce avec « Poser maintenant »), la réparer (en matières ou en crédits), changer ses pièces, la démonter ou la vendre, gérer les pièces usées, choisir la voiture de course, « Courir ». Échap ou « Fermer » le referme |
 | E sur une concession | Panneau de la concession : la voiture en cours et son prix, les pièces en attente, ce qui manque pour la prochaine voiture, les ventes et les prix. « Charger (sac puis hangar) » y met les pièces des voitures complètes que permettent le sac et le hangar ; « Reprendre les pièces » rend celles qui attendent (au sac, le surplus au hangar) |
 | E près d'une voiture garée | Monter, à 3,2 m au plus (un bâtiment visé passe avant ; voir ci-dessous) |
 | Tab ou I | Ouvrir le sac (3 rangées de 8 ; la dernière est la barre toujours visible en bas de l’écran). Glisser une case pour la déplacer, l’échanger ou la fusionner |
@@ -62,7 +62,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Espace | Frein à main |
 | E | Descendre, seulement sous 3 m/s (environ 11 km/h) : la voiture reste garée là |
 | Retour arrière | Replacer la voiture sur sa dernière position sûre |
-| Entrée | Descendre (même condition) et choisir un circuit avec cette voiture |
+| Entrée | Descendre (même condition) et choisir un circuit avec cette voiture (pas si elle est à réparer) |
 | Échap | Pause |
 
 ### Course
@@ -77,6 +77,8 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Suppr | Recommencer |
 | Entrée | Réessayer après l'arrivée |
 | Échap | Quitter |
+
+Une voiture à réparer (une pièce sous 20 %) ne prend plus le départ : recommencer propose alors le kart de location (Entrée ou Y).
 
 ### Éditeur
 
@@ -117,7 +119,7 @@ Une manette (Xbox, PlayStation, Switch Pro… en mapping standard) marche partou
 |---|---|
 | RT accélérer, LT freiner / marche arrière, stick gauche tourner, A frein à main | Pareil, A : dérapage |
 | X : descendre (sous 11 km/h) | B : respawn au checkpoint |
-| Y : choisir un circuit avec cette voiture | View : recommencer |
+| Y : choisir un circuit avec cette voiture (pas si elle est à réparer) | View : recommencer |
 | B : replacer la voiture | Menu : quitter |
 | Menu : pause | Arrivée : Réessayer (A ou Y), Circuits (B) |
 
@@ -197,8 +199,8 @@ La carte de l'usine est vallonnée : un plateau plat autour du hangar et des pre
 
 Le garage est un bâtiment de l’usine (touche 6, palier 5 ; 40 plaques, 24 tiges, 80 boulons). Il occupe 3×4 cases et abrite **une** place de voiture : des murs sur trois côtés, toute la face avant ouverte en porte, que marque une flèche bleue sur le fantôme. Il n’y a plus de touche G ni d’écran Garage à part.
 
-- **E sur un garage** ouvre son panneau sans quitter l’usine : la caméra cadre la place depuis la porte, les colonnes laissent la voiture visible au milieu. On y assemble une voiture (la place doit être libre ; le sac paie d’abord, puis le hangar), qu’un fantôme montre dans la place avant l’assemblage. On change les pièces de la voiture garée là, on la démonte (pièces dans le sac, le surplus au hangar) ou on la vend (« Vendre », au prix d’une concession, affiché sous la voiture ; confirmé par un second bouton), on choisit la voiture de course (★), et « Courir » ouvre le choix du circuit avec elle.
-- **Les voitures restent garées** dans l’usine, là où on les laisse, et se conduisent (commandes ci-dessus). Elles traversent les lignes de convoyeurs, qui sont au sol ; machines, murs et voitures garées restent solides. Dans l’usine, la vitesse est plafonnée à 90 km/h environ. Le kart de location ne roule que sur les circuits.
+- **E sur un garage** ouvre son panneau sans quitter l’usine : la caméra cadre la place depuis la porte, les colonnes laissent la voiture visible au milieu. On y assemble une voiture (la place doit être libre ; le sac paie d’abord, puis le hangar), qu’un fantôme montre dans la place avant l’assemblage. On répare la voiture garée là (voir « Usure et réparations »), on change ses pièces, on la démonte (pièces dans le sac, le surplus au hangar) ou on la vend (« Vendre », au prix d’une concession, affiché sous la voiture ; confirmé par un second bouton), on choisit la voiture de course (★), et « Courir » ouvre le choix du circuit avec elle.
+- **Les voitures restent garées** dans l’usine, là où on les laisse, et se conduisent (commandes ci-dessus). Elles traversent les lignes de convoyeurs, qui sont au sol ; machines, murs et voitures garées restent solides. Dans l’usine, la vitesse est plafonnée à 90 km/h environ. Le kart de location ne roule que sur les circuits et ne s’use pas.
 - **Construire pièce par pièce** : dans le brouillon d'une nouvelle voiture, « Poser maintenant » met dans la place ce qu'on a d'une pièce (deux roues, par exemple) sans attendre le reste. La voiture en construction reste dans le garage : pièces posées en couleur, le reste en transparence, des chandelles jaunes sous les roues manquantes, la carrosserie en métal nu tant qu'il manque des panneaux, le moteur posé sur son essieu. Son panneau dit ce qui est posé (« 3/6 pièces »), pose la suite ou retire une pièce (rendue au sac). La voiture sort, numérotée et choisie pour courir, dès que les pièces obligatoires y sont ; « Abandonner » rend tout.
 - Un garage où une voiture est garée ou en construction ne se démonte pas, et on ne construit pas sur une voiture.
 - Sauvegardes : les voitures d’une ancienne sauvegarde se garent dès le premier garage construit, une par garage libre ; les autres attendent le suivant.
@@ -222,7 +224,36 @@ Une fois ses voitures construites, le surplus de pièces se vend. La **concessio
 | Sportive, roues racing | 7 380 cr |
 | Sportive, roues racing et aileron | 7 950 cr |
 
-- **Crédits** : le solde s’affiche en haut à droite, à côté du hangar, dès que la concession est débloquée (ou après une première vente au garage), et dans les panneaux du hangar, de la concession et du garage. Il n’y a encore rien à acheter : le solde est sauvegardé pour la suite.
+- **Crédits** : le solde s’affiche en haut à droite, à côté du hangar, dès que la concession est débloquée (ou après une première vente au garage), et dans les panneaux du hangar, de la concession et du garage. Ils paient les réparations au garage ; les pièces usées de la réserve se vendent aussi.
+
+## Usure et réparations
+
+Chaque pièce posée sur une voiture a un état, de 100 % (neuve) à 0 % (hors d’usage), par emplacement : châssis, moteur, roues (les 4 ensemble), carrosserie (les 4 panneaux ensemble), aileron. Il baisse en roulant, en course comme dans l’usine. Le kart de location et l’essai depuis l’éditeur ne s’usent jamais.
+
+- **Causes** : les roues s’usent avec la distance au sol, bien plus en dérapage et au frein à main ; le moteur avec la distance, plus à plein gaz ; le châssis, la carrosserie et l’aileron avec les chocs (un mur pris de face, pas un frottement) et les remises en place (tonneau, chute, eau ; Retour arrière coûte presque rien, Suppr rien). Des pneus neufs tiennent une séance de chrono, une trentaine de tours d’Ovale ; le moteur et le châssis, plusieurs séances. Rien ne s’use dans l’usine pendant la pause ou quand un panneau est ouvert.
+- **Effets** : chaque pour cent perdu se sent un peu, puis de plus en plus. Roues usées : moins d’adhérence ; moteur : moins de puissance ; châssis : moins de braquage et de freinage ; carrosserie : plus de traînée ; aileron : moins d’appui. Au seuil, un tour prend environ 10 % de plus. Une voiture neuve roule exactement comme avant. En course, l’état d’une tentative est figé à son départ (un respawn ne le change pas) ; dans l’usine, il s’applique dès qu’un pour cent change.
+- **Seuil de 20 %** : une voiture dont une pièce passe sous 20 % ne prend plus le départ d’une course. Au choix du circuit, « Courir » cède la place à « Courir avec le kart de location » ; en course, l’essai en cours se termine, puis recommencer propose la location. Elle roule encore dans l’usine, pour rentrer au garage. Retirer un aileron usé (« Aucun ») la débloque.
+- **Réparer** : au garage, pour la voiture garée dans sa place, chaque pièce usée a deux boutons « Réparer ». En matières : les pneus pour les roues, la moitié de la recette pour les autres pièces, au prorata de l’usure (le sac d’abord, puis le hangar). En crédits : la valeur de ces matières plus 25 %, à la dizaine supérieure. Ce n’est jamais gratuit : au moins 1 objet ou 10 cr. « Remplacer par du neuf » pose des pièces neuves du stock.
+- **Tout réparer** : dès que deux pièces sont usées, un seul bouton les répare toutes, en matières ou en crédits.
+- **Réserve** (« Pièces usées », la même dans tous les garages) : une pièce retirée d’une voiture (échange, « Aucun », démontage, chantier abandonné) garde son usure et y va. On y répare un lot (il revient neuf dans le sac, le surplus au hangar), on le vend selon son état (sa valeur × son état, sans la marge des voitures), ou on le pose sur la voiture du garage ou dans son chantier, avec son usure. Un lot peut aussi commencer une voiture dans une place vide.
+- **Vendre une voiture usée** : elle vaut son prix neuf moins le prix de sa réparation en crédits. La réparer puis la vendre rapporte autant ; la démonter puis vendre ses lots rapporte toujours moins.
+- **Affichage** :
+  - au garage, une jauge et un pourcentage par pièce (orange sous 50 %, rouge sous 20 %, un trait au seuil) et une alerte quand la voiture est à réparer ;
+  - l’état de la pièce la plus usée au choix du circuit (avec les effets), sous le compteur en course et dans l’indication du bas quand on conduit dans l’usine ; en visant une voiture garée à réparer, l’indication le dit ;
+  - à chaque dégât de 0,5 % ou plus, un éclat rouge (« Choc : carrosserie −3 % ») au-dessus du compteur en course, au-dessus de l’indication dans l’usine ;
+  - à l’arrivée, l’usure de l’essai (« Usure de cet essai : roues −3 % · moteur −1 % ») ;
+  - un message, une seule fois, quand une pièce passe le seuil.
+
+Le prix d’une réparation suit l’usure (à 20 %, des roues coûtent 4 pneus ou 560 cr). Pour une pièce hors d’usage :
+
+| Pièce | Matières | Crédits |
+|---|---|---|
+| Roues | 4 pneus | 700 cr |
+| Roues racing | 8 pneus | 1 400 cr |
+| Châssis | 1 plaque, 1 tige, 2 boulons | 480 cr |
+| Moteur | 2 plaques, 1 tige, 2 boulons | 590 cr |
+| Carrosserie | 2 plaques, 4 boulons | 650 cr |
+| Aileron | 1 plaque, 1 boulon | 250 cr |
 
 ## Architecture
 

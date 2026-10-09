@@ -39,6 +39,8 @@ import { bayOccupant, bayPose, bayRect, type BayBlocker, type GarageSpot } from 
 import { makeCarPreview } from '../car/CarModel';
 import { buildingIcons } from './view/BuildingIcons';
 import { formatCredits } from '../data/sales';
+import { isBlocked, raceBlocker, worstWear } from '../data/wear';
+import { aimBlockedText, blockText, boardedBlockedText, driveState, hitText, repairBeforeRaceText, seatRefusedText, wearTone } from '../data/wearText';
 import type { TrackSelectParams } from '../race/TrackSelectMode';
 
 export interface FactoryModeParams {
@@ -110,6 +112,10 @@ export class FactoryMode implements Mode {
   private previewOf: object | null = null;
   /** E pressed to get in/out of a car: ignore it (mining) until released. */
   private eLatch = false;
+  /** Last hit of the driven car flashed (WearMeter.last.seq; its meter starts at 0 on every boarding). */
+  private wearSeq = 0;
+  /** The driven car is past the race limit and was told so (boarding a car to repair, or crossing it): once per drive. */
+  private limitWarned = false;
   /** E held on a belt: seconds held and the line it picks up when HAND.BELT_LINE_SECONDS is reached. */
   private beltHold: { t: number; ids: Set<number>; taken: ItemCounts } | null = null;
   /** Last grounded positions (one every 0.25 s, ring of 4): where a fall through the relief comes back. */
@@ -513,6 +519,12 @@ export class FactoryMode implements Mode {
     this.avatar.root.visible = false;
     this.player.collider.setEnabled(false);
     this.hud.layer.classList.add('driving');
+    this.wearSeq = 0;
+    this.hud.flashWear(null);
+    // A car to repair still drives (back to a garage), but no longer races: said once, when getting in.
+    const block = raceBlocker(this.state.cars.find((c) => c.id === id) ?? null);
+    if (block) toast(boardedBlockedText(block.car.name, blockText(block.car) ?? ''), 'info', 3200);
+    this.limitWarned = block !== null;
   }
 
   /** Gets out if slow enough; false otherwise. */
@@ -532,6 +544,7 @@ export class FactoryMode implements Mode {
     this.state.player = { x: spot.position.x, y: spot.position.y, z: spot.position.z, yaw: spot.yaw };
     this.avatar.root.visible = true;
     this.hud.layer.classList.remove('driving');
+    this.hud.flashWear(null);
     // The bay the car left may be free for a waiting car.
     this.parkWaitingCars();
     return true;
@@ -864,6 +877,7 @@ export class FactoryMode implements Mode {
   private updateDriving(dt: number, alpha: number, controlling: boolean): void {
     const input = this.game.input;
     this.cars.update(dt, alpha, this.camera);
+    this.updateWear();
     const p = this.cars.drivingPosition;
     if (p) this.renderPos.copy(p);
     if (controlling) {
@@ -871,7 +885,14 @@ export class FactoryMode implements Mode {
       else if (input.wasPressed('respawn')) this.cars.resetToLastSafe('key');
       else if (input.wasPressed('retry')) {
         const id = this.cars.drivingId;
-        if (this.exitCar()) this.goRace(id);
+        // A car to repair does not start a race: the player stays in it (it still drives to a garage). Checked on the
+        // wear it would get out with: getting out may take a car at the limit past it.
+        const block = this.cars.raceBlockerOnExit();
+        if (block) {
+          toast(seatRefusedText(blockText(block.car) ?? ''), 'error', 2200);
+          // A car that crossed the limit just now: said by this toast, not again by updateWear.
+          this.limitWarned = true;
+        } else if (this.exitCar()) this.goRace(id);
       } else if (input.wasPressed('pause')) this.pause();
       // No pointer lock to drop: Escape pauses directly (as on foot).
       else if (!this.game.pointer.locked && input.wasPressed('cancel')) this.pause();
@@ -884,6 +905,24 @@ export class FactoryMode implements Mode {
     this.view.update(dt, this.game.loop.factoryAlpha, this.camera.position);
     this.tickHud(dt);
     // state.player keeps the spot where the player got in (a reload never spawns inside the car).
+  }
+
+  /**
+   * The driven car's wear, every frame without allocating: a new hit flashes above the hint (from WEAR.FLASH_MIN on),
+   * and crossing the race limit is said once (it still drives back to a garage).
+   */
+  private updateWear(): void {
+    const last = this.cars.wearLast;
+    if (last && last.seq !== this.wearSeq) {
+      this.wearSeq = last.seq;
+      const text = hitText(last);
+      if (text) this.hud.flashWear(text);
+    }
+    const car = this.cars.drivingCar;
+    if (car && !this.limitWarned && isBlocked(car)) {
+      this.limitWarned = true;
+      toast(repairBeforeRaceText(blockText(car) ?? ''), 'info', 3200);
+    }
   }
 
   private tickHud(dt: number): void {
@@ -1082,7 +1121,12 @@ export class FactoryMode implements Mode {
       const car = this.state.cars.find((c) => c.id === this.cars.drivingId);
       const blocker = this.cars.exitBlocker();
       const exit = !blocker ? `${k('interact')} descendre` : `<span class="muted">${blocker === 'tilt' ? 'trop en pente pour descendre' : blocker === 'water' ? 'sors de l’eau pour descendre' : 'ralentis pour descendre'}</span>`;
-      html = `<b>${car?.name ?? 'Voiture'}</b> · ${Math.round(this.cars.speedKmh())} km/h · ${exit} · ${k('retry')} courir · ${k('respawn')} replacer`;
+      // A worn car shows its most worn part (orange, red past the race limit, where Enter no longer races).
+      const state = car ? driveState(car) : null;
+      const tone = state && car ? wearTone(worstWear(car)) : 'good';
+      const wear = state ? ` · <span class="${tone === 'good' ? 'muted' : tone}">${state}</span>` : '';
+      const race = tone === 'bad' ? '' : ` · ${k('retry')} courir`;
+      html = `<b>${car?.name ?? 'Voiture'}</b>${wear} · ${Math.round(this.cars.speedKmh())} km/h · ${exit}${race} · ${k('respawn')} replacer`;
     } else if (t.kind === 'build') {
       const check = this.build.lastCheck;
       const err = check && !check.ok ? `<span class="bad">${describeError(check)}</span> · ` : '';
@@ -1111,7 +1155,7 @@ export class FactoryMode implements Mode {
       if (b) {
         const what =
           b.type === 'hub' ? 'hangar : établi, paliers, stock, statistiques'
-          : b.type === 'garage' ? 'garage : assembler, pièces, vendre, voiture de course'
+          : b.type === 'garage' ? 'garage : assembler, réparer, pièces, vendre, voiture de course'
           : b.type === 'dealer' ? 'concession : ventes, charger des pièces'
           : `configurer : ${BUILDINGS[b.type].name}`;
         // What it makes and how fast (last minute), to spot a slow link while walking the factory.
@@ -1125,7 +1169,12 @@ export class FactoryMode implements Mode {
           : load.tile
             ? `${e} prendre (${load.tile}) · maintenir : toute la ligne (${load.line})`
             : `${e} maintenir : prendre toute la ligne (${load.line})`;
-      } else if (car) html = `${e} monter dans ${this.state.cars.find((c) => c.id === car)?.name ?? 'la voiture'}`;
+      } else if (car) {
+        // A car to repair still drives (back to a garage): said before getting in, in red.
+        const c = this.state.cars.find((x) => x.id === car);
+        const repair = c ? aimBlockedText(c) : null;
+        html = `${e} monter dans ${c?.name ?? 'la voiture'}${repair ? ` · <span class="bad">${repair}</span>` : ''}`;
+      }
       else if (mine) {
         const pct = Math.round((this.mineT / HAND.MINE_SECONDS) * 100);
         html = this.mineT > 0

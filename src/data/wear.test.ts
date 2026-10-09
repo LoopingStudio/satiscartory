@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BLUEPRINTS, BLUEPRINT_IDS, CAR_PARTS } from './blueprints';
 import { WEAR } from './balance';
-import { blockedSlots, clearSlotWear, condition, repairCredits, repairItems, sanitizeSetWear, sanitizeWear, sanitizeWornSet, shownConditions, slotCountFor, slotWear, worstSlotOf, worstWear, wornCarPrice, wornSetPrice, type CarWear, type WearCar } from './wear';
+import { blockedSlots, clearSlotWear, condition, isBlocked, raceBlocker, repairCredits, repairItems, sanitizeSetWear, sanitizeWear, sanitizeWornSet, shownConditions, shownWorst, slotCountFor, slotWear, worstSlotOf, worstWear, wornCarPrice, wornSetPrice, type CarWear, type ShownWorst, type WearCar } from './wear';
 import { CAR_SALES, PART_VALUES, carPrice } from './sales';
 import type { ItemId } from './items';
 
@@ -23,6 +23,22 @@ describe('wear: state and race limit', () => {
     const { spoiler: _, ...noSpoiler } = FULL;
     expect(blockedSlots(sport({ spoiler: 900 }, noSpoiler))).toEqual([]);
     expect(blockedSlots({ blueprint: 'constructor', parts: {}, wear: { chassis: 1000 } })).toEqual([]);
+  });
+
+  it('raceBlocker / isBlocked: the car itself and its slots above the limit; null for the loaner, at 800 ‰ and without the spoiler', () => {
+    const car = sport({ wheels: 801, spoiler: 950 });
+    expect(raceBlocker(car)).toEqual({ kind: 'wear', car, slots: ['wheels', 'spoiler'] });
+    expect(raceBlocker(car)?.car).toBe(car);
+    expect(isBlocked(car)).toBe(true);
+    expect(raceBlocker(null)).toBeNull();
+    expect([raceBlocker(sport({ wheels: WEAR.BLOCK_ABOVE })), isBlocked(sport({ wheels: WEAR.BLOCK_ABOVE }))]).toEqual([null, false]);
+    expect([raceBlocker(sport()), isBlocked(sport())]).toEqual([null, false]);
+    // Taking the worn-out spoiler off (« Aucun ») lifts the block, even before its wear key goes.
+    const { spoiler: _, ...noSpoiler } = FULL;
+    expect([raceBlocker(sport({ spoiler: 1000 }, noSpoiler)), isBlocked(sport({ spoiler: 1000 }, noSpoiler))]).toEqual([null, false]);
+    // isBlocked agrees with raceBlocker on a grid of wears.
+    for (const w of [0, 1, 500, 799, 800, 801, 999, 1000]) for (const slot of ['chassis', 'engine', 'wheels', 'panels', 'spoiler'] as const)
+      expect(isBlocked(sport({ [slot]: w }))).toBe(raceBlocker(sport({ [slot]: w })) !== null);
   });
 
   it('worstSlotOf / worstWear: the most worn installed part (the first on a tie), nothing for a new car or an odd blueprint', () => {
@@ -104,6 +120,51 @@ describe('wear: shown state', () => {
     expect(shownConditions(car, out)).toBe(true);
     expect(out[2]).toBe(98);
     expect(shownConditions({ blueprint: 'constructor', parts: {} }, out)).toBe(false);
+  });
+
+  it('shownWorst: the most worn part and its %, true only when either changes (a HUD touches the DOM then only)', () => {
+    const car = sport();
+    const out: ShownWorst = { slot: null, pct: -1 };
+    expect(shownWorst(car, out)).toBe(true);
+    expect(out).toEqual({ slot: null, pct: 100 });
+    expect(shownWorst(car, out)).toBe(false);
+    car.wear = { wheels: 9 };
+    expect(shownWorst(car, out)).toBe(true);
+    expect(out).toEqual({ slot: 'wheels', pct: 99 });
+    // A thousandth that does not change the % shown, the same part: nothing to redraw.
+    car.wear.wheels = 10;
+    expect(shownWorst(car, out)).toBe(false);
+    car.wear.wheels = 11;
+    expect(shownWorst(car, out)).toBe(true);
+    expect(out.pct).toBe(98);
+    // Another part takes the lead at the same %: the part shown changes.
+    car.wear.panels = 12;
+    expect(shownWorst(car, out)).toBe(true);
+    expect(out).toEqual({ slot: 'panels', pct: 98 });
+    // Repaired: new again.
+    delete car.wear;
+    expect(shownWorst(car, out)).toBe(true);
+    expect(out).toEqual({ slot: null, pct: 100 });
+    expect(shownWorst({ blueprint: 'constructor', parts: KART, wear: { wheels: 500 } }, out)).toBe(false);
+  });
+
+  it('every-frame helpers allocate nothing: the same `out`, static slots, primitives only', () => {
+    const car = sport({ wheels: 540, engine: 120 });
+    const out: ShownWorst = { slot: null, pct: -1 };
+    shownWorst(car, out);
+    const arr: number[] = [];
+    shownConditions(car, arr);
+    const slot = worstSlotOf(car);
+    for (let i = 0; i < 1000; i++) {
+      expect(shownWorst(car, out)).toBe(false);
+      expect(shownConditions(car, arr)).toBe(false);
+      // The blueprint's own SlotDef every time, never a copy.
+      expect(worstSlotOf(car)).toBe(slot);
+    }
+    expect(slot).toBe(BLUEPRINTS.sport.slots[2]);
+    expect(Object.keys(out)).toEqual(['slot', 'pct']);
+    expect(arr).toHaveLength(BLUEPRINTS.sport.slots.length);
+    expect([typeof worstWear(car), typeof isBlocked(car)]).toEqual(['number', 'boolean']);
   });
 });
 

@@ -16,13 +16,13 @@ import { carPrice, formatCredits } from '../data/sales';
 import { bayOccupant, type BayBlocker, type GarageSpot } from './parking';
 import { buildProgress, type CarBuild } from './build';
 import { abandonBuild, buildIn, installBuildPart, removeBuildPart } from './buildActions';
-import { condition, slotWear, worstWear, wornCarPrice, wornSetPrice } from '../data/wear';
+import { condition, isBlocked, slotWear, worstWear, wornCarPrice, wornSetPrice } from '../data/wear';
 import {
-  BUILD_SLOT_BUSY, BUILD_WORN_TITLE, CREDITS_TITLE, POSE_WORN_TITLE, REMOVE_WORN_TITLE, RENEW_TITLE, REPAIR_ALL_TITLE, VALUE_TITLE,
-  WORN_INTRO, WORN_NO_TARGET, WORN_POSE_REFUSED, abandonQuestion, abandonedText, carRepairedText, carRowTip, disassembleQuestion,
-  disassembledText, effectsText, installTitle, installedInBuildText, installedOnCarText, missingTip, pct, poseWornLabel, refusedText,
-  renewLabel, renewTip, repairTitle, repairedValueText, reserveHint, reserveRowText, reserveSummary, sellSetQuestion, sellSetTitle,
-  setRepairedText, setSoldText, shortTip, slotRepairedText, stateText, swappedText, takeOffTitle, wornRemovedText, wornSaleNote,
+  BUILD_SLOT_BUSY, BUILD_WORN_TITLE, CREDITS_TITLE, POSE_WORN_TITLE, REMOVE_WORN_TITLE, RENEW_TITLE, REPAIR_ALL_TITLE, TO_REPAIR, TO_REPAIR_TAG,
+  VALUE_TITLE, WORN_INTRO, WORN_NO_TARGET, WORN_POSE_REFUSED, abandonQuestion, abandonedText, blockAlert, blockText, carRepairedText, carRowTip,
+  disassembleQuestion, disassembledText, effectsText, garageRaceTip, installTitle, installedInBuildText, installedOnCarText, missingTip, pct,
+  poseWornLabel, refusedText, renewLabel, renewTip, repairTitle, repairedValueText, reserveHint, reserveRowText, reserveSummary, sellSetQuestion,
+  sellSetTitle, setRepairedText, setSoldText, shortTip, slotRepairedText, stateText, swappedText, takeOffTitle, wornRemovedText, wornSaleNote,
 } from '../data/wearText';
 import {
   carQuote, installWornInBuild, installWornSet, payCheck, quoteCaps, renewCarSlot, repairCar, repairCarSlot, repairWornSet, sellWornSet,
@@ -383,7 +383,7 @@ export class GaragePanel {
       ),
       el('div', { class: 'muted small' },
         occupant
-          ? `Dans la place : ${occupant.name}`
+          ? `Dans la place : ${occupant.name}${isBlocked(occupant) ? ` · ${TO_REPAIR}` : ''}`
           : build && progress
             ? `Dans la place : ${BLUEPRINTS[build.blueprint].name} en construction (${progress.done}/${progress.total} pièces)`
             : 'Place libre : assemble une voiture ici, ou pose ses pièces au fur et à mesure.'),
@@ -397,17 +397,20 @@ export class GaragePanel {
       if (current) selected = b;
       return b;
     };
-    // A worn car shows its most worn part on a mini gauge, and in the pad tip (PadNav reads the focused row only).
+    // A worn car shows its most worn part on a mini gauge, and in the pad tip (PadNav reads the focused row only);
+    // past the race limit, the tag « À réparer ».
     const row = (id: string | null, name: string, sub: HTMLElement, worn: CarInstance | null = null) => {
       const viewing = this.view.kind === 'car' && this.view.id === id;
       const racing = (this.state.selectedCarId ?? null) === id;
       const state = worn ? stateText(worn) : null;
+      const blocked = !!worn && isBlocked(worn);
       return pick(
-        el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', 'data-pad-tab': true, 'data-pad-tip': carRowTip(racing, state), onclick: () => this.show({ kind: 'car', id }) },
+        el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', 'data-pad-tab': true, 'data-pad-tip': carRowTip(racing, state, blocked), onclick: () => this.show({ kind: 'car', id }) },
           el('span', { class: 'car-star', title: racing ? 'Voiture de course' : '' }, racing ? '★' : '☆'),
           el('span', { class: 'col', style: 'gap:0' }, el('b', {}, name), sub),
           worn && state ? el('span', { class: 'spacer' }) : null,
           worn && state ? wearGauge(worstWear(worn), 'mini', `État : ${state}`) : null,
+          blocked ? el('span', { class: 'wear-tag' }, TO_REPAIR_TAG) : null,
         ),
         viewing,
       );
@@ -718,16 +721,21 @@ export class GaragePanel {
     return main;
   }
 
-  /** Main action: « Courir ». */
-  private renderCar(r: HTMLElement, car: CarInstance | null, stock: ItemCounts, quotes: ShownQuotes): HTMLElement {
+  /**
+   * Main action: « Courir ». A car past the race limit cannot race: « Courir » is disabled and there is no main action,
+   * the focus starts on its row (the « Réparer » buttons just right of it pay; a first A must not).
+   */
+  private renderCar(r: HTMLElement, car: CarInstance | null, stock: ItemCounts, quotes: ShownQuotes): HTMLElement | null {
     const bp = blueprintOf(car);
     const loc = car ? carLocation(car, this.spot!, this.driven) : null;
+    const block = car ? blockText(car) : null;
     append(r,
       el('h2', {}, car?.name ?? BLUEPRINTS.loaner.name),
       el('div', { class: 'small' },
         el('span', { class: 'muted' }, car ? `${bp?.name ?? car.blueprint} · ` : 'Prêt du circuit'),
         loc ? el('span', { class: loc === 'here' ? 'good' : 'muted' }, LOCATION_LABEL[loc]) : null,
       ),
+      block !== null ? el('div', { class: 'wear-alert' }, blockAlert(block, loc === 'here')) : null,
       bp ? el('div', { class: 'muted small', style: 'margin-top:4px' }, bp.description) : null,
     );
     // A worn car sells for less: its new price minus its repair in credits (repairing it first brings in the same).
@@ -795,7 +803,15 @@ export class GaragePanel {
     const isRacing = (this.state.selectedCarId ?? null) === id;
     // One confirmation at a time: « Démonter » and « Vendre » hide while either waits for its answer.
     const pending = !!car && (this.confirming === car.id || this.confirming === sellKey(car.id));
-    const race = el('button', { class: 'primary', 'data-action': 'race', title: 'Choisir un circuit avec cette voiture', onclick: () => this.doRace(id) }, 'Courir');
+    const raceTip = block !== null ? garageRaceTip(block, loc === 'here') : undefined;
+    const race = el('button', {
+      class: 'primary',
+      'data-action': 'race',
+      disabled: block !== null,
+      title: raceTip ?? 'Choisir un circuit avec cette voiture',
+      'data-pad-tip': raceTip,
+      onclick: () => this.doRace(id),
+    }, 'Courir');
     r.appendChild(
       el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' },
         race,
@@ -834,7 +850,7 @@ export class GaragePanel {
         ),
       );
     }
-    return race;
+    return block !== null ? null : race;
   }
 
   /** Under a worn slot of the car in the bay: repair it in items or credits, or put new parts of the same kind on. */

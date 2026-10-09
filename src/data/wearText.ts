@@ -1,8 +1,8 @@
 import { WEAR } from './balance';
-import type { SlotId } from './blueprints';
+import { blueprintById, type SlotId } from './blueprints';
 import { ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from './items';
 import { formatCredits } from './sales';
-import { condition, slotWear, worstSlotOf, type WearCar } from './wear';
+import { blockedSlots, condition, isBlocked, slotWear, worstSlotOf, type CarWear, type WearCar } from './wear';
 
 /*
  * Texts of the wear (pure, French UI). The slots' genders differ (les roues, la carrosserie, le châssis, le moteur,
@@ -58,11 +58,168 @@ export function capFirst(s: string): string {
 
 /**
  * Pad tip of a car row in the garage, the pieces that apply only: « Voiture de course · état : roues 46 % »,
- * « État : roues 46 % », « Voiture de course »; undefined for none. `state` is the car's stateText.
+ * « État : roues 46 % · à réparer », « Voiture de course »; undefined for none. `state` is the car's stateText,
+ * `blocked` past the race limit.
  */
-export function carRowTip(racing: boolean, state: string | null): string | undefined {
-  const tip = [racing ? 'Voiture de course' : '', state ? `état : ${state}` : ''].filter((t) => t).join(' · ');
+export function carRowTip(racing: boolean, state: string | null, blocked = false): string | undefined {
+  const tip = [racing ? 'Voiture de course' : '', state ? `état : ${state}` : '', blocked ? TO_REPAIR : ''].filter((t) => t).join(' · ');
   return tip ? capFirst(tip) : undefined;
+}
+
+// ------------------------------------------------------------------ the race limit (a car to repair)
+
+/** After a car's name or state: « Dans la place : Kart Oopi n°1 · à réparer ». */
+export const TO_REPAIR = 'à réparer';
+/** Tag of a car row in the garage. */
+export const TO_REPAIR_TAG = 'À réparer';
+/** Title of the halted panel of a race, label of a blocked « Courir » (track selection). */
+export const TO_REPAIR_AT_GARAGE = 'À réparer au garage';
+/** The button that races the loaner instead of a car to repair. */
+export const RACE_LOANER = 'Courir avec le kart de location';
+/** Under the halted panel's title. */
+export const HALTED_NOTE = 'Ramène-la au garage en la conduisant dans l’usine, ou cours avec le kart de location.';
+/** State line of the track selection: the loaner, a car without wear. */
+export const LOANER_STATE = 'Prêté par le circuit : il ne s’use pas.';
+export const NEW_STATE = 'État : neuve';
+
+/**
+ * The slots that keep a car from racing, with their state: « roues à 18 % », « roues à 18 %, carrosserie à 12 % »
+ * (blueprint order); null when it races.
+ */
+export function blockText(car: WearCar): string | null {
+  const slots = blockedSlots(car);
+  return slots.length ? slots.map((s) => `${SLOT_WORD[s]} à ${pct(slotWear(car, s))}`).join(', ') : null;
+}
+
+/** A blocked car asked for a race (toast): « Kart Oopi n°1 est à réparer au garage : tu cours avec le kart de location ». */
+export function fallbackText(name: string): string {
+  return `${name} est à réparer au garage : tu cours avec le kart de location`;
+}
+
+/** Halted panel (« Recommencer » with a car past the limit): « Kart Oopi n°1 ne peut plus prendre le départ : roues à 18 %. ». */
+export function haltedText(name: string, block: string): string {
+  return `${name} ne peut plus prendre le départ : ${block}.`;
+}
+
+/** Finish panel of a car past the limit: « Kart Oopi n°1 est à réparer au garage : roues à 18 %. ». */
+export function finishBlockedText(name: string, block: string): string {
+  return `${name} est à réparer au garage : ${block}.`;
+}
+
+/** Car option of the track selection: « Kart Oopi n°1 (à réparer) ». */
+export function blockedOption(name: string): string {
+  return `${name} (${TO_REPAIR})`;
+}
+
+/** Why « Courir » is disabled (track selection): « Roues à 18 % : répare-la au garage, ou cours avec le kart de location. ». */
+export function blockedRaceTip(block: string): string {
+  return `${capFirst(block)} : répare-la au garage, ou cours avec le kart de location.`;
+}
+
+/** Under a blocked car (track selection): « Roues à 18 % : Kart Oopi n°1 ne prend plus le départ. Répare-la… ». */
+export function blockedRaceLine(name: string, block: string): string {
+  return `${capFirst(block)} : ${name} ne prend plus le départ. Répare-la au garage, ou cours avec le kart de location.`;
+}
+
+/**
+ * Alert of a car past the limit (garage): in this garage's bay, what the limit means; elsewhere, where to repair it.
+ * Both say it still drives in the factory.
+ */
+export function blockAlert(block: string, here: boolean): string {
+  return here
+    ? `À réparer : ${block}. Sous ${pct(WEAR.BLOCK_ABOVE)}, une voiture ne prend plus le départ d’une course ; dans l’usine, elle roule encore.`
+    : `À réparer : ${block}. Amène-la dans la place d’un garage pour la réparer ; dans l’usine, elle roule encore.`;
+}
+
+/** Why the garage's « Courir » is disabled: « À réparer : roues à 18 %. Répare-la ici, ou cours avec le kart de location. ». */
+export function garageRaceTip(block: string, here: boolean): string {
+  return `À réparer : ${block}. ${here ? 'Répare-la ici' : 'Amène-la dans la place d’un garage pour la réparer'}, ou cours avec le kart de location.`;
+}
+
+/** Enter in the driver's seat of a car past the limit (toast): « À réparer au garage : roues à 18 % ». */
+export function seatRefusedText(block: string): string {
+  return `${TO_REPAIR_AT_GARAGE} : ${block}`;
+}
+
+/** Getting into a car past the limit (toast): « Kart Oopi n°1 est à réparer : roues à 18 %. Elle roule encore jusqu’au garage. ». */
+export function boardedBlockedText(name: string, block: string): string {
+  return `${name} est à réparer : ${block}. Elle roule encore jusqu’au garage.`;
+}
+
+/**
+ * The driven car's state in the factory's bottom hint: « roues 46 % », « roues 18 % : à réparer au garage » past
+ * the limit; null when new. Allocates its string only (the hint is rebuilt every frame).
+ */
+export function driveState(car: WearCar): string | null {
+  const s = worstSlotOf(car);
+  if (!s) return null;
+  const w = slotWear(car, s.id);
+  return `${SLOT_WORD[s.id]} ${pct(w)}${w > WEAR.BLOCK_ABOVE ? ' : à réparer au garage' : ''}`;
+}
+
+/** Aiming at a parked car past the limit (factory hint): « à réparer (roues 18 %) »; null when it races. */
+export function aimBlockedText(car: WearCar): string | null {
+  return isBlocked(car) ? `${TO_REPAIR} (${stateText(car)})` : null;
+}
+
+/** The race limit crossed during a race (toast, once): « Roues à 19 % : dernier essai avant réparation au garage ». */
+export function lastAttemptText(block: string): string {
+  return `${capFirst(block)} : dernier essai avant réparation au garage`;
+}
+
+/** The race limit crossed while driving in the factory (toast, once): « Roues à 19 % : à réparer au garage avant la prochaine course ». */
+export function repairBeforeRaceText(block: string): string {
+  return `${capFirst(block)} : à réparer au garage avant la prochaine course`;
+}
+
+// ------------------------------------------------------------------ driving (race pill, damage flash, finish)
+
+/** What wore the car last (WearMeter.last.cause): a shock, or the cause of a put-back. */
+export type HitCause = 'shock' | keyof typeof WEAR.RESET;
+
+/** Head of a damage flash by its cause (« Coincée » and « Replacée » stay under WEAR.FLASH_MIN: never shown). */
+export const HIT_CAUSE: Record<HitCause, string> = {
+  shock: 'Choc',
+  flip: 'Tonneau',
+  fall: 'Chute',
+  water: 'Dans l’eau',
+  stuck: 'Coincée',
+  key: 'Replacée',
+};
+
+/**
+ * Damage flash of the most hit part: « Choc : carrosserie −3 % » (its ‰ in whole percent, at least 1); null under
+ * WEAR.FLASH_MIN (« Retour arrière », stuck: nothing shows).
+ */
+export function hitText(last: { readonly cause: HitCause; readonly slot: SlotId; readonly permille: number }): string | null {
+  if (!(last.permille >= WEAR.FLASH_MIN)) return null;
+  return `${HIT_CAUSE[last.cause]} : ${SLOT_WORD[last.slot]} −${Math.max(1, Math.round(last.permille / 10))} %`;
+}
+
+/** The race pill (under the speedometer): « Roues 46 % » by the most worn part, « Neuve » when new. */
+export function pillText(car: WearCar): string {
+  const s = worstSlotOf(car);
+  return s ? `${capFirst(SLOT_WORD[s.id])} ${pct(slotWear(car, s.id))}` : 'Neuve';
+}
+
+/**
+ * What one attempt wore (finish panel), from the car's wear at its start (`before`) to now (`after`): the slots whose
+ * state shown dropped, the most first (blueprint order on a tie), « Usure de cet essai : roues −3 % · moteur −1 % »;
+ * « Usure de cet essai : moins de 1 % » when it wore without a percentage dropping; null when it did not wear.
+ */
+export function attemptText(blueprint: string, before: Readonly<CarWear> | undefined, after: Readonly<CarWear> | undefined): string | null {
+  const drops: [SlotId, number][] = [];
+  let wore = false;
+  for (const s of blueprintById(blueprint)?.slots ?? []) {
+    const b = before?.[s.id] ?? 0;
+    const a = after?.[s.id] ?? 0;
+    if (a > b) wore = true;
+    const d = condition(b) - condition(a);
+    if (d > 0) drops.push([s.id, d]);
+  }
+  if (!drops.length) return wore ? 'Usure de cet essai : moins de 1 %' : null;
+  drops.sort((x, y) => y[1] - x[1]);
+  return `Usure de cet essai : ${drops.map(([s, d]) => `${SLOT_WORD[s]} −${d} %`).join(' · ')}`;
 }
 
 // ------------------------------------------------------------------ effects

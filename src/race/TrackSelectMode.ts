@@ -14,9 +14,13 @@ import { confirmDialog } from '../ui/confirm';
 import { dual, html, padGlyph } from '../ui/padHints';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor } from './medals';
 import { BLUEPRINTS } from '../data/blueprints';
-import { LOANER_SPEC, specOf } from '../garage/assembly';
+import { isBlocked, worstWear } from '../data/wear';
+import { LOANER_STATE, NEW_STATE, RACE_LOANER, TO_REPAIR_AT_GARAGE, blockText, blockedOption, blockedRaceLine, blockedRaceTip, effectsText, stateText, wearTone } from '../data/wearText';
+import { LOANER_SPEC, specOf, type CarInstance } from '../garage/assembly';
 import { selectRaceCar } from '../garage/actions';
 import { carStatsBlock } from '../ui/carStats';
+import { wearGauge } from '../ui/wearGauge';
+import { wearEffects } from '../car/wornTuning';
 import type { CarSpec } from '../car/stats';
 import type { EditorParams } from '../track/editor/TrackEditorMode';
 import type { RaceParams } from './RaceMode';
@@ -124,11 +128,29 @@ export class TrackSelectMode implements Mode {
     list.querySelector('.track-row.selected')?.scrollIntoView({ block: 'nearest' });
   }
 
-  private carOptions(): { id: string | null; label: string; spec: CarSpec }[] {
+  /** The loaner, then the player's cars; a car past the race limit is labelled « (à réparer) ». */
+  private carOptions(): { id: string | null; label: string; spec: CarSpec; car: CarInstance | null }[] {
     return [
-      { id: null, label: BLUEPRINTS.loaner.name, spec: LOANER_SPEC },
-      ...this.state.cars.map((c) => ({ id: c.id, label: c.name, spec: specOf(c) })),
+      { id: null, label: BLUEPRINTS.loaner.name, spec: LOANER_SPEC, car: null },
+      ...this.state.cars.map((c) => ({ id: c.id, label: isBlocked(c) ? blockedOption(c.name) : c.name, spec: specOf(c), car: c })),
     ];
+  }
+
+  /**
+   * The chosen car's state under its stats: « État : roues 46 % » with a mini gauge and the effects of its wear,
+   * « État : neuve », or the loaner's « Prêté par le circuit : il ne s’use pas. ».
+   */
+  private wearSummary(car: CarInstance | null): HTMLElement {
+    if (!car) return el('div', { class: 'muted wear-summary' }, LOANER_STATE);
+    const state = stateText(car);
+    if (!state) return el('div', { class: 'muted wear-summary' }, NEW_STATE);
+    const w = worstWear(car);
+    const effects = effectsText(wearEffects(specOf(car), car.wear));
+    return el('div', {},
+      el('div', { class: 'row wear-summary' },
+        el('span', { class: 'muted' }, 'État : '), el('b', { class: wearTone(w) }, state), wearGauge(w, 'mini', `État : ${state}`)),
+      effects ? el('div', { class: 'muted small' }, `Effets de l’usure : ${effects}`) : null,
+    );
   }
 
   private renderDetail(): void {
@@ -172,22 +194,43 @@ export class TrackSelectMode implements Mode {
       select.appendChild(opt);
     }
     const current = options.find((o) => (o.id ?? null) === (this.state.selectedCar?.id ?? null)) ?? options[0]!;
-    d.append(el('h3', { style: 'margin-top:12px' }, 'Voiture'), select, carStatsBlock(current.spec, null, 'small'));
+    d.append(el('h3', { style: 'margin-top:12px' }, 'Voiture'), select, carStatsBlock(current.spec, null, 'small'), this.wearSummary(current.car));
 
+    // A car to repair does not start: « Courir » is disabled, the loaner takes the default focus. It stays the race
+    // car (selectedCarId): once repaired, it races again.
+    const blocked = current.car ? blockText(current.car) : null;
+    const blockedTip = analysis.ok && blocked !== null ? blockedRaceTip(blocked) : undefined;
+    const race = (carId: string | null) => {
+      const back: TrackSelectParams = { selected: t.id, origin: this.origin };
+      const p: RaceParams = { track: t, carId, returnTo: 'tracks', returnParams: back };
+      void this.game.switchMode('race', p);
+    };
+    if (current.car && blocked !== null) d.appendChild(el('div', { class: 'bad small', style: 'margin-top:8px' }, blockedRaceLine(current.car.name, blocked)));
     const buttons = el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' });
     buttons.appendChild(
       el('button', {
         class: 'primary',
-        disabled: !analysis.ok,
+        disabled: !analysis.ok || blocked !== null,
+        title: blockedTip,
+        'data-pad-tip': blockedTip,
         'data-action': 'race',
-        'data-pad-default': true,
-        onclick: () => {
-          const back: TrackSelectParams = { selected: t.id, origin: this.origin };
-          const p: RaceParams = { track: t, carId: this.state.selectedCar?.id ?? null, returnTo: 'tracks', returnParams: back };
-          void this.game.switchMode('race', p);
-        },
-      }, analysis.ok ? 'Courir' : 'Circuit invalide'),
+        'data-pad-default': blocked === null,
+        onclick: () => race(this.state.selectedCar?.id ?? null),
+      }, !analysis.ok ? 'Circuit invalide' : blocked !== null ? TO_REPAIR_AT_GARAGE : 'Courir'),
     );
+    if (blocked !== null) {
+      buttons.appendChild(
+        el('button', {
+          class: 'primary',
+          disabled: !analysis.ok,
+          title: analysis.ok ? undefined : 'Circuit invalide',
+          'data-pad-tip': analysis.ok ? undefined : 'Circuit invalide',
+          'data-action': 'race-loaner',
+          'data-pad-default': true,
+          onclick: () => race(null),
+        }, RACE_LOANER),
+      );
+    }
     if (!t.builtin) {
       buttons.appendChild(el('button', { 'data-action': 'edit', onclick: () => this.openEditor({ trackId: t.id }) }, 'Modifier'));
       buttons.appendChild(el('button', { class: 'danger', 'data-action': 'delete', onclick: () => void this.remove(t) }, 'Supprimer'));

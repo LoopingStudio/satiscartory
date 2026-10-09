@@ -28,7 +28,11 @@ import { RaceSession, type RaceEvent } from './RaceSession';
 import { crossGate } from './crossing';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
 import { countAttempt, submitRun } from './records';
-import { LOANER_SPEC, specOf, type CarInstance } from '../garage/assembly';
+import { endAttempt, raceCarFor, type RaceCar } from './raceCar';
+import { LOANER_SPEC, type CarInstance } from '../garage/assembly';
+import { isBlocked, type CarWear, type RaceBlock } from '../data/wear';
+import { HALTED_NOTE, RACE_LOANER, TO_REPAIR_AT_GARAGE, attemptText, blockText, fallbackText, finishBlockedText, haltedText, lastAttemptText } from '../data/wearText';
+import { WearHud } from '../ui/wearHud';
 
 export interface RaceParams {
   track?: TrackData;
@@ -76,9 +80,22 @@ export class RaceMode implements Mode {
   private params: RaceParams = {};
   private spec!: CarSpec;
   private carId: string | null = null;
+  /** The raced car (race/raceCar.ts): whether it wears, and whether another attempt may start (attemptGate). */
+  private raced!: RaceCar;
+  /**
+   * « Recommencer » with a car that wore past the race limit: back on the line, the session frozen in its countdown
+   * (no timer, no wear, no respawn), the halted panel offers the loaner.
+   */
+  private halted = false;
+  /** The finish panel offers the loaner instead of « Réessayer »: Entrée does what its button does. */
+  private finishLoaner = false;
   /** The player's car when it wears in this race, and its meter (null: the loaner, a forced spec, a test drive). */
   private wearCar: CarInstance | null = null;
   private meter: WearMeter | null = null;
+  /** The car's wear when the attempt started (one copy per attempt): the finish panel says what the attempt wore. */
+  private attemptWear: CarWear | null = null;
+  /** The race limit was crossed in this race: said once (a toast), the next attempt halts. */
+  private limitWarned = false;
   /** The car's tuning when new; an attempt drives it worn as the car was when it started (attemptTuning). */
   private baseTuning!: VehicleTuning;
   private tuningPanel: TuningPanel | null = null;
@@ -94,6 +111,8 @@ export class RaceMode implements Mode {
   // HUD
   private layer: HTMLElement | null = null;
   private hud: Record<string, HTMLElement> = {};
+  /** Pill and damage flash of a car that wears (null: the loaner, a forced spec, a test drive show nothing). */
+  private wearHud: WearHud | null = null;
   private splitTimer = 0;
   private finished = false;
 
@@ -112,13 +131,14 @@ export class RaceMode implements Mode {
     this.checkpointCount = this.track.gates.filter((g) => g.kind === 'checkpoint').length;
     this.finishDir = finishDirections(this.trackData, this.track.gates);
 
-    const car = params?.carId !== undefined
-      ? (this.state.cars.find((c) => c.id === params.carId) ?? null)
-      : params?.spec ? null : this.state.selectedCar;
-    this.spec = params?.spec ?? specOf(car);
-    this.carId = car?.id ?? null;
+    // A car to repair never starts: the loaner races instead (whatever led here: the menu, ?mode=race…).
+    const raced = raceCarFor(this.state, { carId: params?.carId, spec: params?.spec, test: params?.test });
+    this.raced = raced;
+    this.spec = raced.spec;
+    this.carId = raced.car?.id ?? null;
+    if (raced.fallback) toast(fallbackText(raced.fallback.car.name), 'info', 3200);
     // Wear: the player's own car only. The loaner, a forced spec (?car=) and the editor's test drive never wear.
-    this.wearCar = car && !params?.spec && !params?.test ? car : null;
+    this.wearCar = raced.wears ? raced.car : null;
     this.meter = this.wearCar ? new WearMeter(this.wearCar) : null;
     const stats = computeCarStats(this.spec);
     this.baseTuning = tuningFromStats(stats);
@@ -151,11 +171,18 @@ export class RaceMode implements Mode {
     return car ? wornTuning(this.baseTuning, car.wear, car.parts) : this.baseTuning;
   }
 
+  /**
+   * Another attempt (Suppr, Entrée / Y and « Réessayer » at the finish, View): counts the one interrupted, puts the car
+   * back on the line. A car that wore past the race limit during the session does not start it: halted (see
+   * `halted`). Never switches modes: it runs from fixedUpdate too, and a switch frees the world it steps.
+   */
   restart(): void {
+    // The interrupted attempt's last shock counts first: in the gate, the save and the copy taken for the next one.
+    const block = endAttempt(this.raced, this.meter);
     this.countUnfinished();
     // A worn car starts each attempt with its wear of now. Without wear nothing is applied again (the dev tuning
     // panel keeps its values); the panel follows a new tuning object.
-    if (this.wearCar) {
+    if (this.wearCar && !block) {
       const t = this.attemptTuning();
       if (t !== this.vehicle.tuning) {
         this.vehicle.applyTuning(t);
@@ -171,16 +198,30 @@ export class RaceMode implements Mode {
     this.prevStep.copy(this.vehicle.curPos);
     this.chase.snap();
     this.finished = false;
+    this.finishLoaner = false;
     this.pending = [];
     this.hud.finish?.remove();
     delete this.hud.finish;
+    this.hud.halt?.remove();
+    delete this.hud.halt;
     this.splitTimer = 0;
     if (this.hud.split) this.hud.split.style.opacity = '0';
+    this.halted = block !== null;
+    if (block) this.showHalted(block);
+    else if (this.wearCar) this.attemptWear = { ...this.wearCar.wear };
   }
 
-  /** Back to the last checkpoint; once started, it wears the car by its cause (see WEAR.RESET). */
+  /**
+   * Races the same track with the loaner instead of a car to repair (halted or finish panel). From a click, or from
+   * update() followed by a return: the switch frees this mode at once.
+   */
+  private raceLoaner(): void {
+    void this.game.switchMode('race', { ...this.params, carId: null } satisfies RaceParams);
+  }
+
+  /** Back to the last checkpoint; once started, it wears the car by its cause (see WEAR.RESET). Not while halted. */
   respawn(cause: ResetCause = 'key'): void {
-    if (this.session.phase === 'finished') return;
+    if (this.halted || this.session.phase === 'finished') return;
     this.session.respawns++;
     this.vehicle.reset(this.respawnPoint.position, this.respawnPoint.yaw);
     this.prevStep.copy(this.vehicle.curPos);
@@ -208,7 +249,8 @@ export class RaceMode implements Mode {
     if (input.consume('restart')) this.restart();
     if (input.consume('respawn')) this.respawn('key');
 
-    for (const ev of this.session.step()) this.pending.push(ev);
+    // Halted: the session stays in its countdown (the car held on the line, nothing timed nor worn).
+    if (!this.halted) for (const ev of this.session.step()) this.pending.push(ev);
     const phase = this.session.phase;
     let controls = phase === 'running' ? readVehicleControls(input) : NO_CONTROLS;
     if (phase === 'finished') controls = { ...NO_CONTROLS, brake: 0.4 };
@@ -248,7 +290,15 @@ export class RaceMode implements Mode {
       this.exitTo();
       return;
     }
-    if (this.finished && input.wasPressed('retry')) this.restart();
+    if ((this.finished || this.halted) && input.wasPressed('retry')) {
+      // Entrée does what the panel's first button shows (the pad's Y clicks it): the loaner when halted or offered at
+      // the finish, else another attempt (restart() halts a car to repair, with its panel).
+      if (this.halted || this.finishLoaner) {
+        this.raceLoaner();
+        return;
+      }
+      this.restart();
+    }
 
     for (const e of this.pending) this.onEvent(e);
     this.pending = [];
@@ -290,6 +340,9 @@ export class RaceMode implements Mode {
 
   private onFinish(ms: number): void {
     this.finished = true;
+    // The attempt ends at the line: a shock still open there counts now (in the save, the panel and its summary). Then
+    // nothing wears the car any more (no respawn after the line): the panel's choice holds.
+    const block = endAttempt(this.raced, this.meter);
     let improved = false;
     let previous: number | null = null;
     if (!this.params.test) {
@@ -301,7 +354,7 @@ export class RaceMode implements Mode {
     } else {
       this.params.onTestFinish?.(ms);
     }
-    this.showFinish(ms, medalFor(ms, this.trackData.medals), improved, previous);
+    this.showFinish(ms, medalFor(ms, this.trackData.medals), improved, previous, block);
   }
 
   // ------------------------------------------------------------------ HUD
@@ -315,10 +368,12 @@ export class RaceMode implements Mode {
     h.countdown = el('div', { class: 'race-countdown' });
     h.speed = el('div', { class: 'speedo' }, '0');
     h.info = el('div', { class: 'panel top-left race-info' });
+    // A car that wears: its state under « km/h », its damage flashing above the speed.
+    const wear = this.wearCar ? (this.wearHud = new WearHud()) : null;
     this.layer.append(
       el('div', { class: 'top-center race-top' }, h.timer, h.cp, h.split),
       h.countdown,
-      el('div', { class: 'speedo-wrap bottom-right' }, h.speed, el('div', { class: 'speedo-unit' }, 'km/h')),
+      el('div', { class: 'speedo-wrap bottom-right' }, wear?.flash.el, h.speed, el('div', { class: 'speedo-unit' }, 'km/h'), wear?.pill),
       h.info,
       el('div', { class: 'bottom-left race-keys muted small' }, html(this.keysHint())),
     );
@@ -372,8 +427,18 @@ export class RaceMode implements Mode {
     this.splitTimer = 2.5;
   }
 
-  private showFinish(ms: number, medal: Medal | null, improved: boolean, previous: number | null): void {
+  /** `block`: the car wore past the race limit during this run (endAttempt): no other attempt, the loaner instead. */
+  private showFinish(ms: number, medal: Medal | null, improved: boolean, previous: number | null, block: RaceBlock<CarInstance> | null): void {
     const test = !!this.params.test;
+    this.finishLoaner = block !== null;
+    // What this attempt wore, from the copy taken at its start.
+    const worn = this.wearCar ? attemptText(this.wearCar.blueprint, this.attemptWear ?? undefined, this.wearCar.wear) : null;
+    // Same as the keys: Y (or View, like Suppr) retries, B (or Menu, like Échap) goes back.
+    const retry = block
+      ? el('button', { class: 'primary', 'data-action': 'loaner', onclick: () => this.raceLoaner(), 'data-pad-default': true, 'data-pad-btn': 'y view' },
+        `${RACE_LOANER} `, html(dual('(Entrée)', padGlyph('y'))))
+      : el('button', { class: 'primary', 'data-action': 'retry', onclick: () => this.restart(), 'data-pad-default': true, 'data-pad-btn': 'y view' },
+        'Réessayer ', html(dual('(Entrée)', padGlyph('y'))));
     // A pad scope: while it shows, the pad drives it (PadNav) and the race reads nothing from the pad.
     // Passive: it pops up while driving; a handbrake or respawn tap just after the line must not answer it.
     const box = el('div', { class: 'panel center finish-panel', 'data-pad-scope': '', 'data-pad-passive': '' },
@@ -386,10 +451,10 @@ export class RaceMode implements Mode {
       improved && previous === null && !test ? el('div', { class: 'good' }, 'Premier temps enregistré') : null,
       !improved && previous !== null ? el('div', { class: 'bad' }, `Record : ${formatTime(previous)} (${formatDelta(ms - previous)})`) : null,
       test ? el('div', { class: 'muted small' }, 'Ce temps devient le temps auteur du circuit.') : null,
+      worn ? el('div', { class: 'muted finish-wear' }, worn) : null,
+      block ? el('div', { class: 'bad', style: 'margin-top:6px' }, finishBlockedText(block.car.name, blockText(block.car) ?? '')) : null,
       el('div', { class: 'row', style: 'margin-top:12px;justify-content:center' },
-        // Same as the keys: Y (or View, like Suppr) retries, B (or Menu, like Échap) goes back.
-        el('button', { class: 'primary', onclick: () => this.restart(), 'data-pad-default': true, 'data-pad-btn': 'y view' },
-          'Réessayer ', html(dual('(Entrée)', padGlyph('y')))),
+        retry,
         el('button', { onclick: () => this.exitTo(), 'data-pad-btn': 'b start' },
           test ? 'Retour à l’éditeur' : 'Circuits', html(dual('', ` ${padGlyph('b')}`))),
         !test ? el('button', { onclick: () => void this.game.switchMode('factory') }, 'Usine') : null,
@@ -400,18 +465,62 @@ export class RaceMode implements Mode {
     this.renderInfo();
   }
 
+  /**
+   * The halted panel: the car is to repair, no attempt starts with it. Passive like the finish panel (a handbrake tap
+   * just after Suppr or View must not change cars). Its buttons switch modes from a click only (PadNav clicks during
+   * the poll); Entrée goes through update() (see raceLoaner), Échap like everywhere.
+   */
+  private showHalted(block: RaceBlock<CarInstance>): void {
+    const c = this.hud.countdown;
+    if (c) {
+      c.textContent = '';
+      c.classList.remove('pop');
+    }
+    const box = el('div', { class: 'panel center finish-panel', 'data-pad-scope': '', 'data-pad-passive': '' },
+      el('h2', {}, TO_REPAIR_AT_GARAGE),
+      el('div', {}, haltedText(block.car.name, blockText(block.car) ?? '')),
+      el('div', { class: 'muted small', style: 'margin-top:4px' }, HALTED_NOTE),
+      el('div', { class: 'row', style: 'margin-top:12px;justify-content:center;flex-wrap:wrap' },
+        el('button', { class: 'primary', 'data-action': 'loaner', onclick: () => this.raceLoaner(), 'data-pad-default': true, 'data-pad-btn': 'y' },
+          `${RACE_LOANER} `, html(dual('(Entrée)', padGlyph('y')))),
+        el('button', { 'data-action': 'factory', onclick: () => void this.game.switchMode('factory') }, 'Usine'),
+        el('button', { 'data-action': 'back', onclick: () => this.exitTo(), 'data-pad-btn': 'b start' }, 'Circuits', html(dual('', ` ${padGlyph('b')}`))),
+      ),
+    );
+    this.hud.halt = box;
+    this.layer?.appendChild(box);
+  }
+
   private updateHud(dt: number): void {
     const s = this.session;
     this.hud.timer!.textContent = formatTime(s.timeMs);
     this.hud.cp!.textContent = this.checkpointCount ? `CP ${s.passed.size}/${this.checkpointCount}` : '';
     this.hud.speed!.textContent = String(Math.round(Math.abs(this.vehicle.speed) * 3.6));
-    if (s.phase === 'countdown') {
+    // Halted: the frozen countdown shows nothing.
+    if (s.phase === 'countdown' && !this.halted) {
       const label = String(Math.max(1, Math.ceil(s.countdownMs / 500)));
       if (this.hud.countdown!.textContent !== label) this.flashCountdown(label);
     }
     if (this.splitTimer > 0) {
       this.splitTimer -= dt;
       if (this.splitTimer <= 0) this.hud.split!.style.opacity = '0';
+    }
+    this.updateWear();
+  }
+
+  /**
+   * Wear of the raced car, every frame without allocating: its pill, the flash of a new hit, and once per race the
+   * race limit crossed (this attempt goes on as it started; the next one halts). Not at the finish nor when halted
+   * (a shock charged as the attempt ends): their panels say it.
+   */
+  private updateWear(): void {
+    const car = this.wearCar;
+    if (!car) return;
+    this.wearHud?.update(car);
+    if (this.meter) this.wearHud?.onHit(this.meter.last);
+    if (!this.limitWarned && isBlocked(car)) {
+      this.limitWarned = true;
+      if (!this.finished && !this.halted) toast(lastAttemptText(blockText(car) ?? ''), 'info', 3200);
     }
   }
 
@@ -462,6 +571,13 @@ export class RaceMode implements Mode {
       blueprint: this.spec.blueprint,
       /** Wear of the raced car (‰ per slot), null when it does not wear. */
       wear: this.wearCar ? { ...this.wearCar.wear } : null,
+      /** Hits that wore the car 1 ‰ or more (WearMeter.last.seq), and the last one: what the flash showed. */
+      hits: this.meter?.last.seq ?? 0,
+      lastHit: this.meter && this.meter.last.seq ? { ...this.meter.last } : null,
+      /** The car wore past the race limit: « Recommencer » halted it (the halted panel shows). */
+      halted: this.halted,
+      /** The loaner races instead of the car asked for (it was to repair). */
+      fallback: this.raced.fallback?.car.id ?? null,
     };
   }
 
