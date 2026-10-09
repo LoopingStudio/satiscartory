@@ -1,3 +1,4 @@
+import { refreshSharedCarMaterials } from '../../car/CarModel';
 import type { Game } from '../../core/Game';
 import type { GameState } from '../../state/GameState';
 import { SaveManager } from '../../state/SaveManager';
@@ -9,7 +10,8 @@ const GRASS_LABELS: Record<GrassQuality, string> = { off: 'Désactivée', low: '
 
 /** Applies settings that live outside the modes (renderer). */
 export function applySettings(game: Game, state: GameState): void {
-  game.renderer.setShadows(state.settings.shadows);
+  // The cars' shared materials outlive the scene shown, which is all the renderer reaches.
+  if (game.renderer.setShadows(state.settings.shadows)) refreshSharedCarMaterials();
 }
 
 /**

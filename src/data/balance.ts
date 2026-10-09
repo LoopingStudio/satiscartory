@@ -102,6 +102,13 @@ export const WEAR = {
   /** Damage flash (HUD) from this many ‰ on the most hit part: « Retour arrière » (2 to 3 ‰) shows nothing. */
   FLASH_MIN: 5,
   /**
+   * 3D look (car/CarModel.ts): the tires and the body darken one step above each of these (‰), the darkest one above
+   * BLOCK_ABOVE (« à réparer »); the middle one is where the gauges turn orange (WARN_ABOVE).
+   */
+  LOOK_ABOVE: [250, 500, 800],
+  /** The engine smokes above this (‰), more and more up to MAX, more at full throttle (car/CarFx.ts). */
+  SMOKE_ABOVE: 700,
+  /**
    * Effects of a worn-out part (car/wornTuning.ts), on the final tuning, through the curve L(u) = u(1 + 3u)/4 of
    * u = w / MAX (slope 1/4 at the start, L = 0.68 at the race limit): the wheels lose `grip` of their friction (all
    * three frictions), the engine `engine` of its force, the chassis `steer` of its steering and `brake` of its brakes,

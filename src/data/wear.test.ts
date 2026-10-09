@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BLUEPRINTS, BLUEPRINT_IDS, CAR_PARTS } from './blueprints';
 import { WEAR } from './balance';
-import { blockedSlots, clearSlotWear, condition, isBlocked, raceBlocker, repairCredits, repairItems, sanitizeSetWear, sanitizeWear, sanitizeWornSet, shownConditions, shownWorst, slotCountFor, slotWear, worstSlotOf, worstWear, wornCarPrice, wornSetPrice, type CarWear, type ShownWorst, type WearCar } from './wear';
+import { BODY_LOOK_SLOT, blockedSlots, clearSlotWear, condition, isBlocked, raceBlocker, repairCredits, repairItems, sanitizeSetWear, sanitizeWear, sanitizeWornSet, shownConditions, shownWorst, slotCountFor, slotWear, smokeAmount, wearLevel, wearLookCode, worstSlotOf, worstWear, wornCarPrice, wornSetPrice, type CarWear, type ShownWorst, type WearCar } from './wear';
 import { CAR_SALES, PART_VALUES, carPrice } from './sales';
 import type { ItemId } from './items';
 
@@ -289,5 +289,48 @@ describe('wear: prices', () => {
   it('sanitizeSetWear: 1..1000, a broken value is worn out', () => {
     expect([sanitizeSetWear(420.4), sanitizeSetWear(0), sanitizeSetWear(-3), sanitizeSetWear(1e9)]).toEqual([420, 1, 1, WEAR.MAX]);
     for (const raw of [NaN, Infinity, '5', null, undefined, {}]) expect(sanitizeSetWear(raw)).toBe(WEAR.MAX);
+  });
+});
+
+describe('wear: 3D look', () => {
+  it('wearLevel: one step above each of 250, 500 and 800 ‰, the darkest one where the car no longer races', () => {
+    const at = [0, 1, 250, 251, 500, 501, 800, 801, 1000];
+    expect(at.map(wearLevel)).toEqual([0, 0, 0, 1, 1, 2, 2, 3, 3]);
+    expect(WEAR.LOOK_ABOVE[2]).toBe(WEAR.BLOCK_ABOVE);
+    expect(WEAR.LOOK_ABOVE[1]).toBe(WEAR.WARN_ABOVE);
+    // The darkest step is exactly the blocked cars.
+    for (let w = 0; w <= WEAR.MAX; w++) expect(wearLevel(w) === 3, `${w}`).toBe(w > WEAR.BLOCK_ABOVE);
+    for (const w of [undefined, NaN, -5]) expect(wearLevel(w)).toBe(0);
+    expect(wearLevel(Infinity)).toBe(3);
+  });
+
+  it('smokeAmount: none up to 700 ‰ included, then growing to 1 at 1000 ‰', () => {
+    expect([smokeAmount(), smokeAmount(0), smokeAmount(699), smokeAmount(700), smokeAmount(NaN)]).toEqual([0, 0, 0, 0, 0]);
+    expect(smokeAmount(701)).toBeGreaterThan(0);
+    expect(smokeAmount(850)).toBeCloseTo(0.5, 12);
+    expect([smokeAmount(1000), smokeAmount(5000)]).toEqual([1, 1]);
+    let last = 0;
+    for (let w = 700; w <= 1000; w++) {
+      expect(smokeAmount(w)).toBeGreaterThanOrEqual(last);
+      last = smokeAmount(w);
+    }
+  });
+
+  it('BODY_LOOK_SLOT: the panels on the Sportive, the chassis on the kart (its frame is its body)', () => {
+    expect(BODY_LOOK_SLOT).toEqual({ kart: 'chassis', sport: 'panels', loaner: 'chassis' });
+  });
+
+  it('wearLookCode: wheels + 4 × body + 16 × spoiler, 0 when new', () => {
+    expect([wearLookCode('kart', undefined), wearLookCode('kart', {}), wearLookCode('sport', { engine: 1000 })]).toEqual([0, 0, 0]);
+    // The kart's body follows its chassis.
+    expect(wearLookCode('kart', { wheels: 600, chassis: 300 })).toBe(2 + 4 * 1);
+    // The Sportive's follows its panels; its chassis, hidden under them, only shows on the gauge.
+    expect(wearLookCode('sport', { chassis: 1000 })).toBe(0);
+    expect(wearLookCode('sport', { panels: 801, wheels: 251 })).toBe(1 + 4 * 3);
+    expect(wearLookCode('sport', { spoiler: 900 })).toBe(16 * 3);
+    expect(wearLookCode('sport', { wheels: 1000, panels: 1000, spoiler: 1000 })).toBe(63);
+    // An unknown blueprint (or an inherited key) shows its chassis, without failing.
+    expect(wearLookCode('constructor', { chassis: 600, wheels: 300 })).toBe(1 + 4 * 2);
+    expect(wearLookCode('nope', { panels: 900 })).toBe(0);
   });
 });

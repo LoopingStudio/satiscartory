@@ -39,11 +39,15 @@ export class Renderer {
     for (const cb of this.onResizeCbs) cb(w, h);
   };
 
-  /** Toggles shadow rendering (materials recompile on the next frame). */
-  setShadows(enabled: boolean): void {
-    if (this.three.shadowMap.enabled === enabled) return;
+  /**
+   * Toggles shadow rendering (the scene's materials recompile on the next frame). Whether it changed: materials kept
+   * out of the scene are the caller's to flag.
+   */
+  setShadows(enabled: boolean): boolean {
+    if (this.three.shadowMap.enabled === enabled) return false;
     this.three.shadowMap.enabled = enabled;
     this.shadowsChanged = true;
+    return true;
   }
 
   private shadowsChanged = false;
@@ -51,14 +55,25 @@ export class Renderer {
   render(scene: THREE.Scene, camera: THREE.Camera): void {
     if (this.shadowsChanged) {
       this.shadowsChanged = false;
-      scene.traverse((o) => {
-        const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
-        if (Array.isArray(m)) m.forEach((x) => (x.needsUpdate = true));
-        else if (m) m.needsUpdate = true;
-      });
+      recompileForShadows(this.three, scene, camera);
     }
     this.three.render(scene, camera);
   }
+}
+
+/**
+ * The shadows setting just changed: every material of `scene` takes it (three checks it only when a material's
+ * version changes), and all of them compile now, the hidden ones too (pools shown later, such as the car's smoke and
+ * sparks, prewarmed for the old setting): the toggle's frame pays every compile, not the first puff after it.
+ * `three`: the WebGLRenderer (its compile(), which goes through hidden objects too).
+ */
+export function recompileForShadows(three: Pick<THREE.WebGLRenderer, 'compile'>, scene: THREE.Scene, camera: THREE.Camera): void {
+  scene.traverse((o) => {
+    const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(m)) m.forEach((x) => (x.needsUpdate = true));
+    else if (m) m.needsUpdate = true;
+  });
+  three.compile(scene, camera);
 }
 
 export interface LightRig {

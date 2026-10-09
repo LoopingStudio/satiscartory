@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { fakeAssets } from './helpers/carAssets';
-import { CarModel } from '../src/car/CarModel';
+import { fakeAssets, kitMaterial } from './helpers/carAssets';
+import { CarModel, wornMaterial } from '../src/car/CarModel';
 import { DEALER } from '../src/data/balance';
 import type { Inventory } from '../src/data/items';
 import { FactorySim } from '../src/factory/sim/FactorySim';
@@ -105,6 +105,22 @@ describe('dealer showroom', () => {
     for (let i = 0; i < 60; i++) frame();
     expect(cars()).toEqual([]);
     expect(disposed).toHaveBeenCalledTimes(2);
+  });
+
+  it('the car on show is always new: never worn in 3D, its meshes on the kit material or the build look’s own', () => {
+    const wear = vi.spyOn(CarModel.prototype, 'setWear');
+    const two = Object.fromEntries(Object.entries(FULL).map(([k, n]) => [k, 2 * n!]));
+    const { tick, cars } = setup(two);
+    for (let k = 0; k <= T + 2; k++) tick();
+    expect(cars().length).toBeGreaterThan(0);
+    expect(wear.mock.calls.every(([code]) => code === 0)).toBe(true);
+    const worn = new Set([1, 2, 3].flatMap((l) => [wornMaterial(kitMaterial, 'tire', l as 1 | 2 | 3), wornMaterial(kitMaterial, 'body', l as 1 | 2 | 3)]));
+    for (const car of cars()) {
+      car.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) expect(worn.has(m.material as THREE.Material)).toBe(false);
+      });
+    }
   });
 
   it('dispose frees the car on show and the sinking one', () => {

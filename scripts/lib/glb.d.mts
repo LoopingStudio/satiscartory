@@ -1,4 +1,4 @@
-export interface Tri { a: number[]; b: number[]; c: number[]; uva: number[]; uvb: number[]; uvc: number[]; node: string }
+export interface Tri { a: number[]; b: number[]; c: number[]; uva: number[]; uvb: number[]; uvc: number[]; node: string; own: string }
 export interface Glb { json: any; bin: Uint8Array }
 export function readGlb(path: string): Glb;
 export function worldTriangles(glb: Glb): { tris: Tri[]; nodes: { name: string; worldPos: number[] }[] };

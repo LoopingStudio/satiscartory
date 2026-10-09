@@ -20,7 +20,7 @@ import { FactorySim } from '../src/factory/sim/FactorySim';
 import { Terrain } from '../src/factory/sim/terrain';
 import { upYOfQuat } from '../src/factory/cars/carMath';
 import { Vehicle, NO_CONTROLS, type VehicleControls, type VehicleOptions } from '../src/vehicle/Vehicle';
-import { makeCarPreview } from '../src/car/CarModel';
+import { makeCarPreview, wornMaterial } from '../src/car/CarModel';
 import type { WearMeter } from '../src/car/wearMeter';
 import { wornTuning } from '../src/car/wornTuning';
 import { WEAR } from '../src/data/balance';
@@ -892,5 +892,147 @@ describe('FactoryCars: wear on the relief', () => {
       f.stop();
       f.cars.exit();
     }
+  });
+});
+
+// ------------------------------------------------------------------ wear in 3D
+
+const meshesOf = (root: THREE.Object3D) => {
+  const out: THREE.Mesh[] = [];
+  root.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) out.push(o as THREE.Mesh);
+  });
+  return out;
+};
+/** Materials of the turning wheels (not an original wheel hidden under the body) and of the kart's frame. */
+const wheelMats = (root: THREE.Object3D) => meshesOf(root).filter((m) => m.name.startsWith('wheel-') && m.visible).map((m) => m.material);
+const frameMat = (root: THREE.Object3D) => meshesOf(root).find((m) => m.name === 'kart-oopi')!.material;
+const tire = (l: 1 | 2 | 3) => wornMaterial(kitMaterial, 'tire', l);
+const worn = (l: 1 | 2 | 3) => wornMaterial(kitMaterial, 'body', l);
+const fxMesh = (scene: THREE.Scene, name: 'car-smoke' | 'car-sparks') => scene.getObjectByName(name) as THREE.InstancedMesh | undefined;
+
+describe('FactoryCars: wear in 3D', () => {
+  it('a parked car shows its wear, re-painted (never rebuilt) when it changes, rebuilt with it on new parts', () => {
+    const f = setup();
+    f.state.cars.push(carAt('w', KART, { x: 30, y: 0, z: 30, yaw: 0 }));
+    f.car('w').wear = { wheels: 600, chassis: 300 };
+    f.cars.sync();
+    const [root] = carModels(f.scene);
+    expect(wheelMats(root!)).toEqual([tire(2), tire(2), tire(2), tire(2)]);
+    expect(frameMat(root!)).toBe(worn(1));
+    expect(meshesOf(root!).find((m) => m.name === 'character')!.material).toBe(kitMaterial);
+    // Worn on (a drive, a save loaded…): the same model, darker.
+    f.car('w').wear!.wheels = 801;
+    f.cars.sync();
+    expect(carModels(f.scene)).toEqual([root]);
+    expect(wheelMats(root!)).toEqual([tire(3), tire(3), tire(3), tire(3)]);
+    // Repaired: the kit material again, still the same model.
+    delete f.car('w').wear;
+    f.cars.sync();
+    expect(carModels(f.scene)).toEqual([root]);
+    expect(meshesOf(root!).every((m) => m.material === kitMaterial)).toBe(true);
+    // A worn set of racing wheels put on: a new model, worn from the start.
+    f.car('w').parts.wheels = 'wheel_racing';
+    f.car('w').wear = { wheels: 900 };
+    f.cars.sync();
+    const [rebuilt] = carModels(f.scene);
+    expect(rebuilt).not.toBe(root);
+    expect(wheelMats(rebuilt!)).toEqual([tire(3), tire(3), tire(3), tire(3)]);
+    expect(frameMat(rebuilt!)).toBe(kitMaterial);
+    expect(kitMaterial.color.getHex()).toBe(0xffffff);
+    f.cars.dispose();
+    f.fw.dispose();
+  });
+
+  it('a build shows its worn sets; its body stays see-through without a chassis', () => {
+    const f = setup();
+    const r = f.state.sim.place('garage', 8, 8, 0, { free: true });
+    expect(r.ok).toBe(true);
+    const garage = r.ok ? r.building.id : -1;
+    f.state.builds.push({ garage, blueprint: 'kart', parts: { wheels: { item: 'wheel', n: 4, wear: 900 }, engine: { item: 'engine', n: 1 } } });
+    f.cars.sync();
+    const [root] = carModels(f.scene);
+    expect(wheelMats(root!)).toEqual([tire(3), tire(3), tire(3), tire(3)]);
+    const frame = frameMat(root!) as THREE.MeshStandardMaterial;
+    expect(frame.transparent).toBe(true);
+    // A worn chassis put in: rebuilt (a new key), the frame worn.
+    f.state.builds[0]!.parts.chassis = { item: 'chassis', n: 1, wear: 600 };
+    f.cars.sync();
+    const [next] = carModels(f.scene);
+    expect(next).not.toBe(root);
+    expect(frameMat(next!)).toBe(worn(2));
+    f.cars.dispose();
+    f.fw.dispose();
+  });
+
+  it('a worn engine smokes while driven (above 700 ‰ only); the smoke fades out on foot; dispose takes it away', () => {
+    const f = setup();
+    f.state.cars.push(carAt('k', KART, { x: 30, y: 0, z: 40, yaw: 0 }), carAt('n', KART, { x: 60, y: 0, z: 40, yaw: 0 }));
+    f.car('k').wear = { engine: 950 };
+    f.car('n').wear = { engine: 650 };
+    f.cars.sync();
+    const smoke = fxMesh(f.scene, 'car-smoke')!;
+    expect(fxMesh(f.scene, 'car-sparks')).toBeDefined();
+    // Parked, nothing smokes.
+    f.cars.update(1, 1, f.camera);
+    expect(smoke.count).toBe(0);
+    f.cars.enter('k');
+    let most = 0;
+    for (let i = 0; i < 60; i++) {
+      f.held.clear();
+      f.held.add('throttle');
+      f.step();
+      f.cars.update(PHYS_DT, 1, f.camera);
+      most = Math.max(most, smoke.count);
+    }
+    expect(most).toBeGreaterThan(0);
+    expect(most).toBeLessThanOrEqual(64);
+    f.stop();
+    f.cars.exit();
+    // On foot: no new puff, the last ones fade away within 2 s.
+    for (let i = 0; i < 120; i++) f.cars.update(PHYS_DT, 1, f.camera);
+    expect(smoke.count).toBe(0);
+    // At 650 ‰: none.
+    f.cars.enter('n');
+    for (let i = 0; i < 60; i++) {
+      f.held.clear();
+      f.held.add('throttle');
+      f.step();
+      f.cars.update(PHYS_DT, 1, f.camera);
+      expect(smoke.count).toBe(0);
+    }
+    f.cars.dispose();
+    expect(fxMesh(f.scene, 'car-smoke')).toBeUndefined();
+    expect(fxMesh(f.scene, 'car-sparks')).toBeUndefined();
+    f.fw.dispose();
+  });
+
+  it('a machine hit at full speed throws sparks; a put-back none', () => {
+    const f = setup();
+    expect(f.state.sim.place('smelter', 15, 70, 0, { free: true }).ok).toBe(true);
+    f.state.cars.push(carAt('s', SPORT, { x: 31, y: 0, z: 70, yaw: 0 }));
+    f.cars.sync();
+    const sparks = fxMesh(f.scene, 'car-sparks')!;
+    f.cars.enter('s');
+    // Put back first (the key): no sparks.
+    f.run(0.5);
+    f.cars.resetToLastSafe('key');
+    for (let i = 0; i < 30; i++) {
+      f.step();
+      f.cars.update(PHYS_DT, 1, f.camera);
+      expect(sparks.count).toBe(0);
+    }
+    let most = 0;
+    for (let i = 0; i < Math.round(5 / PHYS_DT); i++) {
+      f.held.clear();
+      f.held.add('throttle');
+      f.step();
+      f.cars.update(PHYS_DT, 1, f.camera);
+      most = Math.max(most, sparks.count);
+    }
+    expect(meterOf(f.cars).last.cause).toBe('shock');
+    expect(most).toBeGreaterThanOrEqual(6);
+    f.cars.dispose();
+    f.fw.dispose();
   });
 });

@@ -11,6 +11,7 @@ import { buildTrack, type BuiltTrack, type Gate } from '../track/TrackBuilder';
 import type { TrackData } from '../track/TrackData';
 import { centerline, finishDirections } from '../track/layout';
 import { CarModel } from '../car/CarModel';
+import { CarFx } from '../car/CarFx';
 import { computeCarStats, type CarSpec } from '../car/stats';
 import { tuningFromStats, type VehicleTuning } from '../car/tuning';
 import { WearMeter, autoResetCause, type ResetCause } from '../car/wearMeter';
@@ -30,7 +31,7 @@ import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
 import { countAttempt, submitRun } from './records';
 import { endAttempt, raceCarFor, type RaceCar } from './raceCar';
 import { LOANER_SPEC, type CarInstance } from '../garage/assembly';
-import { isBlocked, type CarWear, type RaceBlock } from '../data/wear';
+import { isBlocked, wearLookCode, type CarWear, type RaceBlock } from '../data/wear';
 import { HALTED_NOTE, RACE_LOANER, TO_REPAIR_AT_GARAGE, attemptText, blockText, fallbackText, finishBlockedText, haltedText, lastAttemptText } from '../data/wearText';
 import { WearHud } from '../ui/wearHud';
 
@@ -96,6 +97,12 @@ export class RaceMode implements Mode {
   private attemptWear: CarWear | null = null;
   /** The race limit was crossed in this race: said once (a toast), the next attempt halts. */
   private limitWarned = false;
+  /** Smoke of a worn engine and sparks of the shocks (null: a car that does not wear). */
+  private fx: CarFx | null = null;
+  /** Throttle of the last fixed step (the smoke). */
+  private lastThrottle = 0;
+  /** Suspension offsets of the wheels, refilled every frame. */
+  private readonly susp: number[] = [];
   /** The car's tuning when new; an attempt drives it worn as the car was when it started (attemptTuning). */
   private baseTuning!: VehicleTuning;
   private tuningPanel: TuningPanel | null = null;
@@ -147,6 +154,13 @@ export class RaceMode implements Mode {
     this.vehicle = new Vehicle(this.physics.world, this.carModel.geometry, this.attemptTuning(), this.track.spawn);
     this.vehicle.offroad = this.track.ground;
     this.chase = new ChaseCamera(this.camera, this.physics.world, this.vehicle.collider);
+    // A car that wears looks worn (its look follows the race, its tuning stays the attempt's) and smokes and sparks;
+    // their shaders compiled now, not at the first shock. The loaner, ?car= and the test drive look new.
+    if (this.wearCar) {
+      this.carModel.setWear(wearLookCode(this.wearCar.blueprint, this.wearCar.wear));
+      this.fx = new CarFx(this.scene);
+      this.fx.prewarm(this.game.renderer.three, this.camera, this.scene);
+    }
     this.buildHud();
     this.restart();
     if (new URLSearchParams(location.search).has('tune')) this.toggleTuning(true);
@@ -195,6 +209,10 @@ export class RaceMode implements Mode {
     this.session = new RaceSession(this.checkpointCount, PHYS_DT * 1000, RACE.COUNTDOWN_TICKS);
     this.respawnPoint = { position: this.track.spawn.position.clone(), yaw: this.track.spawn.yaw };
     this.vehicle.reset(this.respawnPoint.position, this.respawnPoint.yaw);
+    // Back on the line: the smoke and sparks left behind go, a shock charged as the last attempt ended makes none.
+    this.fx?.clear();
+    this.fx?.follow(this.meter?.last ?? null);
+    this.lastThrottle = 0;
     this.prevStep.copy(this.vehicle.curPos);
     this.chase.snap();
     this.finished = false;
@@ -256,9 +274,12 @@ export class RaceMode implements Mode {
     if (phase === 'finished') controls = { ...NO_CONTROLS, brake: 0.4 };
     this.prevStep.copy(this.vehicle.curPos);
     this.vehicle.step(dt, controls);
+    this.lastThrottle = controls.throttle;
     // Only the race itself wears the car: not the countdown, nor the braking after the line.
-    if (phase === 'running') this.meter?.step(dt, this.vehicle, controls);
-    else this.meter?.closeShock();
+    const meter = this.meter;
+    if (phase === 'running') meter?.step(dt, this.vehicle, controls);
+    else meter?.closeShock();
+    if (meter) this.fx?.afterStep(meter.last, this.vehicle.curPos, this.vehicle.curQuat, this.carModel.geometry);
     this.physics.step(dt);
     this.vehicle.afterWorldStep();
     // The car waits on the line during the countdown.
@@ -307,10 +328,19 @@ export class RaceMode implements Mode {
     this.carModel.root.position.copy(this.pos);
     this.carModel.root.quaternion.copy(this.quat);
     const t = this.vehicle.tuning;
-    const susp = this.carModel.geometry.wheels.map((_, i) => t.suspensionRest - this.vehicle.suspensionLength(i));
+    const susp = this.susp;
+    susp.length = this.carModel.geometry.wheels.length;
+    for (let i = 0; i < susp.length; i++) susp[i] = t.suspensionRest - this.vehicle.suspensionLength(i);
     this.carModel.update(dt, this.vehicle.steerAngle, this.vehicle.speed, susp);
     const lv = this.vehicle.body.linvel();
     this.vel.set(lv.x, lv.y, lv.z);
+    // The look follows the wear as it goes (the tires darken along the race); the attempt's tuning does not.
+    const car = this.wearCar;
+    if (car) this.carModel.setWear(wearLookCode(car.blueprint, car.wear));
+    if (this.fx) {
+      this.fx.engine(dt, this.carModel, this.vel, car?.wear?.engine ?? 0, this.lastThrottle, this.vehicle.speed);
+      this.fx.update(dt);
+    }
     this.chase.update(dt, this.pos, this.quat, this.vel, t.topSpeedMs);
     this.rig.follow(this.pos);
     this.updateHud(dt);
@@ -586,6 +616,8 @@ export class RaceMode implements Mode {
     this.meter?.end();
     this.meter = null;
     this.wearCar = null;
+    this.fx?.dispose();
+    this.fx = null;
     this.toggleTuning(false);
     this.vehicle.dispose();
     this.track.dispose();

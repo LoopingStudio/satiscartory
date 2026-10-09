@@ -241,7 +241,10 @@ export function terrainFit(pose: CarPose, b: CarBox, heightAt: (x: number, z: nu
   return out;
 }
 
-/** What CarModel builds from a car (blueprint + installed parts): a different key means a rebuild. */
+/**
+ * What CarModel builds from a car (blueprint + installed parts): a different key means a rebuild. The wear is not
+ * in it: it only re-paints the model (data/wear.ts wearLookCode, CarModel.setWear).
+ */
 export function carModelKey(car: { blueprint: string; parts: Partial<Record<string, string>> }): string {
   const slots = Object.keys(car.parts).filter((k) => car.parts[k]).sort();
   return `${car.blueprint}|${slots.map((k) => `${k}=${car.parts[k]}`).join(',')}`;

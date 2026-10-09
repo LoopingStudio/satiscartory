@@ -242,7 +242,8 @@ Chaque pièce posée sur une voiture a un état, de 100 % (neuve) à 0 % (hors d
   - l’état de la pièce la plus usée au choix du circuit (avec les effets), sous le compteur en course et dans l’indication du bas quand on conduit dans l’usine ; en visant une voiture garée à réparer, l’indication le dit ;
   - à chaque dégât de 0,5 % ou plus, un éclat rouge (« Choc : carrosserie −3 % ») au-dessus du compteur en course, au-dessus de l’indication dans l’usine ;
   - à l’arrivée, l’usure de l’essai (« Usure de cet essai : roues −3 % · moteur −1 % ») ;
-  - un message, une seule fois, quand une pièce passe le seuil.
+  - un message, une seule fois, quand une pièce passe le seuil ;
+  - en 3D, les pneus et la carrosserie s’assombrissent par paliers : sous 75 %, sous 50 % et sous 20 % (le plus sombre veut dire « à réparer »). L’aileron suit son propre état, la caisse du kart celui de son châssis, le pilote ne change pas. Un moteur sous 30 % fume, de plus en plus, et davantage à plein gaz ; un choc qui use fait jaillir des étincelles du côté touché. On le voit sur les voitures garées, conduites, en course et en construction ; la vitrine de la concession, le kart de location et l’essai depuis l’éditeur restent neufs.
 
 Le prix d’une réparation suit l’usure (à 20 %, des roues coûtent 4 pneus ou 560 cr). Pour une pièce hors d’usage :
 
@@ -263,7 +264,7 @@ src/
   data/        données de jeu : objets, recettes, bâtiments, paliers, carte, voitures, pièces, prix de vente, circuits, équilibrage
   factory/     sim/ (pure, déterministe, testée ; relief et décor compris), view/ (instancing ; terrain/ : sol, herbe, décor, lac, ciel), build/ (construction), cars/ (voitures garées et conduites), FactoryMode
   player/      contrôleur de personnage, caméra orbitale, avatar
-  car/         stats et réglages (purs), modèle 3D
+  car/         stats, réglages, usure et géométrie (purs), modèle 3D, fumée et étincelles
   vehicle/     raycast vehicle Rapier, caméra de poursuite, entrées
   track/       données, connecteurs, validation, édition (purs), construction, editor/
   race/        session de course, franchissement, médailles, records, bot (purs), RaceMode, sélection

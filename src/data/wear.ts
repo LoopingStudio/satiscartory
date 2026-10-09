@@ -140,6 +140,40 @@ export function raceBlocker<C extends WearCar>(car: C | null): RaceBlock<C> | nu
   return slots.length ? { kind: 'wear', car, slots } : null;
 }
 
+// ------------------------------------------------------------------ 3D look (car/CarModel.ts, car/CarFx.ts)
+
+/** Darkening step of a part in 3D: 0 new-looking, 3 the darkest (above BLOCK_ABOVE: « à réparer »). */
+export type WearLevel = 0 | 1 | 2 | 3;
+
+/** Look step of a wear (‰): one more above each of WEAR.LOOK_ABOVE. Garbage looks new. */
+export function wearLevel(w = 0): WearLevel {
+  const s = WEAR.LOOK_ABOVE;
+  return w > s[2] ? 3 : w > s[1] ? 2 : w > s[0] ? 1 : 0;
+}
+
+/** Engine smoke (0..1): none up to WEAR.SMOKE_ABOVE included, then growing to 1 at WEAR.MAX. Garbage: none. */
+export function smokeAmount(w = 0): number {
+  return w > WEAR.SMOKE_ABOVE ? Math.min(1, (w - WEAR.SMOKE_ABOVE) / (WEAR.MAX - WEAR.SMOKE_ABOVE)) : 0;
+}
+
+/**
+ * The slot whose wear the body shows, per blueprint: the panels when it has some (the Sportive), else the chassis (the
+ * kart's frame is its body). An unknown blueprint's body follows the chassis.
+ */
+export const BODY_LOOK_SLOT: Readonly<Record<string, SlotId>> = Object.fromEntries(
+  BLUEPRINT_IDS.map((id): [string, SlotId] => [id, BLUEPRINTS[id].slots.some((s) => s.id === 'panels') ? 'panels' : 'chassis']),
+);
+
+/**
+ * A car's 3D look, packed: wheels' step + 4 × body's step + 16 × spoiler's step (0: looks new). Allocates nothing:
+ * compared every frame in a race, a change re-paints the model (CarModel.setWear) without rebuilding it.
+ */
+export function wearLookCode(blueprint: string, wear: Readonly<CarWear> | undefined): number {
+  if (!wear) return 0;
+  const body = Object.hasOwn(BODY_LOOK_SLOT, blueprint) ? BODY_LOOK_SLOT[blueprint]! : 'chassis';
+  return wearLevel(wear.wheels) + 4 * wearLevel(wear[body]) + 16 * wearLevel(wear.spoiler);
+}
+
 /** The slot gets new parts (or none): its wear goes, and `wear` with it when nothing else is worn. */
 export function clearSlotWear(car: { wear?: CarWear }, slot: string): void {
   const w = car.wear;

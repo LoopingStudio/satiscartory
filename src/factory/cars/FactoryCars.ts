@@ -4,7 +4,7 @@ import type { AssetLoader } from '../../core/assets/AssetLoader';
 import type { Input } from '../../core/Input';
 import type { GameState } from '../../state/GameState';
 import { specOf, type CarInstance, type CarPose } from '../../garage/assembly';
-import { buildLook, type CarBuild } from '../../garage/build';
+import { buildLook, buildWear, type CarBuild } from '../../garage/build';
 import { bayPose } from '../../garage/parking';
 import type { CarSpec } from '../../car/stats';
 import type { Terrain } from '../sim/terrain';
@@ -12,11 +12,12 @@ import { blueprintById } from '../../data/blueprints';
 import { VEHICLE } from '../../data/vehicle';
 import { FACTORY_CELL, PLAYER_HEIGHT, PLAYER_RADIUS } from '../../config/constants';
 import { CarModel } from '../../car/CarModel';
+import { CarFx } from '../../car/CarFx';
 import { computeCarStats } from '../../car/stats';
 import { tuningFromStats, type VehicleTuning } from '../../car/tuning';
 import { WearMeter, autoResetCause, type ResetCause, type WearHit } from '../../car/wearMeter';
 import { wornTuning } from '../../car/wornTuning';
-import { isBlocked, raceBlocker, shownConditions, type RaceBlock } from '../../data/wear';
+import { isBlocked, raceBlocker, shownConditions, wearLookCode, type RaceBlock } from '../../data/wear';
 import { CAR_GROUPS } from '../collisionGroups';
 import { Vehicle, NO_CONTROLS } from '../../vehicle/Vehicle';
 import { ChaseCamera } from '../../vehicle/ChaseCamera';
@@ -102,6 +103,8 @@ const IDENTITY = { x: 0, y: 0, z: 0, w: 1 };
  * Nothing wears while the controls are off (pause, a panel open): the car still rolls, uncounted. The car
  * drives worn (car/wornTuning.ts) from the moment it is entered, and the frame that sees a part's shown
  * percentage change applies the new wear (no race attempt to keep fixed here); the fixed step only counts.
+ * Every car (parked, driven, under construction) shows its wear in 3D (CarModel.setWear, never a rebuild);
+ * the driven one smokes when its engine is worn and throws sparks at its shocks (CarFx, owned here).
  *
  * Per fixed step, call fixedUpdate() BEFORE the factory world steps (like CharacterController.step);
  * per frame, call update(). dispose() MUST run before FactoryWorld.dispose() (it frees the WASM world).
@@ -123,6 +126,12 @@ export class FactoryCars {
   private meter: WearMeter | null = null;
   /** The driven car, its tuning when new and the state shown (%) of its slots when its worn tuning was applied. */
   private wearTuning: { car: CarInstance; base: VehicleTuning; shown: number[] } | null = null;
+  /** Smoke and sparks of the driven car (they fade out after getting out). */
+  private readonly fx: CarFx;
+  /** Throttle of the driven car's last fixed step (the smoke). */
+  private lastThrottle = 0;
+  /** Suspension offsets of the driven car's wheels, refilled every frame. */
+  private readonly susp: number[] = [];
   private readonly fit: TerrainFit = { y: 0, q: { x: 0, y: 0, z: 0, w: 1 } };
   /** The last standing() fitted the car to the ground. */
   private onGround = false;
@@ -141,7 +150,13 @@ export class FactoryCars {
     private readonly state: GameState,
     private readonly opts: FactoryCarsOptions,
   ) {
+    this.fx = new CarFx(scene);
     this.sync();
+  }
+
+  /** Compiles the smoke's and sparks' shaders now (the scene's lights set up): the first shock does not stall a frame. */
+  prewarm(renderer: Pick<THREE.WebGLRenderer, 'compile'>, camera: THREE.Camera): void {
+    this.fx.prewarm(renderer, camera, this.scene);
   }
 
   private get world(): RAPIER.World {
@@ -158,7 +173,8 @@ export class FactoryCars {
    * Matches the physical cars to state.cars: creates the cars that got a pose, removes the ones that are
    * gone (or lost their pose), rebuilds a car whose blueprint/parts changed (after the drive if it is
    * the driven one) and moves a parked car whose pose changed. Nothing is rebuilt when nothing changed,
-   * so it may run every frame. If the driven car disappears, driving stops (check drivingId).
+   * so it may run every frame. Each car shows its wear of now (parked or driven; not a rebuild: the wear
+   * is not in carModelKey). If the driven car disappears, driving stops (check drivingId).
    */
   sync(): void {
     if (this.physics.disposed) return;
@@ -185,11 +201,12 @@ export class FactoryCars {
         this.removeEntry(e);
         e = undefined;
       }
-      if (!e) this.entries.set(car.id, this.createParked(car, car.pose, key));
+      if (!e) this.entries.set(car.id, (e = this.createParked(car, car.pose, key)));
       else if (!e.vehicle && !samePose(e.placed, car.pose)) {
         this.unpark(e);
         this.park(e, car.pose);
       }
+      e.model.setWear(wearLookCode(car.blueprint, car.wear));
     }
     for (const e of [...this.entries.values()]) if (!live.has(e.id)) this.removeEntry(e);
   }
@@ -208,6 +225,8 @@ export class FactoryCars {
     for (const [slot, p] of Object.entries(b.parts)) if (p.n > 0) parts[slot] = p.item;
     const model = new CarModel(this.assets, { blueprint: b.blueprint, parts });
     model.setBuildLook(buildLook(b));
+    // Worn sets put back in show their wear (in the key: putting one in or taking it out rebuilds).
+    model.setWear(wearLookCode(b.blueprint, buildWear(b)));
     this.scene.add(model.root);
     const e: CarEntry = { id, build: true, key, model, box: carBox(model.geometry), placed: { ...pose }, body: null, collider: null, vehicle: null };
     this.park(e, pose);
@@ -364,6 +383,8 @@ export class FactoryCars {
     e.model.setDriver(true);
     this.driving = e;
     this.meter = new WearMeter(car);
+    this.fx.follow(this.meter.last);
+    this.lastThrottle = 0;
     this.wearTuning = { car, base, shown: [] };
     shownConditions(car, this.wearTuning.shown);
     this.pos.copy(e.vehicle.curPos);
@@ -447,6 +468,7 @@ export class FactoryCars {
     this.meter?.end();
     this.meter = null;
     this.wearTuning = null;
+    this.lastThrottle = 0;
     e.vehicle?.dispose();
     e.vehicle = null;
     this.driving = null;
@@ -642,8 +664,11 @@ export class FactoryCars {
     this.writePose(e, v);
     const c = input ? readVehicleControls(input) : NO_CONTROLS;
     v.step(dt, c);
-    if (input) this.meter?.step(dt, v, c);
-    else this.meter?.closeShock();
+    this.lastThrottle = c.throttle;
+    const meter = this.meter;
+    if (input) meter?.step(dt, v, c);
+    else meter?.closeShock();
+    if (meter) this.fx.afterStep(meter.last, v.curPos, v.curQuat, e.model.geometry);
   }
 
   /** Snapshots the pose every SAFE_INTERVAL while the car stands upright on all wheels inside the map. */
@@ -670,15 +695,19 @@ export class FactoryCars {
   // ------------------------------------------------------------------ frame
 
   /**
-   * Per frame: interpolated driven car (wheels steer, spin and suspension) and the chase camera, which
-   * occludes against the factory world (garage walls) and owns `camera` while driving. On foot: nothing
-   * (the fov was restored on exit).
+   * Per frame: interpolated driven car (wheels steer, spin and suspension, the smoke of a worn engine) and
+   * the chase camera, which occludes against the factory world (garage walls) and owns `camera` while
+   * driving. On foot: only the last smoke and sparks fading away (the fov was restored on exit).
    */
   update(dt: number, alpha: number, camera: THREE.PerspectiveCamera): void {
     this.camera = camera;
     const e = this.driving;
     const v = e?.vehicle;
-    if (!e || !v) return;
+    if (e && v) this.updateDriven(dt, alpha, camera, e, v);
+    this.fx.update(dt);
+  }
+
+  private updateDriven(dt: number, alpha: number, camera: THREE.PerspectiveCamera, e: CarEntry, v: Vehicle): void {
     v.afterWorldStep();
     // The wear shown changed (a percentage): the car drives with it from now on (without wear: the same tuning).
     const w = this.wearTuning;
@@ -687,7 +716,9 @@ export class FactoryCars {
     e.model.root.position.copy(this.pos);
     e.model.root.quaternion.copy(this.quat);
     const t = v.tuning;
-    const susp = e.model.geometry.wheels.map((_, i) => t.suspensionRest - v.suspensionLength(i));
+    const susp = this.susp;
+    susp.length = e.model.geometry.wheels.length;
+    for (let i = 0; i < susp.length; i++) susp[i] = t.suspensionRest - v.suspensionLength(i);
     e.model.update(dt, v.steerAngle, v.speed, susp);
     if (!this.chase) {
       this.baseFov ??= camera.fov;
@@ -697,6 +728,7 @@ export class FactoryCars {
     }
     const lv = v.body.linvel();
     this.vel.set(lv.x, lv.y, lv.z);
+    this.fx.engine(dt, e.model, this.vel, w?.car.wear?.engine ?? 0, this.lastThrottle, v.speed);
     this.chase.update(dt, this.pos, this.quat, this.vel, Math.min(t.topSpeedMs, FACTORY_CAR.SPEED_CAP));
   }
 
@@ -709,6 +741,7 @@ export class FactoryCars {
     this.meter?.end();
     this.meter = null;
     this.wearTuning = null;
+    this.fx.dispose();
     for (const e of this.entries.values()) {
       if (alive) {
         e.vehicle?.dispose();

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 const PURE = [
   'src/data',
   'src/factory/sim',
+  'src/car/geometry.ts',
   'src/car/stats.ts',
   'src/car/tuning.ts',
   'src/car/wearMeter.ts',

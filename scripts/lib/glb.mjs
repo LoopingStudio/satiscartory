@@ -63,7 +63,10 @@ function apply(m, x, y, z) {
   return [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
 }
 
-/** Returns { tris: [{a,b,c, uva,uvb,uvc}], nodes: [{name, worldPos}] } */
+/**
+ * Returns { tris: [{a,b,c, uva,uvb,uvc, node, own}], nodes: [{name, worldPos}] }: `node` is the top-level part a
+ * triangle belongs to (body, wheel-*), `own` the node whose mesh it is (a spoiler nested in the body).
+ */
 export function worldTriangles(glb) {
   const tris = [];
   const nodes = [];
@@ -82,7 +85,7 @@ export function worldTriangles(glb) {
         const P = (i) => apply(world, pos.data[i * 3], pos.data[i * 3 + 1], pos.data[i * 3 + 2]);
         const U = (i) => (uv ? [uv.data[i * 2], uv.data[i * 2 + 1]] : [0, 0]);
         for (let i = 0; i < idx.length; i += 3) {
-          tris.push({ a: P(idx[i]), b: P(idx[i + 1]), c: P(idx[i + 2]), uva: U(idx[i]), uvb: U(idx[i + 1]), uvc: U(idx[i + 2]), node: topName });
+          tris.push({ a: P(idx[i]), b: P(idx[i + 1]), c: P(idx[i + 2]), uva: U(idx[i]), uvb: U(idx[i + 1]), uvc: U(idx[i + 2]), node: topName, own: node.name });
         }
       }
     }

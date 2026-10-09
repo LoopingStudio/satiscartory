@@ -112,6 +112,19 @@ export function carFromBuild(build: CarBuild, serial: number): CarInstance | nul
   return car;
 }
 
+/**
+ * Wear of a build's worn sets per slot (a worn set always fills its slot), as the car would roll out with it: what
+ * the bay shows in 3D (wearLookCode). Empty for new parts.
+ */
+export function buildWear(build: CarBuild): CarWear {
+  const out: CarWear = {};
+  for (const s of BLUEPRINTS[build.blueprint].slots) {
+    const p = build.parts[s.id];
+    if (p && p.wear && p.n >= s.count) out[s.id] = p.wear;
+  }
+  return out;
+}
+
 /** Parts left over when a build turns into a car: an optional slot only partly filled (they go back). */
 export function leftovers(build: CarBuild): ItemCounts {
   const out: ItemCounts = {};

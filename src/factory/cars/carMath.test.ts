@@ -162,4 +162,10 @@ describe('pose persistence', () => {
     expect(carModelKey({ blueprint: 'kart', parts: { chassis: 'chassis', wheels: 'wheel_racing' } })).not.toBe(a);
     expect(carModelKey({ blueprint: 'sport', parts: { chassis: 'chassis', wheels: 'wheel' } })).not.toBe(a);
   });
+
+  it('carModelKey ignores the wear: a car that wears is re-painted (CarModel.setWear), never rebuilt', () => {
+    const car = { blueprint: 'kart', parts: { chassis: 'chassis', wheels: 'wheel' } };
+    const worn = { ...car, wear: { wheels: 900, chassis: 300 } };
+    expect(carModelKey(worn)).toBe(carModelKey(car));
+  });
 });

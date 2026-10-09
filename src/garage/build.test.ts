@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildComplete, buildEmpty, buildLook, buildProgress, carFromBuild, installPart, leftovers, newBuild, refundBuild, removePart, sanitizeBuild } from './build';
+import { buildComplete, buildEmpty, buildLook, buildProgress, buildWear, carFromBuild, installPart, leftovers, newBuild, refundBuild, removePart, sanitizeBuild } from './build';
 import type { Inventory as ItemCounts } from '../data/items';
 
 const total = (s: ItemCounts) => Object.values(s).reduce((a, n) => a + (n ?? 0), 0);
@@ -89,6 +89,24 @@ describe('car build (chantier)', () => {
     expect(buildLook(b)).toEqual({ body: 'ghost', wheels: 3, wheelItem: 'wheel', engine: true, spoiler: false });
     installPart(stock, b, 'chassis', 'chassis');
     expect(buildLook(b).body).toBe('solid'); // the kart has no panels
+  });
+
+  it('buildWear: the worn sets of the full slots, nothing for new parts; the bay look stays the same', () => {
+    const stock: ItemCounts = { chassis: 1, engine: 1, wheel: 2 };
+    const b = newBuild(7, 'kart');
+    expect(buildWear(b)).toEqual({});
+    installPart(stock, b, 'wheels', 'wheel');
+    installPart(stock, b, 'engine', 'engine');
+    expect(buildWear(b)).toEqual({});
+    // Worn sets put back from the reserve (always whole slots).
+    b.parts.chassis = { item: 'chassis', n: 1, wear: 420 };
+    expect(buildWear(b)).toEqual({ chassis: 420 });
+    b.parts.wheels = { item: 'wheel', n: 4, wear: 900 };
+    expect(buildWear(b)).toEqual({ chassis: 420, wheels: 900 });
+    // A partial one (a broken save) shows nothing; the look itself never carries the wear.
+    b.parts.wheels = { item: 'wheel', n: 3, wear: 900 };
+    expect(buildWear(b)).toEqual({ chassis: 420 });
+    expect(buildLook(b)).toEqual({ body: 'solid', wheels: 3, wheelItem: 'wheel', engine: true, spoiler: false });
   });
 
   it('restores builds from saves and drops what does not fit', () => {

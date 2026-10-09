@@ -363,6 +363,8 @@ export class FactoryMode implements Mode {
     );
     this.hud.showOverlay(true, false);
     this.hud.updateStorage();
+    // The driven car's smoke and sparks: their shaders now, not at the first shock.
+    this.cars.prewarm(this.game.renderer.three, this.camera);
     this.game.renderer.canvas.addEventListener('click', this.onCanvasClick);
     // A factory built before the relief, loaded on it: once (the next save stores the pad heights).
     const migrated = this.sim.migration;

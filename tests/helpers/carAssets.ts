@@ -11,10 +11,14 @@ export const KIT = 'public/assets/kenney/car-kit';
 /** The one material of every fake mesh (stands for the kit's shared material). */
 export const kitMaterial = new THREE.MeshStandardMaterial();
 
-/** The model's node hierarchy with one box mesh per top-level part, like the GLB as far as CarModel cares. */
+/**
+ * The model's node hierarchy with one box mesh per node that has a mesh, like the GLB as far as CarModel cares: a
+ * nested mesh (the Sportive's spoiler, under its body) is a mesh of its own, so the look groups find it (the boxes'
+ * union per top-level part, hence the car's layout and colliders, does not change).
+ */
 function modelScene(name: string): THREE.Group {
   const glb = readGlb(`${KIT}/${name}.glb`);
-  const boxes = new Map(nodeBoxes(worldTriangles(glb).tris).map((b) => [b.name, b]));
+  const boxes = new Map(nodeBoxes(worldTriangles(glb).tris.map((t) => ({ ...t, node: t.own }))).map((b) => [b.name, b]));
   const nodes = glb.json.nodes as { name: string; children?: number[] }[];
   const build = (i: number): THREE.Object3D => {
     const n = nodes[i]!;
