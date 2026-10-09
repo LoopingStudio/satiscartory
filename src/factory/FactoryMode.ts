@@ -867,7 +867,7 @@ export class FactoryMode implements Mode {
     if (p) this.renderPos.copy(p);
     if (controlling) {
       if (input.wasPressed('interact') && !this.eLatch) this.exitCar();
-      else if (input.wasPressed('respawn')) this.cars.resetToLastSafe();
+      else if (input.wasPressed('respawn')) this.cars.resetToLastSafe('key');
       else if (input.wasPressed('retry')) {
         const id = this.cars.drivingId;
         if (this.exitCar()) this.goRace(id);

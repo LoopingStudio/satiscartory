@@ -1,0 +1,17 @@
+track	car	driver	ms	respawns	km	wheels	engine	chassis	panels	spoiler	tire laps	engine laps
+oval	kart	clean	19125	0	0.581	21.07	7.41	0.00	0.00	0.00	38.0	108.0
+oval	kart	sloppy	19664	0	0.583	52.20	7.48	0.00	0.00	0.00	15.3	106.9
+oval	kartRacing	clean	18752	0	0.583	21.13	7.34	0.00	0.00	0.00	37.9	108.9
+oval	kartRacing	sloppy	19479	0	0.586	53.31	7.52	0.00	0.00	0.00	15.0	106.3
+oval	sport	clean	18206	0	0.581	23.06	6.56	0.00	0.00	0.00	34.7	121.9
+oval	sport	sloppy	30422	1	0.661	56.09	8.24	53.01	82.60	0.00	14.3	97.1
+oval	sportFull	clean	16951	0	0.577	21.54	6.53	0.00	0.00	0.00	37.1	122.5
+oval	sportFull	sloppy	17220	0	0.579	44.86	6.89	0.00	0.00	0.00	17.8	116.1
+hill	kart	clean	14526	0	0.292	8.82	3.58	0.00	0.00	0.00	90.7	223.6
+hill	kart	sloppy	16063	0	0.304	20.60	3.89	36.51	0.00	0.00	38.8	205.9
+hill	kartRacing	clean	13917	0	0.287	8.23	3.59	0.00	0.00	0.00	97.2	222.6
+hill	kartRacing	sloppy	14088	0	0.289	17.22	3.64	0.00	0.00	0.00	46.5	220.0
+hill	sport	clean	14685	0	0.293	9.05	3.46	0.00	0.00	0.00	88.4	231.3
+hill	sport	sloppy	14512	0	0.293	16.91	3.54	0.00	0.00	0.00	47.3	225.8
+hill	sportFull	clean	14553	0	0.294	9.26	3.68	0.00	0.00	0.00	86.4	217.5
+hill	sportFull	sloppy	15142	0	0.295	17.13	3.74	0.00	0.00	0.00	46.7	213.8

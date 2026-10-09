@@ -96,6 +96,20 @@ describe('garage actions', () => {
     expect(disassembleCar(s, a.id)).toBeNull();
   });
 
+  it('a car of a blueprint named after an Object property (kept by the loader) swaps nothing and dismantles to nothing', () => {
+    for (const blueprint of ['constructor', '__proto__', 'toString']) {
+      const s = stocked();
+      s.sim.hub.add('wheel_racing', 4);
+      s.cars.push({ id: 'd', name: 'D', blueprint, parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' }, wear: { wheels: 300 } });
+      const before = JSON.stringify(s.serialize());
+      const stock = partStock(s);
+      expect(swapCarPart(s, 'd', 'wheels', 'wheel_racing'), blueprint).toBe(false);
+      expect(JSON.stringify(s.serialize()), blueprint).toBe(before);
+      expect(disassembleCar(s, 'd'), blueprint).toMatchObject({ refund: {}, toHub: 0 });
+      expect(partStock(s), blueprint).toEqual(stock);
+    }
+  });
+
   it('selling credits the dealer’s price, counts the sale and removes the car; numbers are never reused', () => {
     const s = stocked();
     const sold: SaleEvent[] = [];

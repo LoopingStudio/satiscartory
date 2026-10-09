@@ -21,6 +21,8 @@ import { Terrain } from '../src/factory/sim/terrain';
 import { upYOfQuat } from '../src/factory/cars/carMath';
 import { Vehicle, NO_CONTROLS, type VehicleControls, type VehicleOptions } from '../src/vehicle/Vehicle';
 import { makeCarPreview } from '../src/car/CarModel';
+import type { WearMeter } from '../src/car/wearMeter';
+import { WEAR } from '../src/data/balance';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -196,6 +198,20 @@ describe('FactoryCars: parked cars', () => {
     expect(carModels(f.scene)).toHaveLength(1);
     f.cars.dispose();
     expect(f.scene.children.filter((o) => o.children.length)).toHaveLength(0);
+    f.fw.dispose();
+  });
+
+  it('sync skips a placed car of a blueprint named after an Object property (kept by the loader)', () => {
+    const f = setup();
+    f.state.cars.push(carAt('a', KART, { x: 30, y: 0, z: 30, yaw: 0 }));
+    for (const [i, blueprint] of ['constructor', '__proto__', 'toString'].entries()) {
+      f.state.cars.push({ ...carAt(blueprint, KART, { x: 40 + 10 * i, y: 0, z: 30, yaw: 0 }), blueprint });
+    }
+    f.cars.sync();
+    expect(carModels(f.scene)).toHaveLength(1);
+    f.step();
+    expect(f.blocked(new THREE.Vector3(40, 0, 30))).toBe(false);
+    f.cars.dispose();
     f.fw.dispose();
   });
 
@@ -642,5 +658,165 @@ describe('FactoryCars on the relief', () => {
     expect(events).toEqual(['water']);
     const p = vehicleOf(f.cars).curPos;
     expect(t.waterDepthAt(p.x, p.z)).toBeLessThan(0.05);
+  });
+});
+
+
+// ------------------------------------------------------------------ wear of the driven car
+
+/** The driven car's wear meter (test-only peek at the private state). */
+const meterOf = (cars: FactoryCars) => (cars as unknown as { meter: WearMeter | null }).meter!;
+
+describe('FactoryCars: wear while driving', () => {
+  it('the drive wears the tires and the engine into state.cars as it goes (whole thousandths), the pause nothing', () => {
+    const f = setup();
+    f.state.cars.push(carAt('k', KART, { x: 30, y: 0, z: 40, yaw: 0 }));
+    f.cars.sync();
+    f.cars.enter('k');
+    f.run(1);
+    expect(f.car('k').wear).toBeUndefined();
+    f.run(6, ['throttle']);
+    const wear = { ...f.car('k').wear };
+    expect(wear.wheels).toBeGreaterThan(0);
+    expect(wear.engine).toBeGreaterThan(0);
+    expect(Number.isInteger(wear.wheels)).toBe(true);
+    expect(wear.chassis).toBeUndefined();
+    // A save now keeps it.
+    const saved = GameState.fromSave(JSON.parse(JSON.stringify(f.state.serialize())));
+    expect(saved.cars[0]!.wear).toEqual(wear);
+    // Pause, a panel open (no controls): the car rolls on, nothing wears.
+    const exact = meterOf(f.cars).exact('wheels');
+    for (let i = 0; i < 180; i++) {
+      f.cars.fixedUpdate(PHYS_DT, null);
+      f.fw.physics.step(PHYS_DT);
+    }
+    expect(vehicleOf(f.cars).speed).toBeGreaterThan(5);
+    expect(meterOf(f.cars).exact('wheels')).toBe(exact);
+    // Getting out rounds the fractions in.
+    f.stop();
+    const before = meterOf(f.cars).exact('engine');
+    f.cars.exit();
+    expect(f.car('k').wear!.engine).toBe(Math.round(before));
+    f.cars.dispose();
+    f.fw.dispose();
+  });
+
+  it('a put-back costs its cause: the key, a fall, a flip; nothing while the controls are off', () => {
+    const f = setup();
+    f.state.cars.push(carAt('s', SPORT, { x: 30, y: 0, z: 100, yaw: 0 }));
+    f.cars.sync();
+    f.cars.enter('s');
+    f.run(1);
+    const body = () => [f.car('s').wear?.chassis ?? 0, f.car('s').wear?.panels ?? 0];
+    f.cars.resetToLastSafe('key');
+    expect(body()).toEqual([WEAR.RESET.key.chassis, WEAR.RESET.key.panels]);
+    f.run(0.5);
+    vehicleOf(f.cars).body.setTranslation({ x: 50, y: -20, z: 50 }, true);
+    f.run(0.1);
+    expect(body()).toEqual([WEAR.RESET.key.chassis + WEAR.RESET.fall.chassis, WEAR.RESET.key.panels + WEAR.RESET.fall.panels]);
+    f.run(0.5);
+    // Dropped on its roof from 2 m.
+    const flip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
+    const p = vehicleOf(f.cars).curPos;
+    vehicleOf(f.cars).body.setTranslation({ x: p.x, y: p.y + 2, z: p.z }, true);
+    vehicleOf(f.cars).body.setRotation({ x: flip.x, y: flip.y, z: flip.z, w: flip.w }, true);
+    f.run(VEHICLE.FLIP_RESPAWN_S + 1.5);
+    const [chassis, panels] = body();
+    // The roof hits the floor too (a shock at most), then the flat cost of the flip.
+    expect(chassis).toBeGreaterThanOrEqual(WEAR.RESET.key.chassis + WEAR.RESET.fall.chassis + WEAR.RESET.flip.chassis);
+    expect(panels).toBeGreaterThanOrEqual(WEAR.RESET.key.panels + WEAR.RESET.fall.panels + WEAR.RESET.flip.panels);
+    expect(meterOf(f.cars).last.cause).toBe('flip');
+    // Paused: a fall is put back for free.
+    vehicleOf(f.cars).body.setTranslation({ x: 50, y: -20, z: 50 }, true);
+    for (let i = 0; i < 6; i++) {
+      f.cars.fixedUpdate(PHYS_DT, null);
+      f.fw.physics.step(PHYS_DT);
+    }
+    expect(vehicleOf(f.cars).curPos.y).toBeGreaterThan(-1);
+    expect(body()).toEqual([chassis, panels]);
+    f.cars.dispose();
+    f.fw.dispose();
+  });
+
+  it('a machine hit at full speed wears the body; the soft map edge does not', () => {
+    const f = setup();
+    expect(f.state.sim.place('smelter', 15, 70, 0, { free: true }).ok).toBe(true);
+    f.state.cars.push(carAt('s', SPORT, { x: 31, y: 0, z: 70, yaw: 0 }), carAt('k', KART, { x: 10, y: 0, z: 200, yaw: -Math.PI / 2 }));
+    f.cars.sync();
+    f.cars.enter('s');
+    f.run(5, ['throttle']);
+    expect(f.car('s').wear!.chassis).toBeGreaterThan(10);
+    expect(f.car('s').wear!.panels).toBeGreaterThan(f.car('s').wear!.chassis!);
+    expect(meterOf(f.cars).last.cause).toBe('shock');
+    f.stop();
+    f.cars.exit();
+    // Into the west edge at full throttle: held back softly, no shock.
+    f.cars.enter('k');
+    f.run(1);
+    f.run(6, ['throttle']);
+    f.run(2, ['brake']);
+    expect(vehicleOf(f.cars).curPos.x).toBeGreaterThan(0);
+    expect(meterOf(f.cars).exact('chassis')).toBe(0);
+    f.cars.dispose();
+    f.fw.dispose();
+  });
+});
+
+describe('FactoryCars: wear on the relief', () => {
+  it('the lake: its drag is no shock, each drowning costs the water put-back', () => {
+    const state = reliefState((gi) => (gi > 40 ? -200 : gi > 34 ? -200 * ((gi - 34) / 6) : 0), -40);
+    const t = state.sim.terrain;
+    const events: string[] = [];
+    state.cars = [carAt('s', SPORT, { x: 50, y: t.heightAt(50, 64), z: 64, yaw: Math.PI / 2 })];
+    const f = setup(state, events);
+    f.cars.enter('s');
+    f.run(8, ['throttle']);
+    expect(events).toEqual(['water', 'water']);
+    const m = meterOf(f.cars);
+    expect(m.exact('chassis')).toBe(2 * WEAR.RESET.water.chassis);
+    expect(m.exact('panels')).toBe(2 * WEAR.RESET.water.panels);
+    expect(m.last.cause).toBe('water');
+  });
+
+  it('the ground rising under the driven car (a pad placed) is no shock', () => {
+    const state = reliefState(rampX(13));
+    const t = state.sim.terrain;
+    // On the slope where a garage's pad will rise (see « a parked car follows the ground »).
+    const x = 57.4;
+    state.cars = [carAt('s', SPORT, { x, y: t.heightAt(x, 64), z: 64, yaw: 0 })];
+    const f = setup(state);
+    f.cars.enter('s');
+    f.run(1);
+    const before = meterOf(f.cars).exact('chassis');
+    const y0 = vehicleOf(f.cars).curPos.y;
+    expect(state.sim.place('garage', 30, 30, 0, { free: true }).ok).toBe(true);
+    f.cars.onTerrain(f.fw.flush()!);
+    f.run(2);
+    expect(vehicleOf(f.cars).curPos.y).toBeGreaterThan(y0 + 0.3);
+    expect(meterOf(f.cars).exact('chassis')).toBe(before);
+  });
+
+  it('across hills of 21° (the steepest belts) at 90 km/h, crests flown over: slopes and landings are no shocks', () => {
+    // Waves 3 m high every 24 m across the way (+X).
+    const state = reliefState((gi) => 150 - 150 * Math.cos((gi / 12) * 2 * Math.PI));
+    const t = state.sim.terrain;
+    state.cars = [carAt('s', SPORT, { x: 8, y: t.heightAt(8, 64), z: 64, yaw: Math.PI / 2 }), carAt('k', KART, { x: 8, y: t.heightAt(8, 40), z: 40, yaw: Math.PI / 2 })];
+    const f = setup(state);
+    for (const id of ['s', 'k']) {
+      f.cars.enter(id);
+      let airborne = 0;
+      for (let i = 0; i < Math.round(7 / PHYS_DT); i++) {
+        f.held.clear();
+        f.held.add('throttle');
+        f.step();
+        if (vehicleOf(f.cars).wheelsInContact === 0) airborne++;
+      }
+      expect(vehicleOf(f.cars).curPos.x).toBeGreaterThan(70);
+      expect(airborne).toBeGreaterThan(30);
+      const m = meterOf(f.cars);
+      expect(m.exact('chassis') + m.exact('panels')).toBe(0);
+      f.stop();
+      f.cars.exit();
+    }
   });
 });

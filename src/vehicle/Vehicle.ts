@@ -44,6 +44,13 @@ export interface VehicleSpawn {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+/**
+ * Ground tilted against the car (sine of the angle between the wheels' ground normal and the car's up axis): from
+ * TILT_FROM (5°, about the most a body rolls in a hard turn) to TILT_FULL (10°), the shock measure drops more and
+ * more of its part along that tilt (see measureImpact).
+ */
+const TILT_FROM = Math.sin((5 * Math.PI) / 180);
+const TILT_FULL = Math.sin((10 * Math.PI) / 180);
 
 /**
  * Arcade car on Rapier's DynamicRayCastVehicleController. Chassis-local axes:
@@ -70,6 +77,18 @@ export class Vehicle {
   /** Collider considered off-road (slow, low grip). */
   offroad: RAPIER.Collider | null = null;
   readonly wheelSpin: number[] = [];
+  /** |Side speed| (m/s) at the start of the last step: the tires slide (wear). Read only, like `impact`. */
+  lateralSpeed = 0;
+  /**
+   * Speed change (m/s) the contacts gave the body during the world step before the last step, in the car's plane:
+   * gravity is taken out, and so are the part along the car's up axis and along a ground tilted against the car
+   * (landings, bottoming out, the foot of a ramp) and a scripted speed (scriptVelocity). 0 after a teleport (reset),
+   * a hold or skipImpact. impactX/Y/Z: that change (world axes).
+   */
+  impact = 0;
+  impactX = 0;
+  impactY = 0;
+  impactZ = 0;
   private readonly frontIdx: number[] = [];
   private readonly rearIdx: number[] = [];
   private readonly q = new THREE.Quaternion();
@@ -77,6 +96,18 @@ export class Vehicle {
   private readonly fwd = new THREE.Vector3();
   private readonly up = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
+  /** Body speed right after the last updateVehicle (every impulse of this class is in): the next step measures from it. */
+  private readonly vOut = new THREE.Vector3();
+  private readonly tmpV = new THREE.Vector3();
+  private readonly groundN = new THREE.Vector3();
+  private readonly wheelN = new THREE.Vector3();
+  private readonly tilt = new THREE.Vector3();
+  /** vOut is a speed the next step may compare with (not at creation, nor after a teleport or a hold). */
+  private measured = false;
+  /** Coming measures to skip (skipImpact). */
+  private skipSteps = 0;
+  /** Gravity of this body (m/s², world y): the world's, times its gravity scale. */
+  private readonly gravityY: number;
 
   constructor(
     private readonly world: RAPIER.World,
@@ -134,6 +165,7 @@ export class Vehicle {
     this.readPose();
     this.prevPos.copy(this.curPos);
     this.prevQuat.copy(this.curQuat);
+    this.gravityY = world.gravity.y * (opts.gravityScale ?? 1);
   }
 
   applyTuning(t: VehicleTuning): void {
@@ -175,6 +207,9 @@ export class Vehicle {
     const speed = this.v.dot(this.fwd);
     const absSpeed = Math.abs(speed);
     this.speed = speed;
+    // Wear readings (nothing here changes the physics): the side slide, and the shock of the last world step.
+    this.lateralSpeed = Math.abs(this.v.dot(this.right));
+    this.measureImpact(dt);
 
     // Steering: speed-sensitive and smoothed.
     const speedRatio = Math.min(1, absSpeed / t.topSpeedMs);
@@ -256,6 +291,9 @@ export class Vehicle {
 
     if (this.opts.wheelFilter) vc.updateVehicle(dt, undefined, undefined, this.opts.wheelFilter);
     else vc.updateVehicle(dt);
+    // Drag, downforce and the wheel impulses are in: what the world step adds next is gravity and the contacts.
+    body.linvel(this.vOut);
+    this.measured = true;
 
     let contact = 0;
     let offroad = 0;
@@ -276,6 +314,69 @@ export class Vehicle {
     else this.flippedTime = 0;
   }
 
+  /**
+   * `impact`: the speed now minus the speed after the last updateVehicle and minus gravity, without its part along
+   * the car's up axis (the body's bottom sits at the wheel centers: a landing would count otherwise). When the ground
+   * under the wheels is tilted against the car (a landing nose first, the foot or the top of a ramp), the body hit
+   * that ground: the part along the tilt goes too (it is the ground's normal push and scrape).
+   */
+  private measureImpact(dt: number): void {
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    if (this.skipSteps > 0) this.skipSteps--;
+    else if (this.measured) {
+      const d = this.tmpV.copy(this.v).sub(this.vOut);
+      d.y -= this.gravityY * dt;
+      d.addScaledVector(this.up, -d.dot(this.up));
+      const w = this.groundTilt();
+      if (w > 0) d.addScaledVector(this.tilt, -w * d.dot(this.tilt));
+      x = d.x;
+      y = d.y;
+      z = d.z;
+    }
+    this.impactX = x;
+    this.impactY = y;
+    this.impactZ = z;
+    this.impact = Math.hypot(x, y, z);
+  }
+
+  /**
+   * How much the ground under the wheels (their mean contact normal at the last updateVehicle) is tilted against the
+   * car: 0 under TILT_FROM, 1 from TILT_FULL; the tilt's direction in the car's plane goes to `tilt`.
+   */
+  private groundTilt(): number {
+    const vc = this.controller;
+    const n = this.groundN.set(0, 0, 0);
+    for (let i = 0; i < vc.numWheels(); i++) {
+      if (vc.wheelIsInContact(i) && vc.wheelContactNormal(i, this.wheelN)) n.add(this.wheelN);
+    }
+    const len = n.length();
+    if (len === 0) return 0;
+    const t = this.tilt.copy(n).addScaledVector(this.up, -n.dot(this.up));
+    const s = t.length() / len;
+    if (s <= TILT_FROM) return 0;
+    t.normalize();
+    return Math.min(1, (s - TILT_FROM) / (TILT_FULL - TILT_FROM));
+  }
+
+  /**
+   * Sets the body's speed for a scripted reason (water drag, the soft map edge): the same setLinvel, taken out of the
+   * shock measure (a real hit during the same world step still counts). Call it between world.step() and step().
+   */
+  scriptVelocity(x: number, y: number, z: number): void {
+    const cur = this.body.linvel(this.tmpV);
+    this.vOut.x += x - cur.x;
+    this.vOut.y += y - cur.y;
+    this.vOut.z += z - cur.z;
+    this.body.setLinvel({ x, y, z }, true);
+  }
+
+  /** The next `steps` shock measures read 0 (2: the car was moved now, the next world step pushes it out of the ground). */
+  skipImpact(steps = 2): void {
+    this.skipSteps = Math.max(this.skipSteps, steps);
+  }
+
   /** Reads the new pose after world.step(). */
   afterWorldStep(): void {
     this.readPose();
@@ -290,6 +391,7 @@ export class Vehicle {
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.steerAngle = 0;
     this.flippedTime = 0;
+    this.measured = false;
     this.readPose();
     this.prevPos.copy(this.curPos);
     this.prevQuat.copy(this.curQuat);
@@ -299,6 +401,7 @@ export class Vehicle {
   hold(): void {
     this.body.setLinvel({ x: 0, y: Math.min(0, this.body.linvel().y), z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.measured = false;
   }
 
   /** Interpolated pose for rendering. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assemble, checkAssembly, costOf, defaultChoices, disassemble, swapPart } from './assembly';
+import { assemble, checkAssembly, costOf, defaultChoices, disassemble, swapPart, type CarInstance } from './assembly';
 import { BLUEPRINTS } from '../data/blueprints';
 import { computeCarStats, statBars } from '../car/stats';
 import type { Inventory } from '../data/items';
@@ -43,6 +43,18 @@ describe('assembly', () => {
     expect(swapPart(storage, car, 'wheels', null)).toBe(false); // required slot
     disassemble(storage, car);
     expect(storage).toMatchObject({ chassis: 1, engine: 1, wheel: 4, wheel_racing: 4 });
+  });
+
+  it('a blueprint named after an Object property (a hand-edited save) dismantles to nothing and swaps nothing', () => {
+    for (const blueprint of ['constructor', '__proto__', 'toString']) {
+      const storage: Inventory = { wheel_racing: 4 };
+      const car: CarInstance = { id: 'd', name: 'D', blueprint, parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } };
+      disassemble(storage, car);
+      expect(storage, blueprint).toEqual({ wheel_racing: 4 });
+      expect(swapPart(storage, car, 'wheels', 'wheel_racing'), blueprint).toBe(false);
+      expect(storage, blueprint).toEqual({ wheel_racing: 4 });
+      expect(car.parts.wheels).toBe('wheel');
+    }
   });
 });
 

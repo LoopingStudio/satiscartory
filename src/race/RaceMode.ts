@@ -13,6 +13,7 @@ import { centerline, finishDirections } from '../track/layout';
 import { CarModel } from '../car/CarModel';
 import { computeCarStats, type CarSpec } from '../car/stats';
 import { tuningFromStats } from '../car/tuning';
+import { WearMeter, autoResetCause, type ResetCause } from '../car/wearMeter';
 import { Vehicle, NO_CONTROLS } from '../vehicle/Vehicle';
 import { ChaseCamera } from '../vehicle/ChaseCamera';
 import { readVehicleControls } from '../vehicle/VehicleInput';
@@ -26,7 +27,7 @@ import { RaceSession, type RaceEvent } from './RaceSession';
 import { crossGate } from './crossing';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
 import { countAttempt, submitRun } from './records';
-import { LOANER_SPEC, specOf } from '../garage/assembly';
+import { LOANER_SPEC, specOf, type CarInstance } from '../garage/assembly';
 
 export interface RaceParams {
   track?: TrackData;
@@ -74,6 +75,9 @@ export class RaceMode implements Mode {
   private params: RaceParams = {};
   private spec!: CarSpec;
   private carId: string | null = null;
+  /** The player's car when it wears in this race, and its meter (null: the loaner, a forced spec, a test drive). */
+  private wearCar: CarInstance | null = null;
+  private meter: WearMeter | null = null;
   private tuningPanel: TuningPanel | null = null;
   private readonly pos = new THREE.Vector3();
   private readonly quat = new THREE.Quaternion();
@@ -110,6 +114,9 @@ export class RaceMode implements Mode {
       : params?.spec ? null : this.state.selectedCar;
     this.spec = params?.spec ?? specOf(car);
     this.carId = car?.id ?? null;
+    // Wear: the player's own car only. The loaner, a forced spec (?car=) and the editor's test drive never wear.
+    this.wearCar = car && !params?.spec && !params?.test ? car : null;
+    this.meter = this.wearCar ? new WearMeter(this.wearCar) : null;
     const stats = computeCarStats(this.spec);
     this.carModel = new CarModel(this.game.assets, this.spec);
     this.scene.add(this.carModel.root);
@@ -146,12 +153,14 @@ export class RaceMode implements Mode {
     if (this.hud.split) this.hud.split.style.opacity = '0';
   }
 
-  respawn(): void {
+  /** Back to the last checkpoint; once started, it wears the car by its cause (see WEAR.RESET). */
+  respawn(cause: ResetCause = 'key'): void {
     if (this.session.phase === 'finished') return;
     this.session.respawns++;
     this.vehicle.reset(this.respawnPoint.position, this.respawnPoint.yaw);
     this.prevStep.copy(this.vehicle.curPos);
     this.chase.snap();
+    if (this.session.phase === 'running') this.meter?.putBack(cause);
   }
 
   private respawnAt(gate: Gate, dir: 1 | -1): void {
@@ -172,7 +181,7 @@ export class RaceMode implements Mode {
   fixedUpdate(dt: number): void {
     const input = this.game.input;
     if (input.consume('restart')) this.restart();
-    if (input.consume('respawn')) this.respawn();
+    if (input.consume('respawn')) this.respawn('key');
 
     for (const ev of this.session.step()) this.pending.push(ev);
     const phase = this.session.phase;
@@ -180,6 +189,9 @@ export class RaceMode implements Mode {
     if (phase === 'finished') controls = { ...NO_CONTROLS, brake: 0.4 };
     this.prevStep.copy(this.vehicle.curPos);
     this.vehicle.step(dt, controls);
+    // Only the race itself wears the car: not the countdown, nor the braking after the line.
+    if (phase === 'running') this.meter?.step(dt, this.vehicle, controls);
+    else this.meter?.closeShock();
     this.physics.step(dt);
     this.vehicle.afterWorldStep();
     // The car waits on the line during the countdown.
@@ -197,7 +209,8 @@ export class RaceMode implements Mode {
         }
       }
     }
-    if (this.vehicle.curPos.y < this.track.minY - RACE.FALL_LIMIT || this.vehicle.flippedTime > VEHICLE.FLIP_RESPAWN_S) this.respawn();
+    const fell = this.vehicle.curPos.y < this.track.minY - RACE.FALL_LIMIT;
+    if (fell || this.vehicle.flippedTime > VEHICLE.FLIP_RESPAWN_S) this.respawn(autoResetCause(fell, this.vehicle.curQuat));
   }
 
   // ------------------------------------------------------------------ frame
@@ -422,10 +435,16 @@ export class RaceMode implements Mode {
       finished: this.session.phase === 'finished',
       respawns: this.session.respawns,
       blueprint: this.spec.blueprint,
+      /** Wear of the raced car (‰ per slot), null when it does not wear. */
+      wear: this.wearCar ? { ...this.wearCar.wear } : null,
     };
   }
 
   exit(): void {
+    // The fractions of a thousandth are rounded into the car before the mode switch saves.
+    this.meter?.end();
+    this.meter = null;
+    this.wearCar = null;
     this.toggleTuning(false);
     this.vehicle.dispose();
     this.track.dispose();

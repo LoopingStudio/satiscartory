@@ -8,6 +8,7 @@ const PURE = [
   'src/factory/sim',
   'src/car/stats.ts',
   'src/car/tuning.ts',
+  'src/car/wearMeter.ts',
   'src/garage/assembly.ts',
   'src/track/connectors.ts',
   'src/track/validate.ts',

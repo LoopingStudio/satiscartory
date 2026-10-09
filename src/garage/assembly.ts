@@ -1,6 +1,7 @@
 import type { ItemId, Inventory } from '../data/items';
 import type { CarSpec } from '../car/stats';
-import { BLUEPRINTS, type Blueprint, type BlueprintId, type SlotDef } from '../data/blueprints';
+import { BLUEPRINTS, blueprintById, type Blueprint, type BlueprintId, type SlotDef } from '../data/blueprints';
+import type { CarWear } from '../data/wear';
 
 /** Where a car stands in the factory (meters; yaw 0 faces +Z, like Vehicle spawns). */
 export interface CarPose {
@@ -19,6 +20,8 @@ export interface CarInstance {
   parts: Record<string, ItemId>;
   /** Position in the factory; null/absent = not placed yet (parks in the first free garage). */
   pose?: CarPose | null;
+  /** Wear of the installed parts (data/wear.ts); absent on a new car, never an empty object. */
+  wear?: CarWear;
 }
 
 /** Restores a pose from untrusted save data (null if invalid). */
@@ -107,7 +110,7 @@ export function assemble(storage: Inventory, bpId: BlueprintId, choices: PartCho
 
 /** Dismantles a car: its parts go back to `storage` (mutated). */
 export function disassemble(storage: Inventory, car: CarInstance): void {
-  const bp = BLUEPRINTS[car.blueprint as BlueprintId];
+  const bp = blueprintById(car.blueprint);
   if (!bp) return;
   for (const s of bp.slots) {
     const item = car.parts[s.id];
@@ -120,7 +123,7 @@ export function disassemble(storage: Inventory, car: CarInstance): void {
  * parts come from storage, the old ones go back. Returns false if not enough.
  */
 export function swapPart(storage: Inventory, car: CarInstance, slotId: string, item: ItemId | null): boolean {
-  const bp = BLUEPRINTS[car.blueprint as BlueprintId];
+  const bp = blueprintById(car.blueprint);
   const slot: SlotDef | undefined = bp?.slots.find((s) => s.id === slotId);
   if (!slot) return false;
   if (item === null && !slot.optional) return false;

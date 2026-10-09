@@ -58,6 +58,51 @@ export const SALE = {
   ROUND: 10,
 } as const;
 
+/**
+ * Wear of the installed parts (data/wear.ts, car/wearMeter.ts), per slot in integer thousandths: 0 = new (no key),
+ * MAX = worn out; the state shown is ⌊(1000 − w) / 10⌋ %. Every threshold reads « above » (>).
+ */
+export const WEAR = {
+  MAX: 1000,
+  /** A car with a part above this does not start a race (19 % shown or less; 20 % still races). */
+  BLOCK_ABOVE: 800,
+  /** Gauges turn orange above this (49 % shown or less), red above BLOCK_ABOVE. */
+  WARN_ABOVE: 500,
+  /**
+   * Wheels, ‰ per km with the wheels on the ground: rolling, plus TIRE_HANDBRAKE_PER_KM with the handbrake on,
+   * plus TIRE_SLIDE_PER_KM per km slid sideways beyond SLIP_FREE (m/s, a tire at its grip limit slides that much).
+   * A clean lap of the Ovale (0.58 km, the bot barely slides) takes about 21 ‰: some 38 laps to BLOCK_ABOVE.
+   */
+  TIRE_PER_KM: 36,
+  TIRE_HANDBRAKE_PER_KM: 150,
+  TIRE_SLIDE_PER_KM: 400,
+  SLIP_FREE: 0.3,
+  /** Engine, ‰ per km: rolling, plus ENGINE_THROTTLE_PER_KM × throttle (full throttle wears about 4 times more). */
+  ENGINE_PER_KM: 3,
+  ENGINE_THROTTLE_PER_KM: 10,
+  /**
+   * Shocks: a contact speed change above SHOCK_FLOOR (m/s in one step, in the car's plane) opens a window of at most
+   * SHOCK_WINDOW steps that sums them up; when it closes, each body part takes min(SHOCK_MAX, SHOCK_K × max(0,
+   * Δv − SHOCK_FREE)²) ‰. Pushing or steering into a wall stays under the floor, and so does a landing from up to
+   * 2 m; one from 4 to 8 m may cross it and costs a few ‰ at most. Grazes are free.
+   */
+  SHOCK_FLOOR: 2,
+  SHOCK_WINDOW: 4,
+  SHOCK_FREE: 3,
+  SHOCK_K: { chassis: 0.33, panels: 0.5, spoiler: 0.4 },
+  SHOCK_MAX: 300,
+  /** Put back on the road (‰ chassis / panels / spoiler) per cause; « Recommencer » and « Réessayer » cost nothing. */
+  RESET: {
+    key: { chassis: 2, panels: 3, spoiler: 3 },
+    stuck: { chassis: 2, panels: 3, spoiler: 3 },
+    flip: { chassis: 15, panels: 25, spoiler: 30 },
+    fall: { chassis: 20, panels: 20, spoiler: 20 },
+    water: { chassis: 10, panels: 15, spoiler: 10 },
+  },
+  /** Damage flash (HUD) from this many ‰ on the most hit part: « Retour arrière » (2 to 3 ‰) shows nothing. */
+  FLASH_MIN: 5,
+} as const;
+
 /** Production rates (« /min »): measured over the last WINDOW ticks; a building placed or reset less than MIN_SPAN ago is still measuring. */
 export const STATS = {
   /** 1 200 ticks = the last minute. */

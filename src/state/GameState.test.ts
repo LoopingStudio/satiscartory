@@ -241,3 +241,62 @@ describe('GameState on the relief', () => {
     expect(s.cars[0]!.pose).toEqual(pose);
   });
 });
+
+describe('GameState: car wear', () => {
+  const reload = (s: GameState) => GameState.fromSave(JSON.parse(JSON.stringify(s.serialize())));
+  const KART = { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } as const;
+  const SPORT = { chassis: 'chassis', engine: 'engine', wheels: 'wheel', panels: 'panel' } as const;
+
+  it('round-trips through the save, and replaceWith carries it', () => {
+    const s = new GameState();
+    s.cars = [{ id: 'a', name: 'A', blueprint: 'sport', parts: { ...SPORT }, pose: null, wear: { wheels: 420, panels: 1000, chassis: 3 } }];
+    const r = reload(s);
+    expect(r.cars[0]!.wear).toEqual({ wheels: 420, panels: 1000, chassis: 3 });
+    const a = new GameState();
+    a.replaceWith(r);
+    expect(a.cars[0]!.wear).toEqual({ wheels: 420, panels: 1000, chassis: 3 });
+    expect(r.serialize().version).toBe(1);
+  });
+
+  it('a save from before the wear, and a new car, have no wear key at all', async () => {
+    const data = new GameState().serialize();
+    data.cars = [{ id: 'old', name: 'Old', blueprint: 'kart', parts: { ...KART }, pose: null }];
+    const s = GameState.fromSave(data);
+    expect('wear' in s.cars[0]!).toBe(false);
+    // Assembled now: new, no key, and none in the save either.
+    const { assembleCar } = await import('../garage/actions');
+    s.sim.hub.add('chassis', 1);
+    s.sim.hub.add('engine', 1);
+    s.sim.hub.add('wheel', 4);
+    const car = assembleCar(s, 'kart', { ...KART }, { id: 9, x: 40, z: 40, rot: 0 })!;
+    expect('wear' in car).toBe(false);
+    expect(JSON.stringify(s.serialize().cars)).not.toContain('wear');
+    expect('wear' in reload(s).cars.find((c) => c.id === car.id)!).toBe(false);
+  });
+
+  it('broken wear data is cleaned: installed parts of the blueprint only, integers in 0..1000, nothing when nothing is left', () => {
+    const data = new GameState().serialize();
+    data.cars = JSON.parse(JSON.stringify([
+      { id: 'a', name: 'A', blueprint: 'sport', parts: { ...SPORT }, wear: { wheels: 420.6, panels: 5000, engine: -8, chassis: 'x', spoiler: 300, turbo: 9 } },
+      { id: 'b', name: 'B', blueprint: 'kart', parts: { ...KART }, wear: { wheels: null, engine: 0 } },
+      { id: 'c', name: 'C', blueprint: 'kart', parts: { ...KART }, wear: 'worn' },
+      { id: 'd', name: 'D', blueprint: 'constructor', parts: { ...KART }, wear: { wheels: 300 } },
+      { id: 'e', name: 'E', blueprint: 'kart', parts: { ...KART, wheels: 'panel' }, wear: { wheels: 300, chassis: 2 } },
+    ]));
+    const s = GameState.fromSave(data);
+    const byId = (id: string) => s.cars.find((c) => c.id === id)!;
+    expect(byId('a').wear).toEqual({ wheels: 421, panels: 1000 });
+    for (const id of ['b', 'c', 'd']) expect('wear' in byId(id)).toBe(false);
+    expect(byId('e').wear).toEqual({ chassis: 2 });
+  });
+
+  it('swapping a part (for now) takes its wear away with it, the others stay', async () => {
+    const { swapCarPart } = await import('../garage/actions');
+    const s = new GameState();
+    s.sim.hub.add('wheel_racing', 4);
+    s.cars = [{ id: 'a', name: 'A', blueprint: 'kart', parts: { ...KART }, pose: null, wear: { wheels: 700, engine: 40 } }];
+    expect(swapCarPart(s, 'a', 'wheels', 'wheel_racing')).toBe(true);
+    expect(s.cars[0]!.wear).toEqual({ engine: 40 });
+    expect(s.inventory.count('wheel')).toBe(4);
+  });
+});

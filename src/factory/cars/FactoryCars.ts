@@ -8,12 +8,13 @@ import { buildLook, type CarBuild } from '../../garage/build';
 import { bayPose } from '../../garage/parking';
 import type { CarSpec } from '../../car/stats';
 import type { Terrain } from '../sim/terrain';
-import { BLUEPRINTS, type BlueprintId } from '../../data/blueprints';
+import { blueprintById } from '../../data/blueprints';
 import { VEHICLE } from '../../data/vehicle';
 import { FACTORY_CELL, PLAYER_HEIGHT, PLAYER_RADIUS } from '../../config/constants';
 import { CarModel } from '../../car/CarModel';
 import { computeCarStats } from '../../car/stats';
 import { tuningFromStats } from '../../car/tuning';
+import { WearMeter, autoResetCause, type ResetCause } from '../../car/wearMeter';
 import { CAR_GROUPS } from '../collisionGroups';
 import { Vehicle, NO_CONTROLS } from '../../vehicle/Vehicle';
 import { ChaseCamera } from '../../vehicle/ChaseCamera';
@@ -95,7 +96,8 @@ const IDENTITY = { x: 0, y: 0, z: 0, w: 1 };
  * (the player walks around it, the driven car hits it). Driven car: the race Vehicle (same tuning as
  * RaceMode, race gravity through the body's gravity scale, soft speed cap, wheel rays that ignore
  * conveyors and parked cars) followed by a ChaseCamera. Its CarInstance.pose is written every step,
- * so a save may happen at any time.
+ * and its wear (WearMeter) as soon as a part gets a whole thousandth, so a save may happen at any time.
+ * Nothing wears while the controls are off (pause, a panel open): the car still rolls, uncounted.
  *
  * Per fixed step, call fixedUpdate() BEFORE the factory world steps (like CharacterController.step);
  * per frame, call update(). dispose() MUST run before FactoryWorld.dispose() (it frees the WASM world).
@@ -113,6 +115,8 @@ export class FactoryCars {
   private safeTimer = 0;
   /** Seconds the driven car has been under deep water. */
   private drownTime = 0;
+  /** Wear of the driven car (null on foot). */
+  private meter: WearMeter | null = null;
   private readonly fit: TerrainFit = { y: 0, q: { x: 0, y: 0, z: 0, w: 1 } };
   /** The last standing() fitted the car to the ground. */
   private onGround = false;
@@ -167,7 +171,7 @@ export class FactoryCars {
       this.entries.set(id, this.createBuild(b, id, pose, key));
     }
     for (const car of this.state.cars) {
-      if (!car.pose || !BLUEPRINTS[car.blueprint as BlueprintId]) continue;
+      if (!car.pose || !blueprintById(car.blueprint)) continue;
       live.add(car.id);
       const key = carModelKey(car);
       let e = this.entries.get(car.id);
@@ -343,6 +347,7 @@ export class FactoryCars {
     e.vehicle.collider.setCollisionGroups(CAR_GROUPS);
     e.model.setDriver(true);
     this.driving = e;
+    this.meter = new WearMeter(car);
     this.pos.copy(e.vehicle.curPos);
     this.lastSafe = { ...p };
     this.safeTimer = 0;
@@ -409,6 +414,8 @@ export class FactoryCars {
   private stopDriving(): void {
     const e = this.driving;
     if (!e) return;
+    this.meter?.end();
+    this.meter = null;
     e.vehicle?.dispose();
     e.vehicle = null;
     this.driving = null;
@@ -484,8 +491,11 @@ export class FactoryCars {
     return false;
   }
 
-  /** Puts the driven car back on its last safe pose (respawn key, falls, flips), tilted to the ground there. */
-  resetToLastSafe(): void {
+  /**
+   * Puts the driven car back on its last safe pose (respawn key, falls, flips), tilted to the ground there.
+   * `cause` charges the wear of a put-back (null: not counted, the controls are off).
+   */
+  resetToLastSafe(cause: ResetCause | null = null): void {
     const e = this.driving;
     const v = e?.vehicle;
     const s = this.lastSafe;
@@ -495,6 +505,7 @@ export class FactoryCars {
     let lift = 0;
     if (!this.opts.ground.flat) for (const c of boxCorners(s, e.box)) lift = Math.max(lift, this.opts.ground.heightAt(c.x, c.z) - fit.y);
     v.reset(new THREE.Vector3(s.x, fit.y + Math.min(lift, 1.5) + RESET_LIFT, s.z), s.yaw, { ...fit.q });
+    if (cause) this.meter?.putBack(cause);
     this.safeTimer = 0;
     this.drownTime = 0;
     this.chase?.snap();
@@ -527,6 +538,8 @@ export class FactoryCars {
       if (under > -0.05 && p.x > x0 - 6 && p.x < x1 + 6 && p.z > z0 - 6 && p.z < z1 + 6) {
         v.body.setTranslation({ x: p.x, y: p.y + under + 0.1, z: p.z }, true);
         v.afterWorldStep();
+        // Not a shock: the next world step pushes the car out of the risen ground.
+        v.skipImpact(2);
       }
     }
   }
@@ -557,8 +570,9 @@ export class FactoryCars {
 
   /**
    * One fixed step of the driven car; call it every physics step BEFORE the factory world steps
-   * (`input` null = no controls: menu, panel, pointer released). Reads the last step's result, puts the
-   * car back when it fell or flipped, keeps it in the map, writes its pose, then applies the controls.
+   * (`input` null = no controls: menu, panel, pointer released; nothing wears then). Reads the last step's
+   * result, puts the car back when it fell or flipped, keeps it in the map, writes its pose, applies the
+   * controls, then counts the wear.
    */
   fixedUpdate(dt: number, input: Input | null): void {
     const e = this.driving;
@@ -575,25 +589,30 @@ export class FactoryCars {
     const level = g.waterLevel;
     const wet = level !== null && g.waterDepthAt(p.x, p.z) > 0 && p.y < level - FACTORY_CAR.WET_DEPTH;
     this.drownTime = wet && p.y < level! - FACTORY_CAR.DROWN_DEPTH ? this.drownTime + dt : 0;
+    const lost = fell || !insideMap(p.x, p.z, w, h, -FACTORY_CAR.MAP_LOST);
     if (this.drownTime > FACTORY_CAR.DROWN_S) {
-      this.resetToLastSafe();
+      this.resetToLastSafe(input ? 'water' : null);
       this.opts.onEvent?.('water');
-    } else if (fell || v.flippedTime > VEHICLE.FLIP_RESPAWN_S || !insideMap(p.x, p.z, w, h, -FACTORY_CAR.MAP_LOST)) {
-      this.resetToLastSafe();
+    } else if (lost || v.flippedTime > VEHICLE.FLIP_RESPAWN_S) {
+      this.resetToLastSafe(input ? autoResetCause(lost, v.curQuat) : null);
     } else {
+      // Scripted speeds (not shocks): the water's drag, the soft map edge.
       if (wet) {
         const lv = v.body.linvel();
         const k = Math.exp(-FACTORY_CAR.WATER_DRAG * dt);
-        v.body.setLinvel({ x: lv.x * k, y: lv.y, z: lv.z * k }, true);
+        v.scriptVelocity(lv.x * k, lv.y, lv.z * k);
       }
       const lv = v.body.linvel();
       const vx = keepInside(p.x, lv.x, w);
       const vz = keepInside(p.z, lv.z, h);
-      if (vx !== lv.x || vz !== lv.z) v.body.setLinvel({ x: vx, y: lv.y, z: vz }, true);
+      if (vx !== lv.x || vz !== lv.z) v.scriptVelocity(vx, lv.y, vz);
     }
     this.trackSafe(v, dt, w, h);
     this.writePose(e, v);
-    v.step(dt, input ? readVehicleControls(input) : NO_CONTROLS);
+    const c = input ? readVehicleControls(input) : NO_CONTROLS;
+    v.step(dt, c);
+    if (input) this.meter?.step(dt, v, c);
+    else this.meter?.closeShock();
   }
 
   /** Snapshots the pose every SAFE_INTERVAL while the car stands upright on all wheels inside the map. */
@@ -653,6 +672,8 @@ export class FactoryCars {
    */
   dispose(): void {
     const alive = !this.physics.disposed;
+    this.meter?.end();
+    this.meter = null;
     for (const e of this.entries.values()) {
       if (alive) {
         e.vehicle?.dispose();

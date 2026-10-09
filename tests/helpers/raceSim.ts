@@ -7,12 +7,14 @@ import type { TrackData } from '../../src/track/TrackData';
 import { carGeometryFromBoxes } from '../../src/car/geometry';
 import { computeCarStats, type CarSpec } from '../../src/car/stats';
 import { tuningFromStats } from '../../src/car/tuning';
-import { Vehicle, NO_CONTROLS } from '../../src/vehicle/Vehicle';
+import { Vehicle, NO_CONTROLS, type VehicleControls } from '../../src/vehicle/Vehicle';
 import { RaceSession } from '../../src/race/RaceSession';
 import { crossGate } from '../../src/race/crossing';
 import { Bot } from '../../src/race/bot';
-import { BLUEPRINTS } from '../../src/data/blueprints';
+import { BLUEPRINTS, type SlotId } from '../../src/data/blueprints';
 import { GRAVITY_RACE, PHYS_DT } from '../../src/config/constants';
+import type { CarWear, WearCar } from '../../src/data/wear';
+import { WearMeter, autoResetCause } from '../../src/car/wearMeter';
 
 const triCache = new Map<string, Tri[]>();
 function tris(model: string): Tri[] {
@@ -55,10 +57,39 @@ export interface SimResult {
   checkpoints: number;
   respawns: number;
   simSeconds: number;
+  /** Final pose of the car: position x, y, z then rotation x, y, z, w (exact floats, for the golden test). */
+  pose: number[];
+  /** Distance driven while racing (km). */
+  km: number;
+  /** With `meter`: the car's wear at the end (‰, rounded like RaceMode.exit), and before rounding (fractions in). */
+  wear?: CarWear;
+  wearExact?: Record<SlotId, number>;
+}
+
+export interface SimOptions {
+  maxSeconds?: number;
+  /** Bot cornering (m/s² of lateral grip it assumes) and braking (m/s²). */
+  latAccel?: number;
+  braking?: number;
+  /** Wear of the car at the start (‰ per slot; a new car by default). */
+  wear?: CarWear;
+  /** Counts the wear like RaceMode (WearMeter while racing, respawns by cause, end at the finish). */
+  meter?: boolean;
+  /**
+   * 'clean' (default): the bot as it is. 'sloppy': the same line, but the handbrake pulled in every tight turn
+   * (steering more than half way above 12 m/s) and the throttle kept on through it: a player drifting everywhere.
+   */
+  driver?: 'clean' | 'sloppy';
+}
+
+/** The sloppy driver's controls over the bot's (see SimOptions.driver). */
+function sloppy(c: VehicleControls, speed: number): VehicleControls {
+  if (Math.abs(c.steer) <= 0.5 || speed <= 12) return c;
+  return { ...c, throttle: 1, brake: 0, handbrake: true };
 }
 
 /** Drives a full run with the bot, headless. */
-export function simulateRun(track: TrackData, spec: CarSpec, opts: { maxSeconds?: number; latAccel?: number; braking?: number } = {}): SimResult {
+export function simulateRun(track: TrackData, spec: CarSpec, opts: SimOptions = {}): SimResult {
   const maxSeconds = opts.maxSeconds ?? 180;
   const world = new RAPIER.World({ x: 0, y: GRAVITY_RACE, z: 0 });
   world.timestep = PHYS_DT;
@@ -74,20 +105,26 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: { maxSeconds?
   const finishDir = finishDirections(track, gates);
   const session = new RaceSession(cps, PHYS_DT * 1000, 90);
   const bot = new Bot(centerline(track), Math.sqrt((opts.latAccel ?? 32) / 32), opts.braking ?? 14);
+  const worn: WearCar = { blueprint: spec.blueprint, parts: spec.parts, ...(opts.wear ? { wear: { ...opts.wear } } : {}) };
+  const meter = opts.meter ? new WearMeter(worn) : null;
   const prev = new THREE.Vector3();
   const fwd = new THREE.Vector3();
   let respawnPoint = spawn;
   let respawns = 0;
+  let km = 0;
   let t = 0;
   while (t < maxSeconds && session.phase !== 'finished') {
     session.step();
     fwd.set(0, 0, 1).applyQuaternion(car.curQuat);
-    const controls =
-      session.phase === 'running'
-        ? bot.controls({ x: car.curPos.x, z: car.curPos.z, heading: Math.atan2(fwd.x, fwd.z), speed: car.speed }, PHYS_DT)
-        : NO_CONTROLS;
+    const running = session.phase === 'running';
+    let controls = running ? bot.controls({ x: car.curPos.x, z: car.curPos.z, heading: Math.atan2(fwd.x, fwd.z), speed: car.speed }, PHYS_DT) : NO_CONTROLS;
+    if (running && opts.driver === 'sloppy') controls = sloppy(controls, car.speed);
     prev.copy(car.curPos);
     car.step(PHYS_DT, controls);
+    if (running) {
+      km += (Math.abs(car.speed) * PHYS_DT) / 1000;
+      meter?.step(PHYS_DT, car, controls);
+    } else meter?.closeShock();
     world.step();
     car.afterWorldStep();
     if (session.phase === 'countdown') car.hold();
@@ -106,11 +143,21 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: { maxSeconds?
       }
     }
     if (car.curPos.y < -25 || car.flippedTime > 1.6) {
+      const cause = autoResetCause(car.curPos.y < -25, car.curQuat);
       car.reset(respawnPoint.position, respawnPoint.yaw);
       respawns++;
+      if (session.phase === 'running') meter?.putBack(cause);
     }
     t += PHYS_DT;
   }
+  const pose = [...car.curPos.toArray(), ...car.curQuat.toArray()];
   world.free();
-  return { finished: session.phase === 'finished', ms: session.finishMs, checkpoints: session.passed.size, respawns, simSeconds: +t.toFixed(1) };
+  const r: SimResult = { finished: session.phase === 'finished', ms: session.finishMs, checkpoints: session.passed.size, respawns, simSeconds: +t.toFixed(1), pose, km };
+  if (meter) {
+    meter.closeShock();
+    r.wearExact = { chassis: meter.exact('chassis'), engine: meter.exact('engine'), wheels: meter.exact('wheels'), panels: meter.exact('panels'), spoiler: meter.exact('spoiler') };
+    meter.end();
+    r.wear = { ...worn.wear };
+  }
+  return r;
 }

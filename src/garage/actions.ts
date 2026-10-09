@@ -1,5 +1,6 @@
 import { CAR_PARTS, type BlueprintId } from '../data/blueprints';
 import { ITEM_IDS, type Inventory as ItemCounts, type ItemId } from '../data/items';
+import { clearSlotWear } from '../data/wear';
 import type { GameState } from '../state/GameState';
 import type { Wallet } from '../state/Inventory';
 import { assemble, checkAssembly, disassemble, swapPart, type AssemblyCheck, type CarInstance, type PartChoices } from './assembly';
@@ -116,6 +117,7 @@ export function sellCar(state: GameState, carId: string): { car: CarInstance; pr
 /**
  * Installs `item` in a slot (null empties an optional slot): the new parts are paid from the wallet,
  * the old ones go back to it. False when nothing changed (same part, not enough in stock, invalid slot).
+ * For now the slot's wear goes with the old parts (the reserve of worn parts will keep it).
  */
 export function swapCarPart(state: GameState, carId: string, slotId: string, item: ItemId | null): boolean {
   const car = findCar(state, carId);
@@ -124,6 +126,7 @@ export function swapCarPart(state: GameState, carId: string, slotId: string, ite
   const after = { ...before };
   if (!swapPart(after, car, slotId, item)) return false;
   applyChange(state.wallet(), before, after);
+  clearSlotWear(car, slotId);
   return true;
 }
 

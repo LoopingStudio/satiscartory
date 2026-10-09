@@ -1,4 +1,4 @@
-import { BLUEPRINTS, BLUEPRINT_IDS, type Blueprint, type BlueprintId } from '../data/blueprints';
+import { BLUEPRINTS, BLUEPRINT_IDS, blueprintById, type Blueprint, type BlueprintId, type SlotDef } from '../data/blueprints';
 import { ITEMS, countLabel, type Inventory as ItemCounts, type ItemId } from '../data/items';
 import { PART_MODIFIERS } from '../data/parts';
 import type { CarSpec } from '../car/stats';
@@ -14,6 +14,9 @@ import { carPrice, formatCredits } from '../data/sales';
 import { bayOccupant, type BayBlocker, type GarageSpot } from './parking';
 import { buildProgress, type CarBuild } from './build';
 import { abandonBuild, buildIn, installBuildPart, removeBuildPart } from './buildActions';
+import { condition, slotWear, worstWear } from '../data/wear';
+import { carRowTip, pct, stateText } from '../data/wearText';
+import { wearGauge, wearPct } from '../ui/wearGauge';
 
 export interface GaragePanelCallbacks {
   /** « Fermer »: the owner calls close() and gives the controls back. */
@@ -47,7 +50,12 @@ const LOCATION_NOTE: Record<Exclude<CarLocation, 'here'>, string> = {
 };
 
 function blueprintOf(car: CarInstance | null): Blueprint | undefined {
-  return BLUEPRINTS[(car?.blueprint ?? 'loaner') as BlueprintId];
+  return blueprintById(car?.blueprint ?? 'loaner');
+}
+
+/** The state shown of each installed part (%), for the refresh key: a thousandth more does not redraw the panel. */
+function shownWear(car: CarInstance): string {
+  return (blueprintOf(car)?.slots ?? []).map((s) => (car.parts[s.id] ? condition(slotWear(car, s.id)) : '-')).join('.');
 }
 
 /**
@@ -188,12 +196,12 @@ export class GaragePanel {
     this.render();
   }
 
-  /** The part counts, cars (parts and location), bay occupant, race car and view: what the panel shows. */
+  /** The part counts, cars (parts, location, state in %), bay occupant, race car and view: what the panel shows. */
   private contentKey(): string {
     const spot = this.spot!;
     const stock = partStock(this.state);
     const driven = this.driven;
-    const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}`).join('|');
+    const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}:${shownWear(c)}`).join('|');
     return [CAR_PARTS.map((i) => stock[i] ?? 0).join(','), cars, this.occupant(spot)?.id, JSON.stringify(this.build), this.state.selectedCarId, JSON.stringify(this.view), this.confirming, this.state.sim.credits].join('#');
   }
 
@@ -254,13 +262,17 @@ export class GaragePanel {
       if (current) selected = b;
       return b;
     };
-    const row = (id: string | null, name: string, sub: HTMLElement) => {
+    // A worn car shows its most worn part on a mini gauge, and in the pad tip (PadNav reads the focused row only).
+    const row = (id: string | null, name: string, sub: HTMLElement, worn: CarInstance | null = null) => {
       const viewing = this.view.kind === 'car' && this.view.id === id;
       const racing = (this.state.selectedCarId ?? null) === id;
+      const state = worn ? stateText(worn) : null;
       return pick(
-        el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', 'data-pad-tab': true, 'data-pad-tip': racing ? 'Voiture de course' : undefined, onclick: () => this.show({ kind: 'car', id }) },
+        el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', 'data-pad-tab': true, 'data-pad-tip': carRowTip(racing, state), onclick: () => this.show({ kind: 'car', id }) },
           el('span', { class: 'car-star', title: racing ? 'Voiture de course' : '' }, racing ? '★' : '☆'),
           el('span', { class: 'col', style: 'gap:0' }, el('b', {}, name), sub),
+          worn && state ? el('span', { class: 'spacer' }) : null,
+          worn && state ? wearGauge(worstWear(worn), 'mini', `État : ${state}`) : null,
         ),
         viewing,
       );
@@ -272,7 +284,7 @@ export class GaragePanel {
         row(c.id, c.name, el('span', { class: 'small' },
           el('span', { class: 'muted' }, `${blueprintOf(c)?.name ?? c.blueprint} · `),
           el('span', { class: loc === 'here' ? 'good' : 'muted' }, LOCATION_LABEL[loc]),
-        )),
+        ), c),
       );
     }
 
@@ -341,6 +353,18 @@ export class GaragePanel {
       'data-pad-tip': attrs.disabled ? attrs.tip : undefined,
       onclick: attrs.onclick,
     }, item ? this.icon(item) : null, label);
+  }
+
+  /** A slot's name (or `label`), then the wear of its part (gauge and %) when it holds one. */
+  private slotHead(car: CarInstance, slot: SlotDef, label = slot.name): HTMLElement {
+    const installed = !!car.parts[slot.id];
+    const w = slotWear(car, slot.id);
+    return el('div', { class: 'row slot-head' },
+      el('b', {}, label),
+      el('span', { class: 'spacer' }),
+      installed ? wearGauge(w, 'full', `${slot.name} : ${pct(w)}`) : null,
+      installed ? wearPct(w) : null,
+    );
   }
 
   /** « Annuler » of a pending confirmation: wins B over « Fermer », takes the focus from the button it replaced. */
@@ -505,7 +529,7 @@ export class GaragePanel {
     if (car && bp && loc === 'here') {
       r.appendChild(el('h3', { style: 'margin-top:10px' }, 'Pièces'));
       for (const slot of bp.slots) {
-        const row = el('div', { class: 'slot-row' }, el('b', {}, `${slot.name}${slot.count > 1 ? ` ×${slot.count}` : ''}`));
+        const row = el('div', { class: 'slot-row' }, this.slotHead(car, slot, `${slot.name}${slot.count > 1 ? ` ×${slot.count}` : ''}`));
         const opts = el('div', { class: 'row', style: 'flex-wrap:wrap' });
         const options: (ItemId | null)[] = [...(slot.optional ? [null] : []), ...slot.accepts];
         for (const item of options) {
@@ -531,6 +555,11 @@ export class GaragePanel {
       }
       r.appendChild(el('div', { class: 'muted small', style: 'margin-top:6px' }, 'Les nouvelles pièces viennent du sac, puis du hangar ; les anciennes retournent dans le sac.'));
     } else if (car && loc) {
+      // Read only: the state of the installed parts.
+      if (bp) {
+        r.appendChild(el('h3', { style: 'margin-top:10px' }, 'État'));
+        for (const slot of bp.slots) if (car.parts[slot.id]) r.appendChild(el('div', { class: 'slot-row' }, this.slotHead(car, slot)));
+      }
       r.appendChild(el('div', { class: 'muted small', style: 'margin-top:8px' }, LOCATION_NOTE[loc as Exclude<CarLocation, 'here'>]));
     } else if (!car) {
       r.appendChild(el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Le kart de location ne roule que sur les circuits. Construis le tien pour le conduire dans l’usine !'));

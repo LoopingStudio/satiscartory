@@ -12,6 +12,7 @@ import { TIERS, isUnlocked } from '../data/tiers';
 import { GRASS_QUALITIES, TERRAIN_RULES, type GrassQuality } from '../data/factoryTerrain';
 import type { BuildingType } from '../data/buildings';
 import type { Inventory as ItemCounts } from '../data/items';
+import { sanitizeWear } from '../data/wear';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -137,7 +138,14 @@ export class GameState {
       s.player = { ...s.player, x: s.player.x + LEGACY_MAP_OFFSET * FACTORY_CELL, z: s.player.z + LEGACY_MAP_OFFSET * FACTORY_CELL };
     }
     s.cars = Array.isArray(data.cars)
-      ? data.cars.filter((c) => c && typeof c.id === 'string' && typeof c.blueprint === 'string').map((c) => ({ ...c, parts: c.parts ?? {}, pose: sanitizePose(c.pose) }))
+      ? data.cars.filter((c) => c && typeof c.id === 'string' && typeof c.blueprint === 'string').map((c) => {
+        const car: CarInstance = { ...c, parts: c.parts ?? {}, pose: sanitizePose(c.pose) };
+        // Wear: only the installed parts, integers 1..1000; absent = new (no `wear` key at all).
+        const wear = sanitizeWear(car.blueprint, car.parts, c.wear);
+        if (wear) car.wear = wear;
+        else delete car.wear;
+        return car;
+      })
       : [];
     // On the relief, a car off the map or in the lake waits for a garage bay instead (« À ranger »); a
     // player deep in the lake starts at the spawn. A save made before the relief (built flat: no relief id)
