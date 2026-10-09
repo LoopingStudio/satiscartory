@@ -15,6 +15,8 @@ import { BLUEPRINTS, type SlotId } from '../../src/data/blueprints';
 import { GRAVITY_RACE, PHYS_DT } from '../../src/config/constants';
 import type { CarWear, WearCar } from '../../src/data/wear';
 import { WearMeter, autoResetCause } from '../../src/car/wearMeter';
+import { wornTuning } from '../../src/car/wornTuning';
+import { SteadyDriver } from './steadyDriver';
 
 const triCache = new Map<string, Tri[]>();
 function tris(model: string): Tri[] {
@@ -71,15 +73,19 @@ export interface SimOptions {
   /** Bot cornering (m/s² of lateral grip it assumes) and braking (m/s²). */
   latAccel?: number;
   braking?: number;
-  /** Wear of the car at the start (‰ per slot; a new car by default). */
+  /** Wear of the car at the start (‰ per slot; a new car by default): it drives worn, like a RaceMode attempt. */
   wear?: CarWear;
   /** Counts the wear like RaceMode (WearMeter while racing, respawns by cause, end at the finish). */
   meter?: boolean;
   /**
    * 'clean' (default): the bot as it is. 'sloppy': the same line, but the handbrake pulled in every tight turn
    * (steering more than half way above 12 m/s) and the throttle kept on through it: a player drifting everywhere.
+   * 'steady': not the bot but the SteadyDriver (helpers/steadyDriver.ts), whose lap time measures the car's engine,
+   * drag and brakes (it stays below the grip limit: the grip it assumes is `latAccel`).
    */
-  driver?: 'clean' | 'sloppy';
+  driver?: 'clean' | 'sloppy' | 'steady';
+  /** Start this far back (m, along the start's direction): another approach to the track's jumps (a lap is a knife edge there). */
+  shift?: number;
 }
 
 /** The sloppy driver's controls over the bot's (see SimOptions.driver). */
@@ -96,15 +102,18 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: SimOptions = 
   roadCollider(world, track);
   const ground = world.createCollider(RAPIER.ColliderDesc.cuboid(4000, 1, 4000).setTranslation(0, -1.02, 0).setFriction(0.8));
   const gates = trackGates(track);
-  const spawn = trackSpawn(track, gates);
+  const start = trackSpawn(track, gates);
+  const spawn = opts.shift ? { position: start.position.clone().addScaledVector(new THREE.Vector3(Math.sin(start.yaw), 0, Math.cos(start.yaw)), -opts.shift), yaw: start.yaw } : start;
   const model = BLUEPRINTS[spec.blueprint].model;
   const geo = carGeometryFromBoxes(nodeBoxes(tris(model)));
-  const car = new Vehicle(world, geo, tuningFromStats(computeCarStats(spec)), spawn);
+  const car = new Vehicle(world, geo, wornTuning(tuningFromStats(computeCarStats(spec)), opts.wear, spec.parts), spawn);
   car.offroad = ground;
   const cps = gates.filter((g) => g.kind === 'checkpoint').length;
   const finishDir = finishDirections(track, gates);
   const session = new RaceSession(cps, PHYS_DT * 1000, 90);
-  const bot = new Bot(centerline(track), Math.sqrt((opts.latAccel ?? 32) / 32), opts.braking ?? 14);
+  const bot = opts.driver === 'steady'
+    ? new SteadyDriver({ x: spawn.position.x, z: spawn.position.z }, centerline(track), opts.latAccel ?? 32, opts.braking ?? 14)
+    : new Bot(centerline(track), Math.sqrt((opts.latAccel ?? 32) / 32), opts.braking ?? 14);
   const worn: WearCar = { blueprint: spec.blueprint, parts: spec.parts, ...(opts.wear ? { wear: { ...opts.wear } } : {}) };
   const meter = opts.meter ? new WearMeter(worn) : null;
   const prev = new THREE.Vector3();

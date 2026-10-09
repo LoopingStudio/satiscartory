@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BLUEPRINTS, BLUEPRINT_IDS, CAR_PARTS } from './blueprints';
 import { WEAR } from './balance';
-import { blockedSlots, clearSlotWear, condition, sanitizeWear, sanitizeWornSet, slotCountFor, slotWear, worstSlotOf, worstWear, type WearCar } from './wear';
+import { blockedSlots, clearSlotWear, condition, repairCredits, repairItems, sanitizeSetWear, sanitizeWear, sanitizeWornSet, shownConditions, slotCountFor, slotWear, worstSlotOf, worstWear, wornCarPrice, wornSetPrice, type CarWear, type WearCar } from './wear';
+import { CAR_SALES, PART_VALUES, carPrice } from './sales';
+import type { ItemId } from './items';
 
 const KART = { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } as const;
 const FULL = { chassis: 'chassis', engine: 'engine', wheels: 'wheel_racing', panels: 'panel', spoiler: 'spoiler' } as const;
@@ -84,5 +86,147 @@ describe('wear: save data', () => {
       expect(sanitizeWornSet(bad)).toBeNull();
     // Every car part makes a valid set of its slot's count.
     for (const item of CAR_PARTS) expect(sanitizeWornSet({ item, n: slotCountFor(item), wear: 500 })).not.toBeNull();
+  });
+});
+
+describe('wear: shown state', () => {
+  it('shownConditions writes the % of each slot (−1: empty) and tells when one changed, a thousandth more does not', () => {
+    const car = sport({ wheels: 4 }, { ...FULL, spoiler: undefined as never });
+    const out: number[] = [];
+    expect(shownConditions(car, out)).toBe(true);
+    expect(out).toEqual([100, 100, 99, 100, -1]);
+    expect(shownConditions(car, out)).toBe(false);
+    car.wear!.wheels = 9;
+    expect(shownConditions(car, out)).toBe(false);
+    car.wear!.wheels = 10;
+    expect(shownConditions(car, out)).toBe(false);
+    car.wear!.wheels = 11;
+    expect(shownConditions(car, out)).toBe(true);
+    expect(out[2]).toBe(98);
+    expect(shownConditions({ blueprint: 'constructor', parts: {} }, out)).toBe(false);
+  });
+});
+
+describe('wear: prices', () => {
+  // [item, n, wear, items, credits]: the plan's table (800 ‰) and worn out (1000 ‰).
+  const QUOTES: [ItemId, number, number, Record<string, number>, number][] = [
+    ['wheel', 4, 800, { tire: 4 }, 560],
+    ['wheel_racing', 4, 800, { tire: 7 }, 1120],
+    ['chassis', 1, 800, { plate: 1, iron_rod: 1, bolt: 2 }, 380],
+    ['engine', 1, 800, { plate: 2, iron_rod: 1, bolt: 2 }, 470],
+    ['panel', 4, 800, { plate: 2, bolt: 4 }, 520],
+    ['spoiler', 1, 800, { plate: 1, bolt: 1 }, 200],
+    ['wheel', 4, 1000, { tire: 4 }, 700],
+    ['wheel_racing', 4, 1000, { tire: 8 }, 1400],
+    ['chassis', 1, 1000, { plate: 1, iron_rod: 1, bolt: 2 }, 480],
+    ['engine', 1, 1000, { plate: 2, iron_rod: 1, bolt: 2 }, 590],
+    ['panel', 4, 1000, { plate: 2, bolt: 4 }, 650],
+    ['spoiler', 1, 1000, { plate: 1, bolt: 1 }, 250],
+  ];
+
+  it.each(QUOTES)('repairing %s ×%i worn %i ‰: the kit (wheels: tires; other parts: half the recipe) or credits', (item, n, w, items, credits) => {
+    expect(repairItems(item, n, w)).toEqual(items);
+    expect(repairCredits(item, n, w)).toBe(credits);
+  });
+
+  it('rounded up, never free: from 1 ‰ on at least 1 of each item of the kit and 10 cr; nothing for a new part', () => {
+    expect(repairItems('wheel', 4, 1)).toEqual({ tire: 1 });
+    expect(repairItems('engine', 1, 1)).toEqual({ plate: 1, iron_rod: 1, bolt: 1 });
+    for (const item of CAR_PARTS) {
+      const n = slotCountFor(item)!;
+      expect(repairCredits(item, n, 1), item).toBe(10);
+      expect(Object.values(repairItems(item, n, 1)).every((k) => k! >= 1), item).toBe(true);
+      expect(Object.keys(repairItems(item, n, 1)).length, item).toBeGreaterThan(0);
+      expect(repairItems(item, n, 0), item).toEqual({});
+      expect(repairCredits(item, n, 0), item).toBe(0);
+    }
+    // After one race (about 25 ‰ of tires): 1 tire or 20 cr.
+    expect([repairItems('wheel', 4, 25), repairCredits('wheel', 4, 25)]).toEqual([{ tire: 1 }, 20]);
+    // A worn set of « 4 roues · 42 % » (580 ‰): 3 tires or 410 cr, or sold for 672 cr.
+    expect([repairItems('wheel', 4, 580), repairCredits('wheel', 4, 580), wornSetPrice('wheel', 4, 580)]).toEqual([{ tire: 3 }, 410, 672]);
+  });
+
+  it('quotes grow with the wear, and repairing always costs less than making the parts new', () => {
+    for (const item of CAR_PARTS) {
+      const n = slotCountFor(item)!;
+      let prev = 0;
+      for (let w = 0; w <= WEAR.MAX; w += 25) {
+        const c = repairCredits(item, n, w);
+        expect(c, `${item} ${w}`).toBeGreaterThanOrEqual(prev);
+        prev = c;
+      }
+      // Worn out: the kit is worth less than the parts (with the same margin: less than what the dealer pays for them).
+      expect(repairCredits(item, n, WEAR.MAX), item).toBeLessThan((PART_VALUES[item] * n * 5) / 4);
+    }
+  });
+
+  it('a worn set sells for its value × its state (no margin): never more than new, 0 worn out', () => {
+    expect(wornSetPrice('wheel', 4, 1000)).toBe(0);
+    expect(wornSetPrice('chassis', 1, 1)).toBe(Math.floor(PART_VALUES.chassis * 0.999));
+    for (const item of CAR_PARTS) {
+      const n = slotCountFor(item)!;
+      let prev = Infinity;
+      for (let w = 1; w <= WEAR.MAX; w += 37) {
+        const p = wornSetPrice(item, n, w);
+        expect(Number.isInteger(p) && p >= 0 && p <= PART_VALUES[item] * n, `${item} ${w}`).toBe(true);
+        expect(p).toBeLessThanOrEqual(prev);
+        prev = p;
+      }
+    }
+  });
+
+  it('a worn car sells for its new price minus its repair in credits: repairing then selling brings in exactly the same', () => {
+    let seed = 11;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) >>> 16;
+    for (const sale of CAR_SALES) {
+      expect(wornCarPrice(sale.blueprint, sale.parts)).toBe(sale.price);
+      expect(wornCarPrice(sale.blueprint, sale.parts, {})).toBe(sale.price);
+      for (let k = 0; k < 40; k++) {
+        const wear: CarWear = {};
+        let repair = 0;
+        for (const s of BLUEPRINTS[sale.blueprint].slots) {
+          const item = sale.parts[s.id];
+          if (!item || next() % 3 === 0) continue;
+          const w = 1 + (next() % WEAR.MAX);
+          wear[s.id] = w;
+          repair += repairCredits(item, s.count, w);
+        }
+        expect(wornCarPrice(sale.blueprint, sale.parts, wear) + repair).toBe(sale.price);
+      }
+      // Worn out everywhere: still worth something (never below 0).
+      const out: CarWear = Object.fromEntries(BLUEPRINTS[sale.blueprint].slots.map((s) => [s.id, WEAR.MAX]));
+      expect(wornCarPrice(sale.blueprint, sale.parts, out)).toBeGreaterThan(0);
+    }
+    const full = { chassis: 'chassis', engine: 'engine', wheels: 'wheel_racing', panels: 'panel', spoiler: 'spoiler' };
+    expect(wornCarPrice('sport', full, { chassis: 1000, engine: 1000, wheels: 1000, panels: 1000, spoiler: 1000 })).toBe(7950 - 3370);
+    // The plan's examples: a kart with wheels at 500 ‰, then wheels 800, engine 250, chassis 100.
+    expect(wornCarPrice('kart', KART, { wheels: 500 })).toBe(4130);
+    expect(wornCarPrice('kart', KART, { wheels: 800, engine: 250, chassis: 100 })).toBe(3720);
+    // Wear of a slot without its part, an odd blueprint: no discount, no crash.
+    expect(wornCarPrice('kart', KART, { panels: 900 })).toBe(carPrice('kart', KART));
+    expect(wornCarPrice('constructor', KART, { wheels: 900 })).toBe(0);
+  });
+
+  it('dismantling then selling the worn sets always brings in less than selling the car (a quarter of the parts’ value at least)', () => {
+    const grid = [1, 10, 100, 250, 500, 799, 800, 801, 999, 1000];
+    for (const sale of CAR_SALES) {
+      const slots = BLUEPRINTS[sale.blueprint].slots.filter((s) => sale.parts[s.id]);
+      for (const a of grid) {
+        for (const b of grid) {
+          // Every slot worn (alternately a and b): every part goes to the reserve, and each set is sold.
+          const wear: CarWear = {};
+          slots.forEach((s, i) => (wear[s.id] = i % 2 ? a : b));
+          const sets = slots.reduce((sum, s) => sum + wornSetPrice(sale.parts[s.id]!, s.count, wear[s.id]!), 0);
+          const quarter = slots.reduce((sum, s) => sum + (PART_VALUES[sale.parts[s.id]!] * s.count) / 4, 0);
+          // Rounding: the car's price ±5, each repair up to 10 more.
+          expect(wornCarPrice(sale.blueprint, sale.parts, wear) - sets, `${sale.blueprint} ${a}/${b}`).toBeGreaterThanOrEqual(quarter - 5 - 10 * slots.length);
+        }
+      }
+    }
+  });
+
+  it('sanitizeSetWear: 1..1000, a broken value is worn out', () => {
+    expect([sanitizeSetWear(420.4), sanitizeSetWear(0), sanitizeSetWear(-3), sanitizeSetWear(1e9)]).toEqual([420, 1, 1, WEAR.MAX]);
+    for (const raw of [NaN, Infinity, '5', null, undefined, {}]) expect(sanitizeSetWear(raw)).toBe(WEAR.MAX);
   });
 });

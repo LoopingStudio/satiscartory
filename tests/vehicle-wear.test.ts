@@ -10,6 +10,7 @@ import { tuningFromStats } from '../src/car/tuning';
 import { Vehicle, NO_CONTROLS, type VehicleControls, type VehicleOptions, type VehicleSpawn } from '../src/vehicle/Vehicle';
 import { CAR_GRAVITY_SCALE, FACTORY_CAR } from '../src/factory/cars/carMath';
 import { WearMeter } from '../src/car/wearMeter';
+import { wearEffects, wornTuning } from '../src/car/wornTuning';
 import { WEAR } from '../src/data/balance';
 
 beforeAll(async () => {
@@ -18,7 +19,8 @@ beforeAll(async () => {
 
 /*
  * The wear readings of the Vehicle (lateralSpeed, impact), headless: what counts as a shock and what does not, in the
- * race world and in the factory world (its own gravity, the car's gravity scale and the factory options).
+ * race world and in the factory world (its own gravity, the car's gravity scale and the factory options). And worn
+ * tires at the grip limit: the friction of the worn tuning reaches the wheels.
  */
 
 const KART: CarSpec = { blueprint: 'kart', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } };
@@ -260,5 +262,34 @@ describe.each(WORLDS)('Vehicle wear readings (%s world)', (world) => {
     expect(moved(false)[1]).toBeGreaterThan(15);
     const [first, second] = moved(true);
     expect([first, second]).toEqual([0, 0]);
+  });
+
+  // The steady driver of tests/wear-sim.test.ts stays below the grip limit: worn tires must be checked at the limit.
+  it.each(CARS)('%s on a skidpad (full lock from 20 m/s): worn tires (800 ‰) reach the wheels, the car corners as much less hard as its grip', (_n, spec, model) => {
+    const wear = { wheels: WEAR.BLOCK_ABOVE };
+    /** Mean lateral acceleration (m/s²) over the last 2 of 3 s at full lock, with the tuning applied like RaceMode and FactoryCars do. */
+    const cornering = (worn: boolean) => {
+      const b = bench(world, spec, model);
+      if (worn) b.car.applyTuning(wornTuning(b.car.tuning, wear, spec.parts));
+      b.run(0.5);
+      b.car.scriptVelocity(0, 0, 20);
+      b.run(1 / 6);
+      let sum = 0;
+      let n = 0;
+      for (let i = 0; i < 180; i++) {
+        const v = b.car.body.linvel();
+        const [vx, vz] = [v.x, v.z];
+        b.step({ ...NO_CONTROLS, steer: 1, throttle: 0.6 });
+        const after = b.car.body.linvel();
+        if (i < 60) continue;
+        // The part of the speed change across the direction of travel.
+        sum += Math.abs((after.x - vx) * -vz + (after.z - vz) * vx) / Math.hypot(vx, vz) / PHYS_DT;
+        n++;
+      }
+      b.w.free();
+      return sum / n;
+    };
+    // Both ways from the frictions of the tuning: −17 % at the race limit (WEAR.EFFECT.grip on the wear curve).
+    expect(cornering(true) / cornering(false)).toBeCloseTo(1 + wearEffects(spec, wear).grip, 1);
   });
 });

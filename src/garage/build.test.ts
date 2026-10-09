@@ -27,7 +27,7 @@ describe('car build (chantier)', () => {
     expect(installPart(stock, b, 'wheels', 'engine')).toBe(0);
     expect(installPart(stock, b, 'nope', 'engine')).toBe(0);
     // Taken off, the slot takes racing wheels.
-    expect(removePart(stock, b, 'wheels')).toBe(1);
+    expect(removePart(stock, b, 'wheels', [])).toBe(1);
     expect(stock.wheel).toBe(1);
     expect(installPart(stock, b, 'wheels', 'wheel_racing')).toBe(4);
   });
@@ -57,8 +57,26 @@ describe('car build (chantier)', () => {
     installPart(stock, b, 'wheels', 'wheel');
     installPart(stock, b, 'panels', 'panel');
     expect(total(stock) + buildProgress(b).done).toBe(before);
-    refundBuild(stock, b);
+    refundBuild(stock, b, []);
     expect(total(stock)).toBe(before);
+    expect(buildEmpty(b)).toBe(true);
+  });
+
+  it('a worn set taken off goes to the reserve with its wear, new parts to the storage', () => {
+    const stock: ItemCounts = { engine: 1 };
+    const worn: { item: 'wheel' | 'chassis'; n: number; wear: number }[] = [];
+    const b = newBuild(7, 'kart');
+    b.parts.wheels = { item: 'wheel', n: 4, wear: 420 };
+    b.parts.chassis = { item: 'chassis', n: 1, wear: 9 };
+    installPart(stock, b, 'engine', 'engine');
+    // A slot holding a worn set takes nothing more.
+    expect(installPart({ wheel: 4 }, b, 'wheels', 'wheel')).toBe(0);
+    expect(removePart(stock, b, 'wheels', worn)).toBe(4);
+    expect(worn).toEqual([{ item: 'wheel', n: 4, wear: 420 }]);
+    expect(stock).toEqual({ engine: 0 });
+    refundBuild(stock, b, worn);
+    expect(worn).toEqual([{ item: 'wheel', n: 4, wear: 420 }, { item: 'chassis', n: 1, wear: 9 }]);
+    expect(stock).toEqual({ engine: 1 });
     expect(buildEmpty(b)).toBe(true);
   });
 

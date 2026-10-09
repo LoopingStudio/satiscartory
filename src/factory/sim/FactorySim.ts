@@ -1,7 +1,8 @@
-import { BELT, DEALER, DRILL, MACHINE, NODE, START_STORAGE, STATS } from '../../data/balance';
+import { BELT, DEALER, DRILL, MACHINE, NODE, START_STORAGE, STATS, WEAR } from '../../data/balance';
 import { TICKS_PER_MIN } from '../../data/rates';
 import { BLUEPRINT_IDS, BLUEPRINTS, CAR_PARTS, blueprintById, isCarPart, type BlueprintId } from '../../data/blueprints';
-import { bestSale, carCost, carPrice, planLoad, sanitizeCar } from '../../data/sales';
+import { bestSale, carCost, planLoad, sanitizeCar } from '../../data/sales';
+import { slotCountFor, wornCarPrice, wornSetPrice, type CarWear } from '../../data/wear';
 import { BUILDINGS, GARAGE_DOOR_SIDE, isBelt, isPadded, type BuildingType, type Side } from '../../data/buildings';
 import { FACTORY_MAP, LEGACY_MAP_OFFSET, RESOURCES, type ResourceId, type ResourceNode } from '../../data/factoryMap';
 import { FACTORY_GRID_H, FACTORY_GRID_W } from '../../config/constants';
@@ -22,7 +23,14 @@ export interface SimEvents extends Record<string, unknown> {
   terrain: TerrainRect;
   /** A car was sold, by a dealer or (dealer: null) from a garage. */
   sold: SaleEvent;
+  /** A set of worn parts was sold from the reserve (garage). */
+  soldWorn: { item: ItemId; n: number; wear: number; price: number };
+  /** Credits were spent (the only way out). */
+  spent: { amount: number; reason: SpendReason };
 }
+
+/** What credits pay for. */
+export type SpendReason = 'repair';
 
 export interface SaleEvent {
   blueprint: string;
@@ -80,7 +88,10 @@ export class FactorySim implements PadSource {
   delivered: Inventory = {};
   /** Items produced by drills and machines since the start. */
   crafted: Inventory = {};
-  /** Credits earned selling cars (dealers and garages); nothing spends them yet. */
+  /**
+   * Credits: earned selling cars (dealers and garages, sell) and worn sets (sellWorn), spent on repairs (spend, the
+   * only way out). A safe integer, never below 0.
+   */
   credits = 0;
   /** Cars sold per blueprint. */
   sales: Partial<Record<BlueprintId, number>> = {};
@@ -709,16 +720,41 @@ export class FactorySim implements PadSource {
   }
 
   /**
-   * Sells a car (a dealer's, or a garage's: dealer null): credits its price (data/sales.ts carPrice) and counts
-   * it. The only way credits are earned. Returns the price.
+   * Sells a car (a dealer's, or a garage's: dealer null): credits its price (data/wear.ts wornCarPrice: the new price
+   * minus its repair in credits; a dealer's car is always new) and counts it. With sellWorn, the only ways credits
+   * are earned. Returns the price.
    */
-  sell(blueprint: string, parts: Readonly<Record<string, ItemId>>, dealer: number | null = null): number {
-    const price = carPrice(blueprint, parts);
+  sell(blueprint: string, parts: Readonly<Record<string, ItemId>>, dealer: number | null = null, wear?: Readonly<CarWear>): number {
+    const price = wornCarPrice(blueprint, parts, wear);
     this.credits += price;
     const bp = blueprintById(blueprint);
     if (bp?.buildable) this.sales[bp.id] = (this.sales[bp.id] ?? 0) + 1;
     this.events.emit('sold', { blueprint, parts: { ...parts }, price, dealer });
     return price;
+  }
+
+  /**
+   * Sells a set of worn parts (the garage's reserve): a whole slot of a car part (`n` = its slot's count) worn
+   * 1..WEAR.MAX ‰, for data/wear.ts wornSetPrice. Not a car: neither `sales` nor `carsSold` count it. Null (nothing
+   * credited) for an invalid set.
+   */
+  sellWorn(item: ItemId, n: number, wear: number): number | null {
+    if (!isItemId(item) || !isCarPart(item) || n !== slotCountFor(item) || !Number.isInteger(wear) || wear < 1 || wear > WEAR.MAX) return null;
+    const price = wornSetPrice(item, n, wear);
+    this.credits += price;
+    this.events.emit('soldWorn', { item, n, wear, price });
+    return price;
+  }
+
+  /**
+   * Spends credits (repairs): the only way credits go out. False (nothing spent) unless `amount` is a safe integer
+   * above 0 and within the balance.
+   */
+  spend(amount: number, reason: SpendReason): boolean {
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > this.credits) return false;
+    this.credits -= amount;
+    this.events.emit('spent', { amount, reason });
+    return true;
   }
 
   /** Cars sold so far (dealers and garages). */

@@ -5,6 +5,7 @@ import { BELT, DEALER, DRILL, MACHINE } from '../data/balance';
 import { TICKS_PER_MIN, perMinLabel, rateNumber, recipeRates } from '../data/rates';
 import { BLUEPRINTS, CAR_PARTS } from '../data/blueprints';
 import { bestSale, carCost, carLabel, carPrice, formatCredits, nearestSale, planLoad, priceList, type CarConfig } from '../data/sales';
+import { CREDITS_TITLE } from '../data/wearText';
 import { RESOURCES } from '../data/factoryMap';
 import { append, clear, createLayer, el } from '../ui/dom';
 import { dual, html, keyCap, padGlyph, renderTokens } from '../ui/padHints';
@@ -91,6 +92,8 @@ export interface HudCallbacks {
   /** Hub tiers: number unlocked, and whether a building is available. */
   tier(): number;
   isUnlocked(type: BuildingType): boolean;
+  /** A repair was made at a garage (it may have spent every credit there was): the balance stays shown. */
+  repaired(): boolean;
   /** Pays and unlocks tier `n` (1-based); ignored unless it is the next one (stale button, double click). */
   unlockTier(n: number): void;
   /** Crafts a bench recipe once by hand; false if an input is missing. */
@@ -126,7 +129,7 @@ export class FactoryHud {
   private storage = el('div', { class: 'panel top-right storage-panel' });
   /** Hub stock rows, under the title and the credits (rebuilt on every delivery, the credits are not). */
   private storageList = el('div');
-  private creditsEl = el('span', { class: 'credits', title: 'Crédits : ventes de voitures (concessions et garages)' });
+  private creditsEl = el('span', { class: 'credits', title: CREDITS_TITLE });
   /** « +4 480 cr » floating under the credits after a sale. */
   private creditsGain = el('span', { class: 'credits-gain' });
   private creditsWrap = el('span', { class: 'credits-wrap' }, this.creditsEl, this.creditsGain);
@@ -242,9 +245,12 @@ export class FactoryHud {
     }
   }
 
-  /** Credits are shown once there is something to sell them with (the dealer unlocked) or a first sale. */
+  /**
+   * Credits are shown once there is something to sell with (the dealer unlocked), and for good once some were earned
+   * (a car or a worn set sold) or spent (a repair): a balance back to 0 stays shown.
+   */
   private showCredits(): boolean {
-    return this.sim.credits > 0 || this.cb.isUnlocked('dealer');
+    return this.sim.credits > 0 || this.sim.carsSold > 0 || this.cb.repaired() || this.cb.isUnlocked('dealer');
   }
 
   /** The balance next to the hub's title, updated in place: a rise floats « +4 480 cr » under it. */
@@ -270,7 +276,7 @@ export class FactoryHud {
 
   /** The balance as a gold pill (panel headers). */
   private creditsPill(): HTMLElement {
-    return el('span', { class: 'credits', title: 'Crédits : ventes de voitures (concessions et garages)' }, formatCredits(this.sim.credits));
+    return el('span', { class: 'credits', title: CREDITS_TITLE }, formatCredits(this.sim.credits));
   }
 
   /** First row of the backpack, always visible; a slot that gained items pulses. */

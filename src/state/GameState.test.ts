@@ -290,13 +290,78 @@ describe('GameState: car wear', () => {
     expect(byId('e').wear).toEqual({ chassis: 2 });
   });
 
-  it('swapping a part (for now) takes its wear away with it, the others stay', async () => {
+  it('swapping a worn part takes its wear away with it, to the reserve; the others stay', async () => {
     const { swapCarPart } = await import('../garage/actions');
     const s = new GameState();
     s.sim.hub.add('wheel_racing', 4);
     s.cars = [{ id: 'a', name: 'A', blueprint: 'kart', parts: { ...KART }, pose: null, wear: { wheels: 700, engine: 40 } }];
     expect(swapCarPart(s, 'a', 'wheels', 'wheel_racing')).toBe(true);
     expect(s.cars[0]!.wear).toEqual({ engine: 40 });
-    expect(s.inventory.count('wheel')).toBe(4);
+    expect(s.inventory.count('wheel')).toBe(0);
+    expect(s.worn).toEqual([{ item: 'wheel', n: 4, wear: 700 }]);
+  });
+});
+
+describe('GameState: the reserve of worn parts', () => {
+  const reload = (s: GameState) => GameState.fromSave(JSON.parse(JSON.stringify(s.serialize())));
+
+  it('round-trips through the save and replaceWith; an old save has an empty reserve', () => {
+    const s = new GameState();
+    s.worn = [{ item: 'wheel', n: 4, wear: 580 }, { item: 'spoiler', n: 1, wear: 1000 }];
+    const r = reload(s);
+    expect(r.worn).toEqual(s.worn);
+    const a = new GameState();
+    a.replaceWith(r);
+    expect(a.worn).toBe(r.worn);
+    expect(r.serialize().version).toBe(1);
+    const data = new GameState().serialize();
+    delete data.worn;
+    expect(GameState.fromSave(data).worn).toEqual([]);
+  });
+
+  it('broken entries are dropped, never made into new parts; a broken wear is worn out', () => {
+    const data = new GameState().serialize();
+    data.worn = JSON.parse(JSON.stringify([
+      { item: 'wheel', n: 4, wear: 580.4 },
+      { item: 'wheel', n: 3, wear: 300 },
+      { item: 'tire', n: 1, wear: 300 },
+      { item: 'chassis', n: 1, wear: 'x' },
+      { item: 'panel', n: 4, wear: -9 },
+      null,
+      'wheel',
+    ]));
+    const s = GameState.fromSave(data);
+    expect(s.worn).toEqual([{ item: 'wheel', n: 4, wear: 580 }, { item: 'chassis', n: 1, wear: 1000 }, { item: 'panel', n: 4, wear: 1 }]);
+    expect(s.sim.storage).toEqual({});
+    expect(GameState.fromSave({ ...data, worn: 'lots' as never }).worn).toEqual([]);
+  });
+
+  it('a worn set in a build keeps its wear through the save; a partial or broken one is not made new', () => {
+    const s = new GameState(FactorySim.newGame({ terrain: 'flat' }));
+    const r = s.sim.place('garage', 40, 40, 0, { free: true, force: true });
+    if (!r.ok) throw new Error(r.check.error);
+    s.builds = [{ garage: r.building.id, blueprint: 'kart', parts: { wheels: { item: 'wheel', n: 4, wear: 300 }, engine: { item: 'engine', n: 1 } } }];
+    expect(reload(s).builds).toEqual(s.builds);
+    const data = JSON.parse(JSON.stringify(s.serialize()));
+    data.builds[0].parts = { wheels: { item: 'wheel', n: 2, wear: 300 }, engine: { item: 'engine', n: 1, wear: 'x' }, chassis: { item: 'chassis', n: 1, wear: 0 } };
+    expect(GameState.fromSave(data).builds[0]!.parts).toEqual({ engine: { item: 'engine', n: 1, wear: 1000 }, chassis: { item: 'chassis', n: 1 } });
+  });
+
+  it('a build without its garage: new parts go to the hub, worn sets to the reserve (never laundered into new parts)', () => {
+    const data = new GameState().serialize();
+    data.builds = [{ garage: 999, blueprint: 'kart', parts: { wheels: { item: 'wheel', n: 4, wear: 450 }, engine: { item: 'engine', n: 1 } } }];
+    data.worn = [{ item: 'chassis', n: 1, wear: 20 }];
+    const s = GameState.fromSave(data);
+    expect(s.builds).toEqual([]);
+    expect(s.sim.storage).toEqual({ engine: 1 });
+    expect(s.worn).toEqual([{ item: 'chassis', n: 1, wear: 20 }, { item: 'wheel', n: 4, wear: 450 }]);
+  });
+
+  it('a car rolled out of a build keeps the wear of its worn sets (a new car still has no key)', async () => {
+    const { carFromBuild } = await import('../garage/build');
+    const worn = carFromBuild({ garage: 1, blueprint: 'kart', parts: { wheels: { item: 'wheel', n: 4, wear: 300 }, engine: { item: 'engine', n: 1 }, chassis: { item: 'chassis', n: 1, wear: 5 } } }, 3)!;
+    expect(worn.wear).toEqual({ wheels: 300, chassis: 5 });
+    const fresh = carFromBuild({ garage: 1, blueprint: 'kart', parts: { wheels: { item: 'wheel', n: 4 }, engine: { item: 'engine', n: 1 }, chassis: { item: 'chassis', n: 1 } } }, 4)!;
+    expect('wear' in fresh).toBe(false);
   });
 });

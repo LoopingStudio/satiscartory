@@ -1,11 +1,14 @@
-import { WEAR } from './balance';
-import { BLUEPRINTS, BLUEPRINT_IDS, blueprintById, isCarPart, type SlotDef, type SlotId } from './blueprints';
-import { isItemId, type ItemId } from './items';
+import { SALE, WEAR } from './balance';
+import { BLUEPRINTS, BLUEPRINT_IDS, CAR_PARTS, blueprintById, isCarPart, type SlotDef, type SlotId } from './blueprints';
+import { ITEM_IDS, isItemId, type Inventory as ItemCounts, type ItemId } from './items';
+import { RECIPES } from './recipes';
+import { PART_VALUES, carPrice } from './sales';
 
 /*
  * Wear of the parts installed on a car (pure): integer thousandths per slot, 0 = new, WEAR.MAX = worn out. A new
  * part has no key, and a car without any wear has no `wear` at all (a new or repaired car, an old save). The cars
- * are typed by their shape (blueprint, parts, wear) so that the data needs nothing from the garage.
+ * are typed by their shape (blueprint, parts, wear) so that the data needs nothing from the garage. Below: the
+ * prices of the wear (repairs in items or credits, worn sets and worn cars sold).
  */
 
 /** Wear per slot (‰, integers 1..WEAR.MAX); a missing slot is new. */
@@ -68,6 +71,26 @@ export function worstWear(car: WearCar): number {
   return s ? slotWear(car, s.id) : 0;
 }
 
+/**
+ * Writes the state shown (%) of each slot of the car's blueprint into `out` (blueprint order, −1 for an empty slot);
+ * true when one of them changed. Allocates nothing once `out` has its length: a check for every frame.
+ */
+export function shownConditions(car: WearCar, out: number[]): boolean {
+  const slots = blueprintById(car.blueprint)?.slots;
+  if (!slots) return false;
+  let changed = out.length !== slots.length;
+  out.length = slots.length;
+  for (let i = 0; i < slots.length; i++) {
+    const s = slots[i]!;
+    const c = car.parts[s.id] ? condition(slotWear(car, s.id)) : -1;
+    if (out[i] !== c) {
+      out[i] = c;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 /** Installed slots worn above WEAR.BLOCK_ABOVE, in the blueprint's order (the car does not start a race). */
 export function blockedSlots(car: WearCar): SlotId[] {
   const bp = blueprintById(car.blueprint);
@@ -107,14 +130,97 @@ export function sanitizeWear(blueprint: unknown, parts: Readonly<Record<string, 
 }
 
 /**
- * A worn set from untrusted save data: a car part, the count of its slot, a wear rounded and clamped to 1..WEAR.MAX
- * (one that is not a number is worn out: a set is never repaired by a broken save). Null when invalid.
+ * Wear of a worn set (the reserve, a build slot) from untrusted save data: rounded and clamped to 1..WEAR.MAX; one
+ * that is not a number is worn out (a set is never repaired by a broken save).
  */
+export function sanitizeSetWear(raw: unknown): number {
+  return Math.max(1, wearValue(raw) ?? WEAR.MAX);
+}
+
+/** A worn set from untrusted save data: a car part, the count of its slot, a wear in 1..WEAR.MAX (sanitizeSetWear). Null when invalid. */
 export function sanitizeWornSet(raw: unknown): WornSet | null {
   if (!raw || typeof raw !== 'object') return null;
   const { item, n, wear } = raw as Record<string, unknown>;
   if (!isItemId(item) || !isCarPart(item)) return null;
   const count = slotCountFor(item);
   if (count === null || n !== count) return null;
-  return { item, n: count, wear: Math.max(1, wearValue(wear) ?? WEAR.MAX) };
+  return { item, n: count, wear: sanitizeSetWear(wear) };
+}
+
+// ------------------------------------------------------------------ prices (repairs, worn sets, worn cars)
+
+/**
+ * Repair kit of one part, ×2 to stay in integers, from its assembler recipe: the tires of a wheel (1 per wheel, 2
+ * per racing wheel), half of the recipe of any other part. Repairing is always cheaper than making new parts.
+ */
+const KIT2: Readonly<Partial<Record<ItemId, ItemCounts>>> = (() => {
+  const wheels = new Set<ItemId>(Object.values(BLUEPRINTS).flatMap((bp) => bp.slots.filter((s) => s.id === 'wheels').flatMap((s) => s.accepts)));
+  const out: Partial<Record<ItemId, ItemCounts>> = {};
+  for (const item of CAR_PARTS) {
+    const recipe = RECIPES.find((r) => r.machine === 'assembler' && r.outputs.some((o) => o.item === item));
+    const kit: ItemCounts = {};
+    for (const s of recipe?.inputs ?? []) {
+      if (wheels.has(item) && s.item !== 'tire') continue;
+      kit[s.item] = (kit[s.item] ?? 0) + (wheels.has(item) ? 2 * s.count : s.count);
+    }
+    out[item] = kit;
+  }
+  return out;
+})();
+
+/** Integer a / b rounded up (a ≥ 0, b > 0). */
+const ceilDiv = (a: number, b: number) => Math.floor((a + b - 1) / b);
+
+/**
+ * Items that repair `n` parts worn `w` ‰ (a slot, or a set of the reserve): ⌈kit × n × w / 1000⌉ of each item of
+ * the kit, so at least 1 of each from 1 ‰ on; nothing for a new part (or one no kit covers). In ITEM_IDS order.
+ */
+export function repairItems(item: ItemId, n: number, w: number): ItemCounts {
+  const out: ItemCounts = {};
+  const kit = KIT2[item];
+  if (!kit || !(w > 0) || !(n > 0)) return out;
+  for (const id of ITEM_IDS) {
+    const k = kit[id];
+    if (k) out[id] = ceilDiv(k * n * Math.min(WEAR.MAX, w), 2 * WEAR.MAX);
+  }
+  return out;
+}
+
+/**
+ * Credits that repair `n` parts worn `w` ‰: the kit's value (PART_VALUES) with the dealer's margin, pro rata of the
+ * wear, rounded up to SALE.ROUND, so at least 10 cr from 1 ‰ on; 0 for a new part.
+ */
+export function repairCredits(item: ItemId, n: number, w: number): number {
+  const kit = KIT2[item];
+  if (!kit || !(w > 0) || !(n > 0)) return 0;
+  let v2 = 0;
+  for (const [id, k] of Object.entries(kit) as [ItemId, number][]) v2 += k * PART_VALUES[id];
+  return Math.ceil((SALE.MARGIN_NUM * v2 * n * Math.min(WEAR.MAX, w)) / (SALE.MARGIN_DEN * 2 * WEAR.MAX * SALE.ROUND)) * SALE.ROUND;
+}
+
+/**
+ * A worn set sold from the reserve: the parts' value (without the dealer's margin) × their state,
+ * ⌊value × n × (1000 − w) / 1000⌋ credits (0 when worn out). Selling a car's parts one set at a time always brings
+ * in less than selling the car (at least a quarter of their value less).
+ */
+export function wornSetPrice(item: ItemId, n: number, w: number): number {
+  const v = Math.max(0, Math.min(WEAR.MAX, Number.isFinite(w) ? w : WEAR.MAX));
+  return Math.max(0, Math.floor((PART_VALUES[item] * n * (WEAR.MAX - v)) / WEAR.MAX));
+}
+
+/**
+ * Price of a car worn as `wear` (the dealer's and the garage's): the new price minus the credits that repair every
+ * installed part, never below 0. Repairing with credits and then selling brings in exactly the same.
+ */
+export function wornCarPrice(blueprint: unknown, parts: Readonly<Record<string, unknown>>, wear?: Readonly<CarWear>): number {
+  const price = carPrice(blueprint, parts);
+  const bp = blueprintById(blueprint);
+  if (!bp || !wear) return price;
+  let repair = 0;
+  for (const s of bp.slots) {
+    const item = parts[s.id];
+    if (!isItemId(item) || !s.accepts.includes(item)) continue;
+    repair += repairCredits(item, s.count, wear[s.id] ?? 0);
+  }
+  return Math.max(0, price - repair);
 }

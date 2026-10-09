@@ -1,5 +1,6 @@
 import { BLUEPRINTS, type BlueprintId, type SlotDef } from '../data/blueprints';
 import { isItemId, type Inventory as ItemCounts, type ItemId } from '../data/items';
+import { sanitizeSetWear, type CarWear, type WornSet } from '../data/wear';
 import type { CarInstance } from './assembly';
 
 /*
@@ -12,6 +13,8 @@ import type { CarInstance } from './assembly';
 export interface BuildSlot {
   item: ItemId;
   n: number;
+  /** A worn set put in from the reserve (always a whole slot): its wear (‰, 1..1000). Absent: new parts. */
+  wear?: number;
 }
 
 /** A car under construction in a garage's bay. */
@@ -71,30 +74,42 @@ export function installPart(storage: ItemCounts, build: CarBuild, slotId: string
   return k;
 }
 
-/** Takes a slot's parts back into `storage` (mutated); returns how many. */
-export function removePart(storage: ItemCounts, build: CarBuild, slotId: string): number {
+/**
+ * Takes a slot's parts back: new parts into `storage` (mutated), a worn set into the reserve `worn` (mutated, it
+ * keeps its wear). Returns how many parts.
+ */
+export function removePart(storage: ItemCounts, build: CarBuild, slotId: string, worn: WornSet[]): number {
   const cur = build.parts[slotId];
   if (!cur) return 0;
   delete build.parts[slotId];
-  if (cur.n > 0) storage[cur.item] = (storage[cur.item] ?? 0) + cur.n;
+  if (cur.n > 0 && cur.wear) worn.push({ item: cur.item, n: cur.n, wear: cur.wear });
+  else if (cur.n > 0) storage[cur.item] = (storage[cur.item] ?? 0) + cur.n;
   return Math.max(0, cur.n);
 }
 
-/** Every installed part back into `storage` (mutated). */
-export function refundBuild(storage: ItemCounts, build: CarBuild): void {
-  for (const id of Object.keys(build.parts)) removePart(storage, build, id);
+/** Every installed part back: new ones into `storage`, worn sets into the reserve `worn` (both mutated). */
+export function refundBuild(storage: ItemCounts, build: CarBuild, worn: WornSet[]): void {
+  for (const id of Object.keys(build.parts)) removePart(storage, build, id, worn);
 }
 
-/** The finished car of a complete build (null otherwise); an optional slot comes along only when full. */
+/**
+ * The finished car of a complete build (null otherwise); an optional slot comes along only when full. A worn set
+ * keeps its wear on the car (the `wear` key only when one is worn: a new car has none).
+ */
 export function carFromBuild(build: CarBuild, serial: number): CarInstance | null {
   if (!buildComplete(build)) return null;
   const bp = BLUEPRINTS[build.blueprint];
   const parts: Record<string, ItemId> = {};
+  let wear: CarWear | undefined;
   for (const s of bp.slots) {
     const p = build.parts[s.id];
-    if (p && p.n >= s.count) parts[s.id] = p.item;
+    if (!p || p.n < s.count) continue;
+    parts[s.id] = p.item;
+    if (p.wear) (wear ??= {})[s.id] = p.wear;
   }
-  return { id: `car-${serial}`, name: `${bp.name} n°${serial}`, blueprint: build.blueprint, parts };
+  const car: CarInstance = { id: `car-${serial}`, name: `${bp.name} n°${serial}`, blueprint: build.blueprint, parts };
+  if (wear) car.wear = wear;
+  return car;
 }
 
 /** Parts left over when a build turns into a car: an optional slot only partly filled (they go back). */
@@ -134,7 +149,11 @@ export function buildLook(build: CarBuild): BuildLook {
   };
 }
 
-/** Restores a build from untrusted save data: known blueprint and slots, accepted items, counts clamped; null if invalid. */
+/**
+ * Restores a build from untrusted save data: known blueprint and slots, accepted items, counts clamped; null if
+ * invalid. A worn set (`wear` present and not 0) keeps a wear in 1..1000 (one that is not a number is worn out) and
+ * must fill its slot: a partial one is dropped, never turned into new parts.
+ */
 export function sanitizeBuild(raw: unknown): CarBuild | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<CarBuild>;
@@ -145,7 +164,9 @@ export function sanitizeBuild(raw: unknown): CarBuild | null {
     const p = (r.parts as Record<string, unknown> | undefined)?.[s.id] as Partial<BuildSlot> | undefined;
     if (!p || !isItemId(p.item) || !s.accepts.includes(p.item) || typeof p.n !== 'number' || !Number.isFinite(p.n)) continue;
     const n = Math.max(0, Math.min(s.count, Math.floor(p.n)));
-    if (n > 0) parts[s.id] = { item: p.item, n };
+    if (n <= 0) continue;
+    if (p.wear === undefined || p.wear === 0) parts[s.id] = { item: p.item, n };
+    else if (n === s.count) parts[s.id] = { item: p.item, n, wear: sanitizeSetWear(p.wear) };
   }
   return { garage: r.garage, blueprint: bp.id, parts };
 }

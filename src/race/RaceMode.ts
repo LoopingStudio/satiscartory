@@ -12,8 +12,9 @@ import type { TrackData } from '../track/TrackData';
 import { centerline, finishDirections } from '../track/layout';
 import { CarModel } from '../car/CarModel';
 import { computeCarStats, type CarSpec } from '../car/stats';
-import { tuningFromStats } from '../car/tuning';
+import { tuningFromStats, type VehicleTuning } from '../car/tuning';
 import { WearMeter, autoResetCause, type ResetCause } from '../car/wearMeter';
+import { wornTuning } from '../car/wornTuning';
 import { Vehicle, NO_CONTROLS } from '../vehicle/Vehicle';
 import { ChaseCamera } from '../vehicle/ChaseCamera';
 import { readVehicleControls } from '../vehicle/VehicleInput';
@@ -78,6 +79,8 @@ export class RaceMode implements Mode {
   /** The player's car when it wears in this race, and its meter (null: the loaner, a forced spec, a test drive). */
   private wearCar: CarInstance | null = null;
   private meter: WearMeter | null = null;
+  /** The car's tuning when new; an attempt drives it worn as the car was when it started (attemptTuning). */
+  private baseTuning!: VehicleTuning;
   private tuningPanel: TuningPanel | null = null;
   private readonly pos = new THREE.Vector3();
   private readonly quat = new THREE.Quaternion();
@@ -118,9 +121,10 @@ export class RaceMode implements Mode {
     this.wearCar = car && !params?.spec && !params?.test ? car : null;
     this.meter = this.wearCar ? new WearMeter(this.wearCar) : null;
     const stats = computeCarStats(this.spec);
+    this.baseTuning = tuningFromStats(stats);
     this.carModel = new CarModel(this.game.assets, this.spec);
     this.scene.add(this.carModel.root);
-    this.vehicle = new Vehicle(this.physics.world, this.carModel.geometry, tuningFromStats(stats), this.track.spawn);
+    this.vehicle = new Vehicle(this.physics.world, this.carModel.geometry, this.attemptTuning(), this.track.spawn);
     this.vehicle.offroad = this.track.ground;
     this.chase = new ChaseCamera(this.camera, this.physics.world, this.vehicle.collider);
     this.buildHud();
@@ -138,8 +142,29 @@ export class RaceMode implements Mode {
     }
   }
 
+  /**
+   * Tuning of an attempt: the car worn as it is now (car/wornTuning.ts), the very same object as baseTuning when it
+   * does not wear or is new. Fixed for the whole attempt: a respawn does not change it.
+   */
+  private attemptTuning(): VehicleTuning {
+    const car = this.wearCar;
+    return car ? wornTuning(this.baseTuning, car.wear, car.parts) : this.baseTuning;
+  }
+
   restart(): void {
     this.countUnfinished();
+    // A worn car starts each attempt with its wear of now. Without wear nothing is applied again (the dev tuning
+    // panel keeps its values); the panel follows a new tuning object.
+    if (this.wearCar) {
+      const t = this.attemptTuning();
+      if (t !== this.vehicle.tuning) {
+        this.vehicle.applyTuning(t);
+        if (this.tuningPanel) {
+          this.toggleTuning(false);
+          this.toggleTuning(true);
+        }
+      }
+    }
     this.session = new RaceSession(this.checkpointCount, PHYS_DT * 1000, RACE.COUNTDOWN_TICKS);
     this.respawnPoint = { position: this.track.spawn.position.clone(), yaw: this.track.spawn.yaw };
     this.vehicle.reset(this.respawnPoint.position, this.respawnPoint.yaw);

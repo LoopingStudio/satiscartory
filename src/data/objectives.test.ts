@@ -8,7 +8,7 @@ import { TIERS } from './tiers';
 import type { Inventory, ItemId } from './items';
 import { FACTORY_HZ } from '../config/constants';
 
-const base: ObjectiveContext = { buildings: [{ type: 'hub' }], storage: {}, cars: 0, delivered: {}, crafted: {}, blueprints: [], racesWithOwnCar: 0, tier: 0, carsSold: 0 };
+const base: ObjectiveContext = { buildings: [{ type: 'hub' }], storage: {}, cars: 0, delivered: {}, crafted: {}, blueprints: [], racesWithOwnCar: 0, tier: 0, carsSold: 0, repaired: false };
 const done = (c: ObjectiveContext) => OBJECTIVES.filter((o) => o.done(c)).map((o) => o.id);
 const ids = OBJECTIVES.map((o) => o.id);
 
@@ -44,10 +44,11 @@ describe('onboarding objectives', () => {
       { tier: 5, buildings: [{ type: 'garage' }] },
       { tier: 5, cars: 1, blueprints: ['kart'] },
       { tier: 5, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 },
-      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 }, // Commerce tier
-      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, buildings: [{ type: 'dealer' }] },
-      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, carsSold: 1 },
-      { tier: 6, cars: 2, blueprints: ['kart', 'sport'], racesWithOwnCar: 1, carsSold: 1 },
+      { tier: 5, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, repaired: true }, // the race wore a part
+      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, repaired: true }, // Commerce tier
+      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, repaired: true, buildings: [{ type: 'dealer' }] },
+      { tier: 6, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1, repaired: true, carsSold: 1 },
+      { tier: 6, cars: 2, blueprints: ['kart', 'sport'], racesWithOwnCar: 1, repaired: true, carsSold: 1 },
     ];
     expect(play(steps.map((s) => ({ ...base, ...s })))).toEqual(ids.map((id) => [id]));
   });
@@ -63,9 +64,15 @@ describe('onboarding objectives', () => {
 
   it('saves from before the tiers (everything unlocked) skip the bootstrap steps', () => {
     const old = { ...base, tier: TIERS.length };
-    // Everything but the steps that need cars, parts, a garage or a dealer built, a sale.
-    expect(done(old)).toEqual(ids.filter((id) => !['car_parts', 'garage', 'assembled', 'race', 'dealer', 'sell', 'sport'].includes(id)));
-    expect(done({ ...old, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 })).toEqual(ids.filter((id) => !['dealer', 'sell', 'sport'].includes(id)));
+    // Everything but the steps that need cars, parts, a garage or a dealer built, a repair, a sale.
+    expect(done(old)).toEqual(ids.filter((id) => !['car_parts', 'garage', 'assembled', 'race', 'repair', 'dealer', 'sell', 'sport'].includes(id)));
+    expect(done({ ...old, cars: 1, blueprints: ['kart'], racesWithOwnCar: 1 })).toEqual(ids.filter((id) => !['repair', 'dealer', 'sell', 'sport'].includes(id)));
+  });
+
+  it('a repair at the garage completes « repair », right after the first race', () => {
+    expect(ids.indexOf('repair')).toBe(ids.indexOf('race') + 1);
+    expect(done({ ...base, repaired: true })).toEqual(['repair']);
+    expect(done({ ...base, tier: 6, cars: 1, racesWithOwnCar: 1 })).not.toContain('repair');
   });
 
   it('selling a car completes « sell », a dealer on the map « dealer »', () => {

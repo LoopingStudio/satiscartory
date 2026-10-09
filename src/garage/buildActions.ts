@@ -8,7 +8,8 @@ import { bayOccupant, bayPose, type BayBlocker, type GarageSpot } from './parkin
 
 /*
  * Car builds (« chantiers ») on the game state: parts are paid from the wallet (backpack first, then the hub),
- * given back to the backpack first (overflow: hub). Callers persist and re-sync the physical cars after a change.
+ * given back to the backpack first (overflow: hub); a worn set (garage/wearActions.ts) goes back to the reserve.
+ * Callers persist and re-sync the physical cars after a change.
  */
 
 /** The build standing in this garage's bay, if any. */
@@ -16,8 +17,11 @@ export function buildIn(state: GameState, garageId: number): CarBuild | null {
   return state.builds.find((b) => b.garage === garageId) ?? null;
 }
 
-/** Rolls a complete build out as a car in the bay: numbered, made the race car, « assembled » objective. */
-function rollOut(state: GameState, build: CarBuild, garage: GarageSpot): CarInstance | null {
+/**
+ * Rolls a complete build out as a car in the bay: numbered, made the race car, « assembled » objective. Null (nothing
+ * changed) while the build is not complete.
+ */
+export function rollOut(state: GameState, build: CarBuild, garage: GarageSpot): CarInstance | null {
   const car = carFromBuild(build, state.carCounter + 1);
   if (!car) return null;
   state.carCounter++;
@@ -60,23 +64,29 @@ export function installBuildPart(
   return { n, car: buildComplete(build) ? rollOut(state, build, garage) : null };
 }
 
-/** Takes a slot's parts off the build (to the backpack, overflow: hub). An emptied build frees the bay. */
+/**
+ * Takes a slot's parts off the build (to the backpack, overflow: hub; a worn set to the reserve, with its wear). An
+ * emptied build frees the bay.
+ */
 export function removeBuildPart(state: GameState, garageId: number, slotId: string): { n: number; toHub: number } {
   const build = buildIn(state, garageId);
   if (!build) return { n: 0, toHub: 0 };
   const refund: ItemCounts = {};
-  const n = removePart(refund, build, slotId);
+  const n = removePart(refund, build, slotId, state.worn);
   const toHub = applyChange(state.wallet(), {}, refund);
   if (buildEmpty(build)) state.builds = state.builds.filter((b) => b !== build);
   return { n, toHub };
 }
 
-/** Gives up the build in this garage: every part back (backpack first, overflow: hub). Null if there is none. */
+/**
+ * Gives up the build in this garage: every new part back (backpack first, overflow: hub), every worn set to the
+ * reserve. Null if there is none.
+ */
 export function abandonBuild(state: GameState, garageId: number): { refund: ItemCounts; toHub: number } | null {
   const build = buildIn(state, garageId);
   if (!build) return null;
   const refund: ItemCounts = {};
-  refundBuild(refund, build);
+  refundBuild(refund, build, state.worn);
   state.builds = state.builds.filter((b) => b !== build);
   return { refund, toHub: applyChange(state.wallet(), {}, refund) };
 }

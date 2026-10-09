@@ -12,7 +12,7 @@ import { TIERS, isUnlocked } from '../data/tiers';
 import { GRASS_QUALITIES, TERRAIN_RULES, type GrassQuality } from '../data/factoryTerrain';
 import type { BuildingType } from '../data/buildings';
 import type { Inventory as ItemCounts } from '../data/items';
-import { sanitizeWear } from '../data/wear';
+import { sanitizeWear, sanitizeWornSet, type WornSet } from '../data/wear';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -52,6 +52,8 @@ export interface SaveData {
   tierMax?: number;
   /** Cars under construction in garage bays. */
   builds?: CarBuild[];
+  /** Reserve of worn parts (garage « Pièces usées »); absent before the wear: empty. */
+  worn?: WornSet[];
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -61,6 +63,11 @@ export class GameState {
   cars: CarInstance[] = [];
   /** Cars under construction, one per garage bay at most (garage/build.ts). */
   builds: CarBuild[] = [];
+  /**
+   * Reserve of worn parts, shared by every garage: whole slots taken off a car with their wear (data/wear.ts). Not
+   * in the backpack nor the hub: a worn part becomes a plain item again only once its repair is paid.
+   */
+  worn: WornSet[] = [];
   selectedCarId: string | null = null;
   records: Record<string, TrackRecord> = {};
   settings: Settings = { ...DEFAULT_SETTINGS };
@@ -119,6 +126,7 @@ export class GameState {
       player: this.player,
       cars: this.cars,
       builds: this.builds,
+      worn: this.worn,
       selectedCarId: this.selectedCarId,
       records: this.records,
       settings: this.settings,
@@ -172,14 +180,17 @@ export class GameState {
         s.player = t.waterDepthAt(x, z) > 1.2 ? null : { ...s.player, x, z };
       }
     }
-    // Builds: one per existing garage; the parts of any other one go back to the hub.
+    // The reserve of worn parts: whole slots of car parts only (an invalid entry is dropped, never made new).
+    s.worn = Array.isArray(data.worn) ? data.worn.map(sanitizeWornSet).filter((w): w is WornSet => w !== null) : [];
+    // Builds: one per existing garage; the parts of any other one go back to the hub, its worn sets to the reserve
+    // (never to the hub as new parts).
     for (const raw of Array.isArray(data.builds) ? data.builds : []) {
       const b = sanitizeBuild(raw);
       if (!b) continue;
       if (s.sim.buildings.get(b.garage)?.type === 'garage' && !s.builds.some((w) => w.garage === b.garage)) s.builds.push(b);
       else {
         const refund: ItemCounts = {};
-        refundBuild(refund, b);
+        refundBuild(refund, b, s.worn);
         s.sim.give(refund);
       }
     }
@@ -206,6 +217,7 @@ export class GameState {
     this.player = other.player;
     this.cars = other.cars;
     this.builds = other.builds;
+    this.worn = other.worn;
     this.selectedCarId = other.selectedCarId;
     this.records = other.records;
     this.settings = other.settings;

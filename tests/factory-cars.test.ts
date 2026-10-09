@@ -22,6 +22,7 @@ import { upYOfQuat } from '../src/factory/cars/carMath';
 import { Vehicle, NO_CONTROLS, type VehicleControls, type VehicleOptions } from '../src/vehicle/Vehicle';
 import { makeCarPreview } from '../src/car/CarModel';
 import type { WearMeter } from '../src/car/wearMeter';
+import { wornTuning } from '../src/car/wornTuning';
 import { WEAR } from '../src/data/balance';
 
 beforeAll(async () => {
@@ -757,6 +758,40 @@ describe('FactoryCars: wear while driving', () => {
     f.run(2, ['brake']);
     expect(vehicleOf(f.cars).curPos.x).toBeGreaterThan(0);
     expect(meterOf(f.cars).exact('chassis')).toBe(0);
+    f.cars.dispose();
+    f.fw.dispose();
+  });
+
+  it('a worn car drives worn from the start; the frame after a shown percentage changes, with its new wear', () => {
+    const f = setup();
+    f.state.cars.push(carAt('w', KART, { x: 30, y: 0, z: 40, yaw: 0 }), carAt('n', KART, { x: 60, y: 0, z: 40, yaw: 0 }));
+    f.car('w').wear = { wheels: 600, engine: 300 };
+    f.cars.sync();
+    const fresh = tuningFromStats(computeCarStats(KART));
+    f.cars.enter('w');
+    const t0 = vehicleOf(f.cars).tuning;
+    expect(t0).toEqual(wornTuning(fresh, { wheels: 600, engine: 300 }, KART.parts));
+    expect(t0.frictionSlip).toBeLessThan(fresh.frictionSlip);
+    // A step that adds no whole percent keeps the tuning; driving on wears the tires by a percent: the next frame applies it.
+    f.run(0.2);
+    expect(vehicleOf(f.cars).tuning).toBe(t0);
+    let applied = false;
+    for (let i = 0; i < 40 && !applied; i++) {
+      f.run(0.5, ['throttle']);
+      applied = vehicleOf(f.cars).tuning !== t0;
+    }
+    expect(applied).toBe(true);
+    const w = f.car('w').wear!;
+    expect(vehicleOf(f.cars).tuning).toEqual(wornTuning(fresh, w, KART.parts));
+    expect(w.wheels).toBeGreaterThan(600);
+    f.stop();
+    f.cars.exit();
+    // A new car: the tuning of a new car, the same object all along, until it gets its first whole percent of wear.
+    f.cars.enter('n');
+    const n0 = vehicleOf(f.cars).tuning;
+    expect(n0).toEqual(fresh);
+    f.run(0.5);
+    expect(vehicleOf(f.cars).tuning).toBe(n0);
     f.cars.dispose();
     f.fw.dispose();
   });

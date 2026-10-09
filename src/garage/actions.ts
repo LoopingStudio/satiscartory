@@ -1,6 +1,6 @@
-import { CAR_PARTS, type BlueprintId } from '../data/blueprints';
+import { CAR_PARTS, blueprintById, type BlueprintId, type SlotId } from '../data/blueprints';
 import { ITEM_IDS, type Inventory as ItemCounts, type ItemId } from '../data/items';
-import { clearSlotWear } from '../data/wear';
+import { clearSlotWear, slotWear, type WornSet } from '../data/wear';
 import type { GameState } from '../state/GameState';
 import type { Wallet } from '../state/Inventory';
 import { assemble, checkAssembly, disassemble, swapPart, type AssemblyCheck, type CarInstance, type PartChoices } from './assembly';
@@ -8,7 +8,8 @@ import { bayOccupant, bayPose, carInBay, type BayBlocker, type GarageSpot } from
 
 /*
  * Garage actions on the game state (no DOM, no three). Parts are paid from the wallet (backpack first,
- * then the hub) and refunds go to the backpack first, the overflow to the hub.
+ * then the hub) and refunds go to the backpack first, the overflow to the hub. A worn part taken off a car
+ * goes to the reserve of worn parts (state.worn) instead, with its wear (repairs: garage/wearActions.ts).
  * Callers persist (SaveManager.save) and re-sync the physical cars after a change.
  */
 
@@ -22,8 +23,11 @@ export function partStock(state: GameState): ItemCounts {
 /**
  * Applies the difference between two count snapshots to the wallet: removals drain the backpack then the hub,
  * additions fill the backpack and overflow to the hub. Returns how many items overflowed to the hub.
+ * Throws (nothing applied) when `after` holds a negative count: a removal beyond the stock would be cut short by
+ * the wallet and the rest created from nothing, a bug of the caller.
  */
 export function applyChange(wallet: Wallet, before: ItemCounts, after: ItemCounts): number {
+  for (const id of ITEM_IDS) if ((after[id] ?? 0) < 0) throw new Error(`applyChange: negative count of ${id}`);
   let toHub = 0;
   for (const id of ITEM_IDS) {
     const d = (after[id] ?? 0) - (before[id] ?? 0);
@@ -86,45 +90,66 @@ export function assembleCar(state: GameState, bpId: BlueprintId, choices: PartCh
 }
 
 /**
- * Dismantles a car: its parts go to the backpack (overflow: hub) and it leaves the garage.
- * The race car falls back to the first remaining car (or the loaner). Null if there is no such car.
+ * Dismantles a car: its new parts go to the backpack (overflow: hub), its worn ones to the reserve as whole sets
+ * (`worn`), and it leaves the garage. The race car falls back to the first remaining car (or the loaner). Null if
+ * there is no such car.
  */
-export function disassembleCar(state: GameState, carId: string): { car: CarInstance; refund: ItemCounts; toHub: number } | null {
+export function disassembleCar(state: GameState, carId: string): { car: CarInstance; refund: ItemCounts; toHub: number; worn: WornSet[] } | null {
   const car = findCar(state, carId);
   if (!car) return null;
   const refund: ItemCounts = {};
   disassemble(refund, car);
+  const worn: WornSet[] = [];
+  for (const s of blueprintById(car.blueprint)?.slots ?? []) {
+    const item = car.parts[s.id];
+    const w = slotWear(car, s.id);
+    if (!item || !(w > 0)) continue;
+    refund[item] = (refund[item] ?? 0) - s.count;
+    if (refund[item] === 0) delete refund[item];
+    worn.push({ item, n: s.count, wear: w });
+  }
   const toHub = applyChange(state.wallet(), {}, refund);
+  state.worn.push(...worn);
   state.cars = state.cars.filter((c) => c !== car);
   if (state.selectedCarId === car.id) state.selectedCarId = state.cars[0]?.id ?? null;
-  return { car, refund, toHub };
+  return { car, refund, toHub, worn };
 }
 
 /**
- * Sells a car: it leaves the game with its parts, its price (the dealer's: data/sales.ts carPrice) is credited
- * and counted by the sim. The race car falls back to the first remaining car (or the loaner); car numbers are
- * never reused. Null if there is no such car. Callers only offer it for a car standing in the bay, like « Démonter ».
+ * Sells a car: it leaves the game with its parts, its price (the dealer's, less its repair: data/wear.ts
+ * wornCarPrice) is credited and counted by the sim. The race car falls back to the first remaining car (or the
+ * loaner); car numbers are never reused. Null if there is no such car. Callers only offer it for a car standing in
+ * the bay, like « Démonter ».
  */
 export function sellCar(state: GameState, carId: string): { car: CarInstance; price: number } | null {
   const car = findCar(state, carId);
   if (!car) return null;
-  const price = state.sim.sell(car.blueprint, car.parts);
+  const price = state.sim.sell(car.blueprint, car.parts, null, car.wear);
   state.cars = state.cars.filter((c) => c !== car);
   if (state.selectedCarId === car.id) state.selectedCarId = state.cars[0]?.id ?? null;
   return { car, price };
 }
 
 /**
- * Installs `item` in a slot (null empties an optional slot): the new parts are paid from the wallet,
- * the old ones go back to it. False when nothing changed (same part, not enough in stock, invalid slot).
- * For now the slot's wear goes with the old parts (the reserve of worn parts will keep it).
+ * Installs `item` in a slot (null empties an optional slot): the new parts are paid from the wallet, the old ones
+ * go back to it, or to the reserve as a worn set when they are worn (the slot is new afterwards). False when
+ * nothing changed (same part, not enough in stock, invalid slot): new parts of the same kind over worn ones are
+ * « Remplacer par du neuf » (garage/wearActions.ts renewCarSlot).
  */
 export function swapCarPart(state: GameState, carId: string, slotId: string, item: ItemId | null): boolean {
   const car = findCar(state, carId);
   if (!car || (car.parts[slotId] ?? null) === item) return false;
+  const old = car.parts[slotId] ?? null;
+  const w = slotWear(car, slotId as SlotId);
   const before = partStock(state);
   const after = { ...before };
   if (!swapPart(after, car, slotId, item)) return false;
+  if (old && w > 0) {
+    // swapPart gave the old parts back: they leave the stock again, for the reserve.
+    const n = blueprintById(car.blueprint)!.slots.find((s) => s.id === slotId)!.count;
+    after[old] = (after[old] ?? 0) - n;
+    state.worn.push({ item: old, n, wear: w });
+  }
   applyChange(state.wallet(), before, after);
   clearSlotWear(car, slotId);
   return true;

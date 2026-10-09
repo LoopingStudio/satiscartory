@@ -101,10 +101,12 @@ describe('garage actions', () => {
       const s = stocked();
       s.sim.hub.add('wheel_racing', 4);
       s.cars.push({ id: 'd', name: 'D', blueprint, parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' }, wear: { wheels: 300 } });
-      const before = JSON.stringify(s.serialize());
+      // Without its timestamp (two calls may fall on two milliseconds).
+      const snapshot = () => JSON.stringify({ ...s.serialize(), savedAt: 0 });
+      const before = snapshot();
       const stock = partStock(s);
       expect(swapCarPart(s, 'd', 'wheels', 'wheel_racing'), blueprint).toBe(false);
-      expect(JSON.stringify(s.serialize()), blueprint).toBe(before);
+      expect(snapshot(), blueprint).toBe(before);
       expect(disassembleCar(s, 'd'), blueprint).toMatchObject({ refund: {}, toHub: 0 });
       expect(partStock(s), blueprint).toEqual(stock);
     }

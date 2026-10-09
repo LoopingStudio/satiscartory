@@ -13,8 +13,10 @@ import { VEHICLE } from '../../data/vehicle';
 import { FACTORY_CELL, PLAYER_HEIGHT, PLAYER_RADIUS } from '../../config/constants';
 import { CarModel } from '../../car/CarModel';
 import { computeCarStats } from '../../car/stats';
-import { tuningFromStats } from '../../car/tuning';
+import { tuningFromStats, type VehicleTuning } from '../../car/tuning';
 import { WearMeter, autoResetCause, type ResetCause } from '../../car/wearMeter';
+import { wornTuning } from '../../car/wornTuning';
+import { shownConditions } from '../../data/wear';
 import { CAR_GROUPS } from '../collisionGroups';
 import { Vehicle, NO_CONTROLS } from '../../vehicle/Vehicle';
 import { ChaseCamera } from '../../vehicle/ChaseCamera';
@@ -97,7 +99,9 @@ const IDENTITY = { x: 0, y: 0, z: 0, w: 1 };
  * RaceMode, race gravity through the body's gravity scale, soft speed cap, wheel rays that ignore
  * conveyors and parked cars) followed by a ChaseCamera. Its CarInstance.pose is written every step,
  * and its wear (WearMeter) as soon as a part gets a whole thousandth, so a save may happen at any time.
- * Nothing wears while the controls are off (pause, a panel open): the car still rolls, uncounted.
+ * Nothing wears while the controls are off (pause, a panel open): the car still rolls, uncounted. The car
+ * drives worn (car/wornTuning.ts) from the moment it is entered, and the frame that sees a part's shown
+ * percentage change applies the new wear (no race attempt to keep fixed here); the fixed step only counts.
  *
  * Per fixed step, call fixedUpdate() BEFORE the factory world steps (like CharacterController.step);
  * per frame, call update(). dispose() MUST run before FactoryWorld.dispose() (it frees the WASM world).
@@ -117,6 +121,8 @@ export class FactoryCars {
   private drownTime = 0;
   /** Wear of the driven car (null on foot). */
   private meter: WearMeter | null = null;
+  /** The driven car, its tuning when new and the state shown (%) of its slots when its worn tuning was applied. */
+  private wearTuning: { car: CarInstance; base: VehicleTuning; shown: number[] } | null = null;
   private readonly fit: TerrainFit = { y: 0, q: { x: 0, y: 0, z: 0, w: 1 } };
   /** The last standing() fitted the car to the ground. */
   private onGround = false;
@@ -333,13 +339,13 @@ export class FactoryCars {
     if (!e || !car) return false;
     const p = e.placed;
     this.unpark(e);
-    const tuning = tuningFromStats(computeCarStats(specOf(car)));
+    const base = tuningFromStats(computeCarStats(specOf(car)));
     // As parked: tilted on a slope (a level spawn there would start inside the hill and jolt).
     const fit = this.standing(p, e.box);
     e.vehicle = new Vehicle(
       this.world,
       e.model.geometry,
-      tuning,
+      wornTuning(base, car.wear, car.parts),
       { position: new THREE.Vector3(p.x, fit.y + ENTER_LIFT, p.z), yaw: p.yaw, quat: { ...fit.q } },
       { gravityScale: CAR_GRAVITY_SCALE, speedCap: FACTORY_CAR.SPEED_CAP, wheelFilter: this.wheelFilter, holdBrake: true, slopeSpeedCap: true },
     );
@@ -348,6 +354,8 @@ export class FactoryCars {
     e.model.setDriver(true);
     this.driving = e;
     this.meter = new WearMeter(car);
+    this.wearTuning = { car, base, shown: [] };
+    shownConditions(car, this.wearTuning.shown);
     this.pos.copy(e.vehicle.curPos);
     this.lastSafe = { ...p };
     this.safeTimer = 0;
@@ -416,6 +424,7 @@ export class FactoryCars {
     if (!e) return;
     this.meter?.end();
     this.meter = null;
+    this.wearTuning = null;
     e.vehicle?.dispose();
     e.vehicle = null;
     this.driving = null;
@@ -649,6 +658,9 @@ export class FactoryCars {
     const v = e?.vehicle;
     if (!e || !v) return;
     v.afterWorldStep();
+    // The wear shown changed (a percentage): the car drives with it from now on (without wear: the same tuning).
+    const w = this.wearTuning;
+    if (w && shownConditions(w.car, w.shown)) v.applyTuning(wornTuning(w.base, w.car.wear, w.car.parts));
     v.interpolate(alpha, this.pos, this.quat);
     e.model.root.position.copy(this.pos);
     e.model.root.quaternion.copy(this.quat);
@@ -674,6 +686,7 @@ export class FactoryCars {
     const alive = !this.physics.disposed;
     this.meter?.end();
     this.meter = null;
+    this.wearTuning = null;
     for (const e of this.entries.values()) {
       if (alive) {
         e.vehicle?.dispose();

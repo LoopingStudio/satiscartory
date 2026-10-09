@@ -101,6 +101,15 @@ export const WEAR = {
   },
   /** Damage flash (HUD) from this many ‰ on the most hit part: « Retour arrière » (2 to 3 ‰) shows nothing. */
   FLASH_MIN: 5,
+  /**
+   * Effects of a worn-out part (car/wornTuning.ts), on the final tuning, through the curve L(u) = u(1 + 3u)/4 of
+   * u = w / MAX (slope 1/4 at the start, L = 0.68 at the race limit): the wheels lose `grip` of their friction (all
+   * three frictions), the engine `engine` of its force, the chassis `steer` of its steering and `brake` of its brakes,
+   * the panels add `drag` to the drag, a spoiler loses `spoiler` of its own share of the downforce. At the race limit
+   * a lap is about 10 % slower; the Sportive's 17 % on the Colline, whose steep ramp takes more than its engine pushes
+   * (tests/wear-sim.test.ts).
+   */
+  EFFECT: { grip: 0.25, engine: 0.2, steer: 0.15, brake: 0.2, drag: 0.2, spoiler: 0.5 },
 } as const;
 
 /** Production rates (« /min »): measured over the last WINDOW ticks; a building placed or reset less than MIN_SPAN ago is still measuring. */

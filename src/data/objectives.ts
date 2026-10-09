@@ -17,6 +17,8 @@ export interface ObjectiveContext {
   tier: number;
   /** Cars sold (dealers and garages). */
   carsSold: number;
+  /** A part was repaired at a garage (state.objectives.repair, set by the repair actions). */
+  repaired: boolean;
 }
 
 export interface Objective {
@@ -122,6 +124,12 @@ export const OBJECTIVES: Objective[] = [
     text: 'Termine une course avec ta voiture',
     hint: 'Menu Courses, choisis un circuit et vise une médaille !',
     done: (c) => c.racesWithOwnCar > 0,
+  },
+  {
+    id: 'repair',
+    text: 'Répare une pièce au garage',
+    hint: 'Rouler use les pièces, les pneus surtout. Gare ta voiture dans un garage, {interact} dessus, puis « Réparer » : avec des pneus, plaques, tiges et boulons, ou avec des crédits.',
+    done: (c) => c.repaired,
   },
   {
     id: 'tier6',

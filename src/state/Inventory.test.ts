@@ -207,6 +207,36 @@ describe('collecting from machines into the backpack', () => {
     expect(prices).toBeGreaterThan(0);
   });
 
+  it('the credits ledger: credits = Σ cars sold + Σ worn sets sold − Σ spent, whatever the order', () => {
+    const sim = new FactorySim({ width: 16, height: 16, storage: {}, hub: null });
+    let ledger = 0;
+    sim.events.on('sold', (e) => (ledger += e.price));
+    sim.events.on('soldWorn', (e) => (ledger += e.price));
+    sim.events.on('spent', (e) => (ledger -= e.amount));
+    const r = sim.place('dealer', 2, 2, 0, { free: true });
+    if (!r.ok) throw new Error(r.check.error);
+    (r.building as DealerB).stock = { chassis: 2, engine: 2, wheel: 8 };
+    const kart = { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } as const;
+    const steps: (() => unknown)[] = [
+      () => sim.run(DEALER.SELL_TICKS + 1),
+      () => sim.sell('kart', kart, null, { wheels: 640, engine: 90 }),
+      () => sim.spend(530, 'repair'),
+      () => sim.sellWorn('wheel', 4, 312),
+      () => sim.spend(sim.credits + 1, 'repair'), // refused
+      () => sim.sellWorn('wheel', 3, 312), // refused
+      () => sim.spend(sim.credits, 'repair'),
+      () => sim.run(DEALER.SELL_TICKS + 1),
+      () => sim.sellWorn('panel', 4, 1000),
+      () => sim.spend(10, 'repair'),
+    ];
+    for (const step of steps) {
+      step();
+      expect(sim.credits).toBe(ledger);
+      expect(sim.credits).toBeGreaterThanOrEqual(0);
+    }
+    expect(sim.carsSold).toBe(3);
+  });
+
   it('item conservation: place, load, collect and dismantle never create or lose items', () => {
     const sim = new FactorySim({ width: 16, height: 16, storage: { plate: 50, iron_rod: 50, bolt: 50, iron_ore: 20 }, hub: null });
     const inv = new Inventory(6);

@@ -273,6 +273,7 @@ export class FactoryMode implements Mode {
       nearHub: () => this.nearHub(),
       tier: () => this.state.tier,
       isUnlocked: (type) => this.state.isUnlocked(type),
+      repaired: () => !!this.state.objectives.repair,
       unlockTier: (n) => {
         if (this.state.tier !== n - 1) return;
         const next = TIERS[this.state.tier];
@@ -970,6 +971,7 @@ export class FactoryMode implements Mode {
       racesWithOwnCar: Object.values(this.state.records).filter((r) => r.carId).length,
       tier: this.state.tier,
       carsSold: this.sim.carsSold,
+      repaired: !!this.state.objectives.repair,
     };
     const items = OBJECTIVES.map((o) => {
       const done = !!this.state.objectives[o.id] || o.done(ctx);

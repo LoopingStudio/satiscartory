@@ -342,6 +342,18 @@ kbd {
 .wear-gauge.mini { width: 42px; height: 6px; border-radius: 3px; }
 .wear-pct { min-width: 38px; text-align: right; font-family: var(--mono); font-size: 13px; font-weight: 800; white-space: nowrap; }
 .slot-head { gap: 8px; }
+/* Repairs (garage): items with « j'ai / il faut » chips or credits, buttons that wrap inside the right column. */
+.repair-row { flex-wrap: wrap; gap: 6px; }
+.repair-btn { display: inline-flex; align-items: center; gap: 6px; }
+.repair-btn .item-icon.tiny { width: 18px; height: 18px; }
+.repair-btn .tier-item { gap: 2px; }
+/* The reserve of worn parts (« Pièces usées »): one card per group (item, count, state shown). */
+.worn-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.worn-row { display: flex; flex-direction: column; gap: 5px; padding: 6px 8px; background: #262842; border: 1px solid var(--panel-border); border-radius: 10px; }
+.worn-row .garage-confirm { margin-top: 2px; }
+/* The gauge's track is the card's colour: darker on a card, so its empty part still shows. */
+.worn-row .wear-gauge { background: #1b1d30; }
+.worn-count { color: var(--muted); font-family: var(--mono); }
 .stock-grid { display: flex; flex-direction: column; gap: 2px; }
 .stat-bar { grid-template-columns: 100px 1fr 36px; }
 .objective { font-size: 13px; margin: 3px 0; }
