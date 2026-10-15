@@ -281,6 +281,11 @@ Sans serveur, à la Trackmania : on court contre le **fantôme** d’un ami.
 - **Relever un défi** : ouvrir le lien dans le jeu, ou « Courses » → « Importer un défi… » (coller le code ou le lien, ou ouvrir le fichier). Il s’ajoute à « Défis reçus » : le circuit, qui l’a posé, le temps à battre, la voiture. « Relever le défi » lance la course avec ta voiture ; le fantôme de l’ami, translucide et son nom au-dessus, court avec toi. À l’arrivée : « Tu bats Léa de 0.420 s ! » ou son avance, et « Renvoyer le défi à Léa » envoie ton fantôme en retour.
 - Un circuit officiel est pris dans ton propre jeu ; celui d’un ami se court tel quel, sans se mêler à tes circuits. Les défis reçus (10 au plus) restent après « Nouvelle partie ».
 
+## Voir le monde d’un ami
+
+- **Partager mon monde** (menu principal, pause de l’usine) : un code de ta partie (usine, garages, voitures, records, ton personnage et ton nom), à envoyer par lien, code ou fichier, comme un défi. Tes réglages et les défis reçus n’en font pas partie.
+- **Visiter un monde…** (menu principal), ou ouvrir le lien : tu te promènes dans l’usine de ton ami, tu montes dans ses voitures, tu peux même construire. Son personnage t’attend là où il l’a laissé, son nom au-dessus, et se tourne vers toi. Un bandeau rappelle que **rien n’est sauvegardé** : ta partie est enregistrée avant la visite et rechargée intacte quand tu cliques « Quitter la visite » (bandeau, pause ou menu). Recharger la page pendant une visite ramène aussi dans ta partie.
+
 ## Trackdays
 
 Dans « Courses », sur un circuit, « Organiser un trackday » prête tes voitures construites à des clients pour la journée.

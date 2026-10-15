@@ -532,3 +532,5 @@ body.pad-input .pad-tip.show { display: block; }
 .trackday-panel { width: min(600px, 94vw); }
 .trackday-forecast .row { margin: 2px 0; }
 .challenge-card { margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255, 159, 28, 0.45); background: rgba(255, 159, 28, 0.08); }
+/* Visiting a friend's world: whose it is, and the way back. */
+.visit-banner { position: absolute; bottom: 16px; left: 16px; max-width: calc(50vw - 260px); min-width: 220px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 10px 8px 14px; border-radius: 14px; background: rgba(255, 159, 28, 0.92); color: #2b1a00; font-weight: 700; font-size: 14px; pointer-events: auto; z-index: 5; }

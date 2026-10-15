@@ -110,6 +110,10 @@ export interface HudCallbacks {
   /** « Personnage »: name, colors and hat of the character (not while driving: it is out of sight). */
   character(): void;
   canCustomize(): boolean;
+  /** « Partager mon monde » (absent while visiting a friend's world). */
+  shareWorld?(): void;
+  /** « Quitter la visite » (a friend's world only). */
+  leaveVisit?(): void;
   closePanel(): void;
 }
 
@@ -347,6 +351,8 @@ export class FactoryHud {
           el('button', { class: 'primary', onclick: () => this.cb.resume(), 'data-pad-btn': 'b start' }, paused ? 'Reprendre' : 'Jouer'),
           paused && this.cb.canGoHome() ? el('button', { onclick: () => this.cb.home(), title: 'Coincé ou perdu : retour au point de départ, devant le hangar' }, 'Revenir au hangar') : null,
           this.cb.canCustomize() ? el('button', { onclick: () => this.cb.character() }, 'Personnage') : null,
+          this.cb.shareWorld ? el('button', { 'data-action': 'share-world', onclick: () => this.cb.shareWorld?.() }, 'Partager mon monde') : null,
+          this.cb.leaveVisit ? el('button', { 'data-action': 'leave-visit', onclick: () => this.cb.leaveVisit?.() }, 'Quitter la visite') : null,
           el('button', { onclick: () => this.cb.settings() }, 'Réglages'),
           el('button', { onclick: () => this.cb.menu() }, 'Menu principal'),
         ),

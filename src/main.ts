@@ -6,7 +6,9 @@ import { AssetGalleryMode } from './dev/AssetGalleryMode';
 import { MenuMode, type MenuEntry } from './ui/menus/MenuMode';
 import { el, formatTime, toast } from './ui/dom';
 import { sanitizeChallenge } from './race/challenge';
-import { decodeShare } from './share/codec';
+import { decodeShare, encodeShare } from './share/codec';
+import { parseWorld, worldShare } from './share/world';
+import { openImportPanel, openSharePanel } from './ui/menus/SharePanel';
 import { satisfactionText } from './data/trackday';
 import { formatCredits } from './data/sales';
 import { confirmDialog } from './ui/confirm';
@@ -71,9 +73,57 @@ async function main() {
     state.challenges = challenges;
     void game.switchMode('factory');
   };
-  const menuEntries = (): MenuEntry[] => [
+  // « Voir le monde d'un ami » (share/world.ts): visit a friend's game, never saved; the player's own game is saved
+  // first and loaded back untouched when they leave.
+  const visitWorld = async (code: string) => {
+    const { state: friend, visit } = parseWorld(await decodeShare('monde', code));
+    if (!state.visit) SaveManager.save(state);
+    // The visitor stays themselves: their settings, their character, their challenges.
+    friend.settings = state.settings;
+    friend.look = state.look;
+    friend.challenges = state.challenges;
+    state.replaceWith(friend);
+    toast(`Bienvenue dans le monde de ${visit.from} : rien n’y est sauvegardé`, 'success', 3500);
+    await game.switchMode('factory');
+  };
+  const leaveVisit = () => {
+    if (!state.visit) return;
+    const own = SaveManager.load() ?? new GameState();
+    own.settings = state.settings;
+    state.replaceWith(own);
+    toast('De retour dans ton monde', 'info', 2000);
+    void game.switchMode('menu');
+  };
+  state.leaveVisit = leaveVisit;
+  const shareWorld = async () => {
+    if (state.visit) return toast('Tu visites le monde d’un ami : retourne dans le tien pour le partager', 'error');
+    SaveManager.save(state);
+    const code = await encodeShare('monde', worldShare(state));
+    openSharePanel({
+      kind: 'monde',
+      title: 'Partager mon monde',
+      intro: 'Ton ami se promène dans ton usine, voit tes machines, tes garages et tes voitures, et ton personnage l’attend là où tu l’as laissé. Il ne peut rien y changer chez toi : c’est une copie, jamais sauvegardée chez lui.',
+      code,
+      fileName: `monde-${state.look.name.replace(/[^\p{L}\p{N}]+/gu, '-').toLowerCase()}.satiscartory`,
+    });
+  };
+  state.shareWorld = () => void shareWorld();
+  const importWorld = () =>
+    openImportPanel({
+      title: 'Visiter un monde',
+      intro: 'Colle le code ou le lien du monde qu’un ami t’a envoyé, ou ouvre son fichier. Ta partie est mise de côté et revient intacte quand tu quittes la visite.',
+      onCode: visitWorld,
+    });
+  const menuEntries = (): MenuEntry[] => state.visit ? [
+    { label: `Retourner chez ${state.visit.from}`, mode: 'factory', primary: true },
+    { label: 'Quitter la visite', action: leaveVisit },
+    { label: fr.menu.race, mode: 'tracks' },
+    { label: fr.menu.settings, action: () => openSettings(game, state) },
+  ] : [
     { label: SaveManager.hasSave() ? fr.menu.continue : fr.menu.play, mode: 'factory', primary: true },
     { label: fr.menu.race, mode: 'tracks' },
+    { label: 'Partager mon monde', action: () => void shareWorld() },
+    { label: 'Visiter un monde…', action: importWorld },
     { label: fr.menu.editor, mode: 'editor' },
     {
       label: fr.menu.character,
@@ -141,6 +191,15 @@ async function main() {
   // is never sent to the server), and leaves the address bar once read.
   const openLink = async () => {
     const hash = location.hash;
+    if (hash.startsWith('#monde=')) {
+      history.replaceState(null, '', location.pathname + location.search);
+      try {
+        await visitWorld(hash);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Lien de monde illisible', 'error', 3500);
+      }
+      return;
+    }
     if (!hash.startsWith('#defi=')) return;
     history.replaceState(null, '', location.pathname + location.search);
     try {

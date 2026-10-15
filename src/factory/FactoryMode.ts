@@ -26,7 +26,7 @@ import { isMachine } from './sim/types';
 import type { Wallet } from '../state/Inventory';
 import { PLAYER } from '../data/player';
 import { OBJECTIVES, type ObjectiveContext } from '../data/objectives';
-import { toast } from '../ui/dom';
+import { el, toast } from '../ui/dom';
 import { keyFor, padGlyph, padText } from '../ui/padHints';
 import { stickCurve } from '../core/gamepad';
 import { openSettings } from '../ui/menus/SettingsPanel';
@@ -83,6 +83,8 @@ export class FactoryMode implements Mode {
   private paused = true;
   /** « Personnage » panel open (from the pause): the camera frames the character from the front. */
   private characterOpen = false;
+  /** A visited world's owner, standing where they left their character. */
+  private friend: { avatar: PlayerAvatar; tag: THREE.Sprite; pos: THREE.Vector3; yaw: number } | null = null;
   /**
    * Playing with the pad without pointer lock: a pad press is no user gesture, so the browser refuses
    * the lock; the camera turns with the right stick and the aim stays at the screen center anyway.
@@ -313,6 +315,8 @@ export class FactoryMode implements Mode {
       settings: () => openSettings(this.game, this.state, () => this.applySettings(), () => this.applySettings()),
       character: () => this.openCharacter(),
       canCustomize: () => !this.driving,
+      shareWorld: this.state.visit ? undefined : () => this.state.shareWorld?.(),
+      leaveVisit: this.state.visit ? () => this.state.leaveVisit?.() : undefined,
       closePanel: () => this.closePanel(),
     });
     this.build.onChange = () => this.hud.onToolChanged(this.build.tool);
@@ -342,6 +346,8 @@ export class FactoryMode implements Mode {
         if (b?.type === 'garage') this.openGarage(b);
       },
     });
+    // Visiting a friend's world: the banner (over the HUD) and the friend's character.
+    this.setupVisit();
 
     this.unsub.push(
       this.game.pointer.subscribe((locked) => {
@@ -425,6 +431,34 @@ export class FactoryMode implements Mode {
         if (this.paused) this.hud.showOverlay(true, true);
       },
     });
+  }
+
+  /**
+   * Visiting a friend's world: a banner says whose it is and that nothing is saved, and the friend's character stands
+   * where they left it, their name over it.
+   */
+  private setupVisit(): void {
+    const v = this.state.visit;
+    if (!v) return;
+    const date = v.at ? ` (partagé le ${new Date(v.at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })})` : '';
+    this.hud.layer.appendChild(
+      el('div', { class: 'visit-banner' },
+        el('span', {}, `Monde de ${v.from}${date} · visite : rien n’est sauvegardé`),
+        el('button', { class: 'small', 'data-action': 'leave-visit', onclick: () => this.state.leaveVisit?.() }, 'Quitter la visite'),
+      ),
+    );
+    const p = v.player;
+    if (!p) return;
+    const friend = new PlayerAvatar(this.game.assets, v.look);
+    const pos = new THREE.Vector3(p.x, p.y, p.z);
+    const terrain = this.sim.terrain;
+    if (!terrain.flat) pos.y = Math.max(pos.y, terrain.heightAt(p.x, p.z));
+    friend.update(0.016, pos, 0, true, p.yaw + Math.PI, 0);
+    this.scene.add(friend.root);
+    const tag = nameSprite(v.from);
+    tag.position.set(pos.x, pos.y + 2.6, pos.z);
+    this.scene.add(tag);
+    this.friend = { avatar: friend, tag, pos, yaw: p.yaw + Math.PI };
   }
 
   /** Portrait camera of the character panel: in front of the face, the character on the left of the screen. */
@@ -909,6 +943,13 @@ export class FactoryMode implements Mode {
       ? null
       : (terrain.slopeAt(this.renderPos.x, this.renderPos.z, this.slope), { y: terrain.heightAt(this.renderPos.x, this.renderPos.z), sx: this.slope.x, sz: this.slope.z });
     this.avatar.update(dt, this.renderPos, this.player.speed, this.player.grounded, this.faceYaw, this.player.landedImpact, ground);
+    // The friend turns toward the visitor once they come close.
+    const f = this.friend;
+    if (f) {
+      const d = Math.hypot(this.renderPos.x - f.pos.x, this.renderPos.z - f.pos.z);
+      if (d < 10) f.yaw = Math.atan2(this.renderPos.x - f.pos.x, this.renderPos.z - f.pos.z);
+      f.avatar.update(dt, f.pos, 0, true, f.yaw, 0);
+    }
     this.player.landedImpact = 0;
 
     // Aim: screen center when locked, cursor in free mode (none while the garage camera frames the bay).
@@ -1333,9 +1374,41 @@ export class FactoryMode implements Mode {
     this.cars.dispose();
     this.player.dispose();
     this.avatar.dispose();
+    if (this.friend) {
+      this.friend.avatar.dispose();
+      this.friend.tag.removeFromParent();
+      this.friend.tag.material.map?.dispose();
+      this.friend.tag.material.dispose();
+      this.friend = null;
+    }
     this.world.dispose();
     this.view.dispose();
     this.rig.dispose();
     this.disposeCamera();
   }
+}
+
+/** A name over a character (the friend in a visited world): white text on a dark pill, facing the camera. */
+function nameSprite(text: string): THREE.Sprite {
+  const w = 512;
+  const h = 96;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const c = canvas.getContext('2d')!;
+  c.font = 'bold 56px system-ui, -apple-system, "Segoe UI", sans-serif';
+  const tw = Math.min(w - 40, c.measureText(text).width);
+  c.fillStyle = 'rgba(20, 22, 40, 0.75)';
+  c.beginPath();
+  c.roundRect((w - tw) / 2 - 20, 8, tw + 40, h - 16, 30);
+  c.fill();
+  c.fillStyle = '#ffffff';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(text, w / 2, h / 2 + 2, w - 40);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+  sprite.scale.set(2.6, 0.49, 1);
+  return sprite;
 }

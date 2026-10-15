@@ -99,6 +99,14 @@ export class GameState {
   onTrackdayDone: ((r: TrackdayResult) => void) | null = null;
   /** Challenges received from friends (race/challenge.ts), most recent first. */
   challenges: Challenge[] = [];
+  /**
+   * Visiting a friend's world (share/world.ts): who they are and where their character stands. Such a state is
+   * `ephemeral` (never saved); null for the player's own game. Not part of the save.
+   */
+  visit: { from: string; look: CharacterLook; player: PlayerSave | null; at: number } | null = null;
+  /** Leaves a visit (main.ts: the player's own game back), and shares the player's world (« Partager mon monde »). */
+  leaveVisit: (() => void) | null = null;
+  shareWorld: (() => void) | null = null;
 
   /** Keeps a challenge received (the same one again replaces it at the top); returns its key. */
   addChallenge(c: Challenge): string {
@@ -237,7 +245,8 @@ export class GameState {
     }
     s.cars = Array.isArray(data.cars)
       ? data.cars.filter((c) => c && typeof c.id === 'string' && typeof c.blueprint === 'string').map((c) => {
-        const car: CarInstance = { ...c, parts: c.parts ?? {}, pose: sanitizePose(c.pose) };
+        // A name from a save (maybe a friend's shared world) is shown in HTML hints: no markup, a sane length.
+        const car: CarInstance = { ...c, name: cleanCarName(c.name, c.blueprint), parts: c.parts ?? {}, pose: sanitizePose(c.pose) };
         // Wear: only the installed parts, integers 1..1000; absent = new (no `wear` key at all).
         const wear = sanitizeWear(car.blueprint, car.parts, c.wear);
         if (wear) car.wear = wear;
@@ -332,6 +341,7 @@ export class GameState {
     this.trackdayRep = other.trackdayRep;
     this.trackdayLog = other.trackdayLog;
     this.challenges = other.challenges;
+    this.visit = other.visit;
     this.objectives = other.objectives;
     this.carCounter = other.carCounter;
     this.ephemeral = other.ephemeral;
@@ -360,3 +370,9 @@ function validTrackday(raw: unknown, s: GameState): raw is ActiveTrackday {
   return f.cars.every((c) => c && typeof c.id === 'string' && num(c.fuel) && c.wear && typeof c.wear === 'object' && Object.values(c.wear).every(num));
 }
 
+
+/** A car's name from untrusted save data: no markup characters nor control characters, 40 at most, never empty. */
+export function cleanCarName(raw: unknown, blueprint: string): string {
+  const s = typeof raw === 'string' ? [...raw.replace(/[<>&"\p{Cc}\p{Cf}]/gu, '').replace(/\s+/g, ' ').trim()].slice(0, 40).join('').trim() : '';
+  return s || (blueprint === 'sport' ? 'Sportive' : 'Kart Oopi');
+}
