@@ -35,7 +35,7 @@ describe('raceCarFor: which car races', () => {
   it('801 ‰ blocks it: the loaner races instead, the blocked car and its slots in fallback', () => {
     const { s, kart } = garage({ wheels: WEAR.BLOCK_ABOVE + 1, engine: 900 });
     const r = raceCarFor(s, { carId: kart.id });
-    expect(r).toEqual({ car: null, spec: LOANER_SPEC, wears: false, fallback: { kind: 'wear', car: kart, slots: ['engine', 'wheels'] } });
+    expect(r).toEqual({ car: null, spec: LOANER_SPEC, wears: false, fallback: { kind: 'wear', car: kart, slots: ['engine', 'wheels'], fuel: false } });
     expect(r.fallback?.car).toBe(kart);
     // The default choice (the selected car) falls back alike.
     expect(raceCarFor(s, {}).fallback?.car).toBe(kart);
@@ -83,7 +83,7 @@ describe('attemptGate: another attempt with the raced car', () => {
     kart.wear!.wheels = WEAR.BLOCK_ABOVE;
     expect(attemptGate(raced)).toBeNull();
     kart.wear!.wheels = WEAR.BLOCK_ABOVE + 1;
-    expect(attemptGate(raced)).toEqual({ kind: 'wear', car: kart, slots: ['wheels'] });
+    expect(attemptGate(raced)).toEqual({ kind: 'wear', car: kart, slots: ['wheels'], fuel: false });
   });
 
   it('never for what does not wear: the loaner (a fallback included), the test drive, a forced spec', () => {
@@ -108,7 +108,7 @@ describe('endAttempt: the line or « Recommencer » ends an attempt', () => {
     meter.step(PHYS_DT, wallHit(WEAR.SHOCK_FREE + 4.5), noControls);
     expect(kart.wear!.chassis).toBe(WEAR.BLOCK_ABOVE - 5);
     expect(attemptGate(raced)).toBeNull();
-    expect(endAttempt(raced, meter)).toEqual({ kind: 'wear', car: kart, slots: ['chassis'] });
+    expect(endAttempt(raced, meter)).toEqual({ kind: 'wear', car: kart, slots: ['chassis'], fuel: false });
     expect(kart.wear!.chassis).toBe(WEAR.BLOCK_ABOVE + 1);
     expect([meter.last.seq, meter.last.cause, meter.last.slot]).toEqual([1, 'shock', 'chassis']);
     // Closed: ending again charges nothing more.

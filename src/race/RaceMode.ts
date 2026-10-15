@@ -31,9 +31,11 @@ import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
 import { countAttempt, submitRun } from './records';
 import { endAttempt, raceCarFor, type RaceCar } from './raceCar';
 import { LOANER_SPEC, type CarInstance } from '../garage/assembly';
-import { isBlocked, wearLookCode, type CarWear, type RaceBlock } from '../data/wear';
-import { HALTED_NOTE, RACE_LOANER, TO_REPAIR_AT_GARAGE, attemptText, blockText, fallbackText, finishBlockedText, haltedText, lastAttemptText } from '../data/wearText';
+import { wearLookCode, type CarWear, type RaceBlock } from '../data/wear';
+import { HALTED_NOTE, RACE_LOANER, attemptText, blockText, fallbackText, finishBlockedText, haltedText, lastAttemptText, needAtGarage, needOf, needOfBlock } from '../data/wearText';
 import { WearHud } from '../ui/wearHud';
+import { FuelMeter } from '../data/fuel';
+import { FuelPill } from '../ui/fuelGauge';
 
 export interface RaceParams {
   track?: TrackData;
@@ -93,6 +95,11 @@ export class RaceMode implements Mode {
   /** The player's car when it wears in this race, and its meter (null: the loaner, a forced spec, a test drive). */
   private wearCar: CarInstance | null = null;
   private meter: WearMeter | null = null;
+  /** Fuel of the car that wears (the loaner, a forced spec, a test drive burn none). */
+  private fuelMeter: FuelMeter | null = null;
+  private fuelPill: FuelPill | null = null;
+  /** « Panne sèche » told once per race. */
+  private dryWarned = false;
   /** The car's wear when the attempt started (one copy per attempt): the finish panel says what the attempt wore. */
   private attemptWear: CarWear | null = null;
   /** The race limit was crossed in this race: said once (a toast), the next attempt halts. */
@@ -143,10 +150,12 @@ export class RaceMode implements Mode {
     this.raced = raced;
     this.spec = raced.spec;
     this.carId = raced.car?.id ?? null;
-    if (raced.fallback) toast(fallbackText(raced.fallback.car.name), 'info', 3200);
+    if (raced.fallback) toast(fallbackText(raced.fallback.car.name, needOfBlock(raced.fallback)), 'info', 3200);
     // Wear: the player's own car only. The loaner, a forced spec (?car=) and the editor's test drive never wear.
     this.wearCar = raced.wears ? raced.car : null;
     this.meter = this.wearCar ? new WearMeter(this.wearCar) : null;
+    // Fuel: the same cars burn it; a dry tank cuts the engine (the car coasts).
+    this.fuelMeter = this.wearCar ? new FuelMeter(this.wearCar) : null;
     const stats = computeCarStats(this.spec);
     this.baseTuning = tuningFromStats(stats);
     this.carModel = new CarModel(this.game.assets, this.spec);
@@ -192,6 +201,7 @@ export class RaceMode implements Mode {
    */
   restart(): void {
     // The interrupted attempt's last shock counts first: in the gate, the save and the copy taken for the next one.
+    this.fuelMeter?.end();
     const block = endAttempt(this.raced, this.meter);
     this.countUnfinished();
     // A worn car starts each attempt with its wear of now. Without wear nothing is applied again (the dev tuning
@@ -273,12 +283,16 @@ export class RaceMode implements Mode {
     let controls = phase === 'running' ? readVehicleControls(input) : NO_CONTROLS;
     if (phase === 'finished') controls = { ...NO_CONTROLS, brake: 0.4 };
     this.prevStep.copy(this.vehicle.curPos);
+    const fuel = this.fuelMeter;
+    this.vehicle.engineOff = !!fuel?.dry;
     this.vehicle.step(dt, controls);
-    this.lastThrottle = controls.throttle;
+    this.lastThrottle = this.vehicle.engineOff ? 0 : controls.throttle;
     // Only the race itself wears the car: not the countdown, nor the braking after the line.
     const meter = this.meter;
-    if (phase === 'running') meter?.step(dt, this.vehicle, controls);
-    else meter?.closeShock();
+    if (phase === 'running') {
+      meter?.step(dt, this.vehicle, controls);
+      fuel?.step(dt, this.vehicle.speed, controls.throttle);
+    } else meter?.closeShock();
     if (meter) this.fx?.afterStep(meter.last, this.vehicle.curPos, this.vehicle.curQuat, this.carModel.geometry);
     this.physics.step(dt);
     this.vehicle.afterWorldStep();
@@ -372,6 +386,7 @@ export class RaceMode implements Mode {
     this.finished = true;
     // The attempt ends at the line: a shock still open there counts now (in the save, the panel and its summary). Then
     // nothing wears the car any more (no respawn after the line): the panel's choice holds.
+    this.fuelMeter?.end();
     const block = endAttempt(this.raced, this.meter);
     let improved = false;
     let previous: number | null = null;
@@ -400,10 +415,11 @@ export class RaceMode implements Mode {
     h.info = el('div', { class: 'panel top-left race-info' });
     // A car that wears: its state under « km/h », its damage flashing above the speed.
     const wear = this.wearCar ? (this.wearHud = new WearHud()) : null;
+    const fuel = this.wearCar && this.fuelMeter ? (this.fuelPill = new FuelPill()) : null;
     this.layer.append(
       el('div', { class: 'top-center race-top' }, h.timer, h.cp, h.split),
       h.countdown,
-      el('div', { class: 'speedo-wrap bottom-right' }, wear?.flash.el, h.speed, el('div', { class: 'speedo-unit' }, 'km/h'), wear?.pill),
+      el('div', { class: 'speedo-wrap bottom-right' }, wear?.flash.el, h.speed, el('div', { class: 'speedo-unit' }, 'km/h'), wear?.pill, fuel?.el),
       h.info,
       el('div', { class: 'bottom-left race-keys muted small' }, html(this.keysHint())),
     );
@@ -482,7 +498,7 @@ export class RaceMode implements Mode {
       !improved && previous !== null ? el('div', { class: 'bad' }, `Record : ${formatTime(previous)} (${formatDelta(ms - previous)})`) : null,
       test ? el('div', { class: 'muted small' }, 'Ce temps devient le temps auteur du circuit.') : null,
       worn ? el('div', { class: 'muted finish-wear' }, worn) : null,
-      block ? el('div', { class: 'bad', style: 'margin-top:6px' }, finishBlockedText(block.car.name, blockText(block.car) ?? '')) : null,
+      block ? el('div', { class: 'bad', style: 'margin-top:6px' }, finishBlockedText(block.car.name, blockText(block.car) ?? '', needOfBlock(block))) : null,
       el('div', { class: 'row', style: 'margin-top:12px;justify-content:center' },
         retry,
         el('button', { onclick: () => this.exitTo(), 'data-pad-btn': 'b start' },
@@ -507,7 +523,7 @@ export class RaceMode implements Mode {
       c.classList.remove('pop');
     }
     const box = el('div', { class: 'panel center finish-panel', 'data-pad-scope': '', 'data-pad-passive': '' },
-      el('h2', {}, TO_REPAIR_AT_GARAGE),
+      el('h2', {}, needAtGarage(needOfBlock(block))),
       el('div', {}, haltedText(block.car.name, blockText(block.car) ?? '')),
       el('div', { class: 'muted small', style: 'margin-top:4px' }, HALTED_NOTE),
       el('div', { class: 'row', style: 'margin-top:12px;justify-content:center;flex-wrap:wrap' },
@@ -547,10 +563,16 @@ export class RaceMode implements Mode {
     const car = this.wearCar;
     if (!car) return;
     this.wearHud?.update(car);
+    this.fuelPill?.update(car);
     if (this.meter) this.wearHud?.onHit(this.meter.last);
-    if (!this.limitWarned && isBlocked(car)) {
+    const need = needOf(car);
+    if (!this.limitWarned && need) {
       this.limitWarned = true;
-      if (!this.finished && !this.halted) toast(lastAttemptText(blockText(car) ?? ''), 'info', 3200);
+      if (!this.finished && !this.halted) toast(lastAttemptText(blockText(car) ?? '', need), 'info', 3200);
+    }
+    if (!this.dryWarned && this.fuelMeter?.dry && !this.finished && !this.halted) {
+      this.dryWarned = true;
+      toast('Panne sèche : plus d’essence, le moteur est coupé', 'error', 3200);
     }
   }
 
@@ -601,6 +623,8 @@ export class RaceMode implements Mode {
       blueprint: this.spec.blueprint,
       /** Wear of the raced car (‰ per slot), null when it does not wear. */
       wear: this.wearCar ? { ...this.wearCar.wear } : null,
+      /** ‰ of the tank used (0 = full), null when the car burns none. */
+      fuel: this.wearCar ? (this.wearCar.fuel ?? 0) : null,
       /** Hits that wore the car 1 ‰ or more (WearMeter.last.seq), and the last one: what the flash showed. */
       hits: this.meter?.last.seq ?? 0,
       lastHit: this.meter && this.meter.last.seq ? { ...this.meter.last } : null,
@@ -615,6 +639,8 @@ export class RaceMode implements Mode {
     // The fractions of a thousandth are rounded into the car before the mode switch saves.
     this.meter?.end();
     this.meter = null;
+    this.fuelMeter?.end();
+    this.fuelMeter = null;
     this.wearCar = null;
     this.fx?.dispose();
     this.fx = null;

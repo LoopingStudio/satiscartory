@@ -16,6 +16,7 @@ import { CarFx } from '../../car/CarFx';
 import { computeCarStats } from '../../car/stats';
 import { tuningFromStats, type VehicleTuning } from '../../car/tuning';
 import { WearMeter, autoResetCause, type ResetCause, type WearHit } from '../../car/wearMeter';
+import { FuelMeter, fuelBlocked } from '../../data/fuel';
 import { wornTuning } from '../../car/wornTuning';
 import { isBlocked, raceBlocker, shownConditions, wearLookCode, type RaceBlock } from '../../data/wear';
 import { CAR_GROUPS } from '../collisionGroups';
@@ -124,6 +125,8 @@ export class FactoryCars {
   private drownTime = 0;
   /** Wear of the driven car (null on foot). */
   private meter: WearMeter | null = null;
+  /** Fuel of the driven car (null on foot): burned while the controls are on, the engine cut once dry. */
+  private fuelMeter: FuelMeter | null = null;
   /** The driven car, its tuning when new and the state shown (%) of its slots when its worn tuning was applied. */
   private wearTuning: { car: CarInstance; base: VehicleTuning; shown: number[] } | null = null;
   /** Smoke and sparks of the driven car (they fade out after getting out). */
@@ -383,6 +386,8 @@ export class FactoryCars {
     e.model.setDriver(true);
     this.driving = e;
     this.meter = new WearMeter(car);
+    this.fuelMeter = new FuelMeter(car);
+    e.vehicle.engineOff = this.fuelMeter.dry;
     this.fx.follow(this.meter.last);
     this.lastThrottle = 0;
     this.wearTuning = { car, base, shown: [] };
@@ -404,6 +409,7 @@ export class FactoryCars {
   raceBlockerOnExit(): RaceBlock<CarInstance> | null {
     const car = this.driving ? this.carOf(this.driving.id) : null;
     if (car && !isBlocked(car) && this.canExit()) this.meter?.end();
+    if (car && !fuelBlocked(car) && this.canExit()) this.fuelMeter?.end();
     return raceBlocker(car);
   }
 
@@ -467,6 +473,8 @@ export class FactoryCars {
     if (!e) return;
     this.meter?.end();
     this.meter = null;
+    this.fuelMeter?.end();
+    this.fuelMeter = null;
     this.wearTuning = null;
     this.lastThrottle = 0;
     e.vehicle?.dispose();
@@ -663,11 +671,16 @@ export class FactoryCars {
     this.trackSafe(v, dt, w, h);
     this.writePose(e, v);
     const c = input ? readVehicleControls(input) : NO_CONTROLS;
+    // Refilled meanwhile (a can poured while seated is not possible, but the garage may fill a car up): re-read.
+    const fuel = this.fuelMeter;
+    v.engineOff = !!fuel?.dry;
     v.step(dt, c);
-    this.lastThrottle = c.throttle;
+    this.lastThrottle = v.engineOff ? 0 : c.throttle;
     const meter = this.meter;
-    if (input) meter?.step(dt, v, c);
-    else meter?.closeShock();
+    if (input) {
+      meter?.step(dt, v, c);
+      fuel?.step(dt, v.speed, c.throttle);
+    } else meter?.closeShock();
     if (meter) this.fx.afterStep(meter.last, v.curPos, v.curQuat, e.model.geometry);
   }
 
@@ -740,6 +753,8 @@ export class FactoryCars {
     const alive = !this.physics.disposed;
     this.meter?.end();
     this.meter = null;
+    this.fuelMeter?.end();
+    this.fuelMeter = null;
     this.wearTuning = null;
     this.fx.dispose();
     for (const e of this.entries.values()) {

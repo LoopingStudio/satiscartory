@@ -18,7 +18,7 @@ import { buildProgress, type CarBuild } from './build';
 import { abandonBuild, buildIn, installBuildPart, removeBuildPart } from './buildActions';
 import { condition, isBlocked, slotWear, worstWear, wornCarPrice, wornSetPrice } from '../data/wear';
 import {
-  BUILD_SLOT_BUSY, BUILD_WORN_TITLE, CREDITS_TITLE, POSE_WORN_TITLE, REMOVE_WORN_TITLE, RENEW_TITLE, REPAIR_ALL_TITLE, TO_REPAIR, TO_REPAIR_TAG,
+  BUILD_SLOT_BUSY, BUILD_WORN_TITLE, CREDITS_TITLE, POSE_WORN_TITLE, REMOVE_WORN_TITLE, RENEW_TITLE, REPAIR_ALL_TITLE, TO_REPAIR_TAG,
   VALUE_TITLE, WORN_INTRO, WORN_NO_TARGET, WORN_POSE_REFUSED, abandonQuestion, abandonedText, blockAlert, blockText, carRepairedText, carRowTip,
   disassembleQuestion, disassembledText, effectsText, garageRaceTip, installTitle, installedInBuildText, installedOnCarText, missingTip, pct,
   poseWornLabel, refusedText, renewLabel, renewTip, repairTitle, repairedValueText, reserveHint, reserveRowText, reserveSummary, sellSetQuestion,
@@ -29,6 +29,11 @@ import {
   setQuote, slotForSet, slotQuote, wornGroups, type Pay, type RepairQuote, type WornGroup,
 } from './wearActions';
 import { wearGauge, wearPct } from '../ui/wearGauge';
+import { fuelGauge, fuelText } from '../ui/fuelGauge';
+import { fuelPct, fuelTone, fuelUsed, isDry, litersLeft, tankLiters } from '../data/fuel';
+import { FUEL } from '../data/balance';
+import { capFirst, needOf, needWord } from '../data/wearText';
+import { fuelQuote, refuelCar } from './wearActions';
 
 export interface GaragePanelCallbacks {
   /** « Fermer »: the owner calls close() and gives the controls back. */
@@ -69,6 +74,8 @@ interface ShownQuotes {
   slots: Partial<Record<string, RepairQuote>>;
   all: RepairQuote | null;
   sets: Record<string, RepairQuote>;
+  /** « Faire le plein » of the car in the bay (null: full, or not in this bay). */
+  fuel: RepairQuote | null;
 }
 
 function blueprintOf(car: CarInstance | null): Blueprint | undefined {
@@ -278,7 +285,7 @@ export class GaragePanel {
    * worn slots), or each group of the reserve. Shared by the render and the refresh key.
    */
   private shownQuotes(): ShownQuotes {
-    const out: ShownQuotes = { slots: {}, all: null, sets: {} };
+    const out: ShownQuotes = { slots: {}, all: null, sets: {}, fuel: null };
     const view = this.view;
     if (view.kind === 'worn') {
       for (const g of wornGroups(this.state.worn)) out.sets[g.key] = setQuote(g.set.item, g.set.n, g.set.wear);
@@ -293,6 +300,7 @@ export class GaragePanel {
           worn++;
         }
         if (worn >= 2) out.all = carQuote(car);
+        out.fuel = fuelQuote(car);
       }
     }
     return out;
@@ -303,7 +311,7 @@ export class GaragePanel {
    * il faut » chips and the enabled « Réparer » show, and nothing more (a busy plate machine redraws nothing).
    */
   private repairStockKey(q: ShownQuotes): string {
-    const quotes = [...Object.values(q.slots), ...Object.values(q.sets), q.all].filter((x): x is RepairQuote => !!x);
+    const quotes = [...Object.values(q.slots), ...Object.values(q.sets), q.all, q.fuel].filter((x): x is RepairQuote => !!x);
     if (!quotes.length) return '';
     const caps = quoteCaps(quotes);
     const wallet = this.state.wallet();
@@ -318,7 +326,7 @@ export class GaragePanel {
     const spot = this.spot!;
     const stock = partStock(this.state);
     const driven = this.driven;
-    const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}:${shownWear(c)}`).join('|');
+    const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}:${shownWear(c)}:${c.fuel ?? 0}`).join('|');
     const worn = this.state.worn.map((s) => `${s.item}.${s.n}.${s.wear}`).join(',');
     return [
       CAR_PARTS.map((i) => stock[i] ?? 0).join(','),
@@ -383,7 +391,7 @@ export class GaragePanel {
       ),
       el('div', { class: 'muted small' },
         occupant
-          ? `Dans la place : ${occupant.name}${isBlocked(occupant) ? ` · ${TO_REPAIR}` : ''}`
+          ? `Dans la place : ${occupant.name}${needOf(occupant) ? ` · ${needWord(needOf(occupant)!)}` : ''}`
           : build && progress
             ? `Dans la place : ${BLUEPRINTS[build.blueprint].name} en construction (${progress.done}/${progress.total} pièces)`
             : 'Place libre : assemble une voiture ici, ou pose ses pièces au fur et à mesure.'),
@@ -405,13 +413,17 @@ export class GaragePanel {
       const racing = (this.state.selectedCarId ?? null) === id;
       const state = worn ? stateText(worn) : null;
       const blocked = !!worn && isBlocked(worn);
+      // In the reserve only (no worn part): the tag says so, under the fuel gauge.
+      const dry = !!worn && !blocked && needOf(worn) === 'fuel';
       return pick(
         el('button', { class: `car-row${viewing ? ' selected' : ''}`, 'data-car': id ?? 'loaner', 'data-pad-tab': true, 'data-pad-tip': carRowTip(racing, state, blocked), onclick: () => this.show({ kind: 'car', id }) },
           el('span', { class: 'car-star', title: racing ? 'Voiture de course' : '' }, racing ? '★' : '☆'),
           el('span', { class: 'col', style: 'gap:0' }, el('b', {}, name), sub),
           worn && state
             ? el('span', { class: 'car-row-wear' }, wearGauge(worstWear(worn), 'mini', `État : ${state}`), blocked ? el('span', { class: 'wear-tag' }, TO_REPAIR_TAG) : null)
-            : null,
+            : dry && worn
+              ? el('span', { class: 'car-row-wear' }, fuelGauge(fuelUsed(worn), 'mini'), el('span', { class: 'wear-tag' }, capFirst(needWord('fuel'))))
+              : null,
         ),
         viewing,
       );
@@ -736,7 +748,7 @@ export class GaragePanel {
         el('span', { class: 'muted' }, car ? `${bp?.name ?? car.blueprint} · ` : 'Prêt du circuit'),
         loc ? el('span', { class: loc === 'here' ? 'good' : 'muted' }, LOCATION_LABEL[loc]) : null,
       ),
-      block !== null ? el('div', { class: 'wear-alert' }, blockAlert(block, loc === 'here')) : null,
+      block !== null && car ? el('div', { class: 'wear-alert' }, blockAlert(block, loc === 'here', needOf(car) ?? 'repair')) : null,
       bp ? el('div', { class: 'muted small', style: 'margin-top:4px' }, bp.description) : null,
     );
     // A worn car sells for less: its new price minus its repair in credits (repairing it first brings in the same).
@@ -753,6 +765,28 @@ export class GaragePanel {
     if (bp) r.appendChild(carStatsBlock(specOf(car)));
     const effects = car && bp ? effectsText(wearEffects(specOf(car), car.wear)) : null;
     if (effects) r.appendChild(el('div', { class: 'muted small', style: 'margin-top:4px' }, `Effets de l’usure : ${effects}`));
+    // Fuel: the gauge, and in this bay « Faire le plein » in fuel cans or credits.
+    const fuel = car ? fuelText(car) : null;
+    if (car && fuel) {
+      const used = fuelUsed(car);
+      const tone = fuelTone(used);
+      // Like a part's row: « Essence  3,6 L sur 10 L ······ [gauge] 36 % » (« Panne sèche » once dry).
+      r.appendChild(
+        el('div', { class: 'row fuel-row', style: 'margin-top:8px' },
+          el('b', {}, 'Essence'),
+          el('span', { class: 'muted small' }, isDry(car) ? 'panne sèche' : `${litersLeft(car).toLocaleString('fr-FR')} L sur ${tankLiters(car.blueprint)} L`),
+          el('span', { class: 'spacer' }),
+          fuelGauge(used),
+          el('b', { class: `wear-pct ${tone}` }, `${fuelPct(used)} %`)),
+      );
+      if (loc === 'here' && quotes.fuel) {
+        r.appendChild(
+          el('div', { class: 'row repair-row' },
+            ...this.payButtons('Faire le plein', quotes.fuel, { 'data-action': 'refuel' }, (pay) => this.doRefuel(car.id, pay), `Bidons d’essence de ${FUEL.CAN_L} L, du sac puis du hangar`),
+          ),
+        );
+      }
+    }
 
     if (car && bp && loc === 'here') {
       r.appendChild(el('h3', { style: 'margin-top:10px' }, 'Pièces'));
@@ -804,7 +838,7 @@ export class GaragePanel {
     const isRacing = (this.state.selectedCarId ?? null) === id;
     // One confirmation at a time: « Démonter » and « Vendre » hide while either waits for its answer.
     const pending = !!car && (this.confirming === car.id || this.confirming === sellKey(car.id));
-    const raceTip = block !== null ? garageRaceTip(block, loc === 'here') : undefined;
+    const raceTip = block !== null && car ? garageRaceTip(block, loc === 'here', needOf(car) ?? 'repair') : undefined;
     const race = el('button', {
       class: 'primary',
       'data-action': 'race',
@@ -1077,6 +1111,23 @@ export class GaragePanel {
     }
     toast(slotRepairedText(slot.id, res.paid), 'success', 2000);
     this.padRefocus = { slot: slot.id };
+    this.commit();
+  }
+
+  /** « Faire le plein » of the car in the bay; the focus goes to the car's row, never to « Courir ». */
+  private doRefuel(carId: string, pay: Pay): void {
+    const car = this.hereCar(carId);
+    const q = car ? fuelQuote(car) : null;
+    if (!car || !q) return this.render();
+    const check = payCheck(this.state, q, pay);
+    const paid = refuelCar(this.state, carId, pay);
+    if (!paid) {
+      if (!check.ok) toast(refusedText(check), 'error');
+      return this.render();
+    }
+    const how = paid.credits ? formatCredits(paid.credits) : `${paid.items?.fuel_can ?? 0} bidon${(paid.items?.fuel_can ?? 0) > 1 ? 's' : ''}`;
+    toast(`Plein fait : ${car.name} (${how})`, 'success', 2000);
+    this.padRefocus = 'row';
     this.commit();
   }
 

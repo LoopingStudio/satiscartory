@@ -206,14 +206,15 @@ export class FactoryView {
       if (terrain.flat) {
         const patch = new THREE.Mesh(
           this.own(new THREE.PlaneGeometry(n.w * FACTORY_CELL - 0.2, n.h * FACTORY_CELL - 0.2)),
-          this.own(new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.9 })),
+          // Oil is a glossy puddle (told apart from the dark rubber node at a glance).
+          this.own(new THREE.MeshStandardMaterial({ color: def.color, roughness: n.resource === 'oil' ? 0.12 : 0.9, metalness: n.resource === 'oil' ? 0.4 : 0 })),
         );
         patch.rotation.x = -Math.PI / 2;
         patch.position.set((n.x + n.w / 2) * FACTORY_CELL, y + 0.02, (n.z + n.h / 2) * FACTORY_CELL);
         patch.receiveShadow = true;
         this.root.add(patch);
       }
-      const rockMat = this.own(new THREE.MeshStandardMaterial({ color: def.color, flatShading: true, roughness: 0.8 }));
+      const rockMat = this.own(new THREE.MeshStandardMaterial({ color: def.color, flatShading: true, roughness: n.resource === 'oil' ? 0.25 : 0.8 }));
       const count = n.w * n.h * 3;
       const rocks = new THREE.InstancedMesh(rockGeo, rockMat, count);
       const q = new THREE.Quaternion();

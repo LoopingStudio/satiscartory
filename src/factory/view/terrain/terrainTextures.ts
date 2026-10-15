@@ -6,7 +6,7 @@ import type { Terrain } from '../../sim/terrain';
  * Per-cell data of the relief for the shaders, one texel per lattice cell (grid + margin):
  * R occupancy (255: a building or belt stands there), G surface (255: a pad, concrete; 1..127: how far
  * the banks moved the ground, in cm: dug earth), B natural ground no belt fits on (build grid tint),
- * A resource node (1 iron, 2 rubber). Plus the effective ground heights per corner (m, float) for the grass.
+ * A resource node (1 iron, 2 rubber, 3 oil: data/factoryMap.ts RESOURCES order). Plus the effective ground heights per corner (m, float) for the grass.
  */
 export class TerrainTextures {
   readonly cells: THREE.DataTexture;

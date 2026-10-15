@@ -260,6 +260,17 @@ Le prix d’une réparation suit l’usure (à 20 %, des roues coûtent 4 pneus 
 | Carrosserie | 2 plaques, 4 boulons | 650 cr |
 | Aileron | 1 plaque, 1 boulon | 250 cr |
 
+## Essence
+
+Les voitures construites ont un réservoir : 10 L pour le kart, 30 L pour la Sportive. Le kart de location et l’essai depuis l’éditeur n’en consomment pas.
+
+- **Consommation** : en roulant, en course comme dans l’usine, davantage à plein gaz (sans gaz, un cinquième seulement). Un plein fait environ 25 tours d’Ovale avant la réserve. Rien ne se consomme pendant la pause ou quand un panneau est ouvert. Une voiture neuve sort avec le plein.
+- **Panne sèche** : réservoir vide, le moteur se coupe ; la voiture roule encore sur son élan et freine, mais n’avance plus.
+- **Réserve** : sous 10 %, une voiture ne prend plus le départ d’une course (« À ravitailler au garage » ; le kart de location est proposé, comme pour une voiture à réparer). Elle roule encore dans l’usine tant qu’il en reste.
+- **Pétrole** : deux gisements de pétrole (plaques sombres et brillantes), à l’est du hangar. On le mine à la main ou avec une foreuse. **Bidon d’essence** (10 L) : 3 pétroles bruts et 1 plaque, au constructeur ou à la main à l’établi.
+- **Faire le plein** : au garage, pour la voiture garée dans la place, en bidons (le sac d’abord, puis le hangar) ou en crédits (la valeur des bidons plus 25 %). Une voiture en panne dans l’usine : E à côté d’elle verse un bidon du sac (+10 L) au lieu de monter.
+- **Affichage** : jauge d’essence au garage, au choix du circuit et sous le compteur en course ; « essence 62 % · 6,2 L » dans l’indication en conduisant (dès que le plein n’est plus fait), et « à ravitailler » en visant une voiture dans la réserve.
+
 ## Architecture
 
 ```

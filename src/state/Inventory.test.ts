@@ -356,7 +356,8 @@ describe('hand crafting at the bench (Wallet.craft)', () => {
     const weight: ItemCounts = { iron_ore: 12, iron_ingot: 12, iron_rod: 12, plate: 18, bolt: 3 };
     const iron = () => (Object.entries(weight) as [ItemId, number][]).reduce((s, [item, k]) => s + k * w.count(item), 0);
     const start = iron();
-    const recipes = recipesFor('bench');
+    // The iron recipes of the bench (the fuel can takes oil: it leaves the iron loop).
+    const recipes = recipesFor('bench').filter((r) => r.outputs.every((o) => o.item in weight));
     expect(recipes.map((r) => r.id).sort()).toEqual(['hand_bolts', 'hand_ingot', 'hand_plate', 'hand_rod']);
     let crafted = 0;
     let seed = 7;

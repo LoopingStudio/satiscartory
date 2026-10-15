@@ -14,6 +14,7 @@ import type { BuildingType } from '../data/buildings';
 import type { Inventory as ItemCounts } from '../data/items';
 import { sanitizeWear, sanitizeWornSet, type WornSet } from '../data/wear';
 import { DEFAULT_LOOK, sanitizeLook, type CharacterLook } from '../data/character';
+import { sanitizeFuel } from '../data/fuel';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -162,6 +163,10 @@ export class GameState {
         const wear = sanitizeWear(car.blueprint, car.parts, c.wear);
         if (wear) car.wear = wear;
         else delete car.wear;
+        // Fuel: an integer 1..1000 ‰ used; absent (a save from before the fuel, a full tank) = full.
+        const fuel = sanitizeFuel(car.blueprint, c.fuel);
+        if (fuel) car.fuel = fuel;
+        else delete car.fuel;
         return car;
       })
       : [];

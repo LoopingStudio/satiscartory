@@ -69,6 +69,7 @@ export const groundUniforms = {
   uDirt: { value: new THREE.Color(0x7a6a55) },
   uIron: { value: new THREE.Color(0xb5653e) },
   uRubber: { value: new THREE.Color(0x34364a) },
+  uOil: { value: new THREE.Color(0x241a12) },
 };
 
 /**
@@ -99,6 +100,7 @@ export function groundMaterial(): THREE.MeshLambertMaterial {
         uniform vec3 uDirt;
         uniform vec3 uIron;
         uniform vec3 uRubber;
+        uniform vec3 uOil;
         varying vec3 vGroundWorld;`,
       )
       .replace(
@@ -115,9 +117,11 @@ export function groundMaterial(): THREE.MeshLambertMaterial {
           vec4 cell = texelFetch(uCells, ivec2(latticeCell), 0);
           float node = cell.a * 255.0;
           if (node > 0.5) {
-            // Resource node: its color, speckled with rocks.
-            vec3 nc = node < 1.5 ? uIron : uRubber;
-            diffuseColor.rgb = mix(nc, nc * 0.62, step(0.62, groundNoise.g));
+            // Resource node: its color, speckled with rocks (1 iron, 2 rubber, 3 oil: dark, with a bluish sheen).
+            vec3 nc = node < 1.5 ? uIron : node < 2.5 ? uRubber : uOil;
+            diffuseColor.rgb = node > 2.5
+              ? mix(nc, nc * 1.8 + vec3(0.03, 0.02, 0.07), step(0.7, groundNoise.g))
+              : mix(nc, nc * 0.62, step(0.62, groundNoise.g));
           }
           float surface = cell.g * 255.0;
           if (surface > 254.5) {

@@ -14,8 +14,10 @@ import { confirmDialog } from '../ui/confirm';
 import { dual, html, padGlyph } from '../ui/padHints';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor } from './medals';
 import { BLUEPRINTS } from '../data/blueprints';
-import { isBlocked, worstWear } from '../data/wear';
-import { LOANER_STATE, NEW_STATE, RACE_LOANER, TO_REPAIR_AT_GARAGE, blockText, blockedOption, blockedRaceLine, blockedRaceTip, effectsText, stateText, wearTone } from '../data/wearText';
+import { worstWear } from '../data/wear';
+import { LOANER_STATE, NEW_STATE, RACE_LOANER, blockText, blockedOption, blockedRaceLine, blockedRaceTip, effectsText, needAtGarage, needOf, stateText, wearTone } from '../data/wearText';
+import { fuelGauge, fuelText } from '../ui/fuelGauge';
+import { fuelUsed, fuelTone } from '../data/fuel';
 import { LOANER_SPEC, specOf, type CarInstance } from '../garage/assembly';
 import { selectRaceCar } from '../garage/actions';
 import { carStatsBlock } from '../ui/carStats';
@@ -132,7 +134,10 @@ export class TrackSelectMode implements Mode {
   private carOptions(): { id: string | null; label: string; spec: CarSpec; car: CarInstance | null }[] {
     return [
       { id: null, label: BLUEPRINTS.loaner.name, spec: LOANER_SPEC, car: null },
-      ...this.state.cars.map((c) => ({ id: c.id, label: isBlocked(c) ? blockedOption(c.name) : c.name, spec: specOf(c), car: c })),
+      ...this.state.cars.map((c) => {
+        const need = needOf(c);
+        return { id: c.id, label: need ? blockedOption(c.name, need) : c.name, spec: specOf(c), car: c };
+      }),
     ];
   }
 
@@ -143,13 +148,19 @@ export class TrackSelectMode implements Mode {
   private wearSummary(car: CarInstance | null): HTMLElement {
     if (!car) return el('div', { class: 'muted wear-summary' }, LOANER_STATE);
     const state = stateText(car);
-    if (!state) return el('div', { class: 'muted wear-summary' }, NEW_STATE);
+    const fuel = fuelText(car);
+    const used = fuelUsed(car);
+    const fuelRow = fuel
+      ? el('div', { class: 'row wear-summary' }, el('b', { class: fuelTone(used) === 'good' ? '' : fuelTone(used) }, fuel), fuelGauge(used, 'mini'))
+      : null;
+    if (!state) return el('div', {}, el('div', { class: 'muted wear-summary' }, NEW_STATE), fuelRow);
     const w = worstWear(car);
     const effects = effectsText(wearEffects(specOf(car), car.wear));
     return el('div', {},
       el('div', { class: 'row wear-summary' },
         el('span', { class: 'muted' }, 'État : '), el('b', { class: wearTone(w) }, state), wearGauge(w, 'mini', `État : ${state}`)),
       effects ? el('div', { class: 'muted small' }, `Effets de l’usure : ${effects}`) : null,
+      fuelRow,
     );
   }
 
@@ -199,13 +210,14 @@ export class TrackSelectMode implements Mode {
     // A car to repair does not start: « Courir » is disabled, the loaner takes the default focus. It stays the race
     // car (selectedCarId): once repaired, it races again.
     const blocked = current.car ? blockText(current.car) : null;
-    const blockedTip = analysis.ok && blocked !== null ? blockedRaceTip(blocked) : undefined;
+    const need = (current.car && needOf(current.car)) || 'repair';
+    const blockedTip = analysis.ok && blocked !== null ? blockedRaceTip(blocked, need) : undefined;
     const race = (carId: string | null) => {
       const back: TrackSelectParams = { selected: t.id, origin: this.origin };
       const p: RaceParams = { track: t, carId, returnTo: 'tracks', returnParams: back };
       void this.game.switchMode('race', p);
     };
-    if (current.car && blocked !== null) d.appendChild(el('div', { class: 'bad small', style: 'margin-top:8px' }, blockedRaceLine(current.car.name, blocked)));
+    if (current.car && blocked !== null) d.appendChild(el('div', { class: 'bad small', style: 'margin-top:8px' }, blockedRaceLine(current.car.name, blocked, need)));
     const buttons = el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' });
     buttons.appendChild(
       el('button', {
@@ -216,7 +228,7 @@ export class TrackSelectMode implements Mode {
         'data-action': 'race',
         'data-pad-default': blocked === null,
         onclick: () => race(this.state.selectedCar?.id ?? null),
-      }, !analysis.ok ? 'Circuit invalide' : blocked !== null ? TO_REPAIR_AT_GARAGE : 'Courir'),
+      }, !analysis.ok ? 'Circuit invalide' : blocked !== null ? needAtGarage(need) : 'Courir'),
     );
     if (blocked !== null) {
       buttons.appendChild(

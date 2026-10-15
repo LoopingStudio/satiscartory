@@ -36,7 +36,7 @@ describe('vallonne-1 generator', () => {
   it('is pinned (any change to the map is deliberate)', () => {
     expect(t.nx).toBe(161);
     expect(t.nz).toBe(161);
-    expect(fnv(t.base)).toBe('b4efe555');
+    expect(fnv(t.base)).toBe('f084e5e3'); // oil nodes (Oct. 2026): pads east of the plateau
   });
 
   it('uses exact arithmetic only (bit-identical in every engine)', () => {

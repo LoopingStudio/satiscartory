@@ -40,8 +40,11 @@ import { bayOccupant, bayPose, bayRect, type BayBlocker, type GarageSpot } from 
 import { makeCarPreview } from '../car/CarModel';
 import { buildingIcons } from './view/BuildingIcons';
 import { formatCredits } from '../data/sales';
-import { isBlocked, raceBlocker, worstWear } from '../data/wear';
-import { aimBlockedText, blockText, boardedBlockedText, driveState, hitText, repairBeforeRaceText, seatRefusedText, wearTone } from '../data/wearText';
+import { raceBlocker, worstWear } from '../data/wear';
+import { aimBlockedText, blockText, boardedBlockedText, driveState, hitText, needOf, needOfBlock, repairBeforeRaceText, seatRefusedText, wearTone } from '../data/wearText';
+import { FUEL } from '../data/balance';
+import { fuelBlocked, fuelPct, fuelTone, fuelUsed, isDry, pourCans } from '../data/fuel';
+import { fuelText } from '../ui/fuelGauge';
 import type { TrackSelectParams } from '../race/TrackSelectMode';
 
 export interface FactoryModeParams {
@@ -119,6 +122,8 @@ export class FactoryMode implements Mode {
   private wearSeq = 0;
   /** The driven car is past the race limit and was told so (boarding a car to repair, or crossing it): once per drive. */
   private limitWarned = false;
+  /** « Panne sèche » said once per drive. */
+  private dryWarned = false;
   /** E held on a belt: seconds held and the line it picks up when HAND.BELT_LINE_SECONDS is reached. */
   private beltHold: { t: number; ids: Set<number>; taken: ItemCounts } | null = null;
   /** Last grounded positions (one every 0.25 s, ring of 4): where a fall through the relief comes back. */
@@ -558,8 +563,23 @@ export class FactoryMode implements Mode {
     this.hud.flashWear(null);
     // A car to repair still drives (back to a garage), but no longer races: said once, when getting in.
     const block = raceBlocker(this.state.cars.find((c) => c.id === id) ?? null);
-    if (block) toast(boardedBlockedText(block.car.name, blockText(block.car) ?? ''), 'info', 3200);
+    if (block) toast(boardedBlockedText(block.car.name, blockText(block.car) ?? '', needOfBlock(block)), 'info', 3200);
     this.limitWarned = block !== null;
+    this.dryWarned = false;
+  }
+
+  /**
+   * A car in the reserve (or dry) parked here, and a fuel can in the backpack: E pours one into it instead of getting
+   * in (FUEL.CAN_L liters; a full kart takes one). True when poured.
+   */
+  private pourCan(id: string): boolean {
+    const car = this.state.cars.find((c) => c.id === id);
+    const inv = this.state.inventory;
+    if (!car || !fuelBlocked(car) || inv.count('fuel_can') < 1) return false;
+    if (inv.remove('fuel_can', 1) < 1) return false;
+    pourCans(car, 1);
+    toast(`Bidon versé : ${car.name} a ${fuelPct(fuelUsed(car))} % d’essence`, 'success', 1800);
+    return true;
   }
 
   /** Gets out if slow enough; false otherwise. */
@@ -925,7 +945,7 @@ export class FactoryMode implements Mode {
         // wear it would get out with: getting out may take a car at the limit past it.
         const block = this.cars.raceBlockerOnExit();
         if (block) {
-          toast(seatRefusedText(blockText(block.car) ?? ''), 'error', 2200);
+          toast(seatRefusedText(blockText(block.car) ?? '', needOfBlock(block)), 'error', 2200);
           // A car that crossed the limit just now: said by this toast, not again by updateWear.
           this.limitWarned = true;
         } else if (this.exitCar()) this.goRace(id);
@@ -955,9 +975,14 @@ export class FactoryMode implements Mode {
       if (text) this.hud.flashWear(text);
     }
     const car = this.cars.drivingCar;
-    if (car && !this.limitWarned && isBlocked(car)) {
+    const need = car ? needOf(car) : null;
+    if (car && !this.limitWarned && need) {
       this.limitWarned = true;
-      toast(repairBeforeRaceText(blockText(car) ?? ''), 'info', 3200);
+      toast(repairBeforeRaceText(blockText(car) ?? '', need), 'info', 3200);
+    }
+    if (car && !this.dryWarned && isDry(car)) {
+      this.dryWarned = true;
+      toast(`Panne sèche : descends et verse un bidon d’essence (${keyFor(this.game.input.device, 'interact', 'foot').replace(/<[^>]+>/g, '')} près de la voiture), ou fais le plein au garage`, 'error', 4200);
     }
   }
 
@@ -1092,7 +1117,7 @@ export class FactoryMode implements Mode {
         // A press takes the aimed tile; holding on goes on to the whole line.
         const taken = load.tile ? this.takeFromBelts([belt]) : {};
         this.beltHold = { t: 0, ids: new Set(load.ids), taken };
-      } else if (car) this.enterCar(car);
+      } else if (car && !this.pourCan(car)) this.enterCar(car);
     }
     if (input.wasPressed('cancel')) {
       // Escape closes the active tool first; only without a tool does it pause (with the pointer
@@ -1161,8 +1186,13 @@ export class FactoryMode implements Mode {
       const state = car ? driveState(car) : null;
       const tone = state && car ? wearTone(worstWear(car)) : 'good';
       const wear = state ? ` · <span class="${tone === 'good' ? 'muted' : tone}">${state}</span>` : '';
-      const race = tone === 'bad' ? '' : ` · ${k('retry')} courir`;
-      html = `<b>${car?.name ?? 'Voiture'}</b>${wear} · ${Math.round(this.cars.speedKmh())} km/h · ${exit}${race} · ${k('respawn')} replacer`;
+      // Fuel: shown from the moment it is no longer full; dry, what to do.
+      const used = car ? fuelUsed(car) : 0;
+      const fuelLine = car && used > 0 ? fuelText(car) : null;
+      const ftone = fuelTone(used);
+      const fuel = fuelLine ? ` · <span class="${ftone === 'good' ? 'muted' : ftone}">${fuelLine.charAt(0).toLowerCase()}${fuelLine.slice(1)}</span>` : '';
+      const race = car && needOf(car) ? '' : ` · ${k('retry')} courir`;
+      html = `<b>${car?.name ?? 'Voiture'}</b>${wear}${fuel} · ${Math.round(this.cars.speedKmh())} km/h · ${exit}${race} · ${k('respawn')} replacer`;
     } else if (t.kind === 'build') {
       const check = this.build.lastCheck;
       const err = check && !check.ok ? `<span class="bad">${describeError(check)}</span> · ` : '';
@@ -1211,7 +1241,10 @@ export class FactoryMode implements Mode {
         // A car to repair still drives (back to a garage): said before getting in, in red.
         const c = this.state.cars.find((x) => x.id === car);
         const repair = c ? aimBlockedText(c) : null;
-        html = `${e} monter dans ${c?.name ?? 'la voiture'}${repair ? ` · <span class="bad">${repair}</span>` : ''}`;
+        const cans = this.state.inventory.count('fuel_can');
+        html = c && fuelBlocked(c) && cans > 0
+          ? `${e} verser un bidon d’essence (+${FUEL.CAN_L} L, ${cans} dans le sac) · <span class="bad">${repair ?? ''}</span>`
+          : `${e} monter dans ${c?.name ?? 'la voiture'}${repair ? ` · <span class="bad">${repair}</span>` : ''}`;
       }
       else if (mine) {
         const pct = Math.round((this.mineT / HAND.MINE_SECONDS) * 100);
