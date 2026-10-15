@@ -13,6 +13,7 @@ import { RaceMode } from './race/RaceMode';
 import { TrackSelectMode } from './race/TrackSelectMode';
 import { TrackEditorMode } from './track/editor/TrackEditorMode';
 import { applySettings, openSettings } from './ui/menus/SettingsPanel';
+import { openCharacterPanel } from './ui/menus/CharacterPanel';
 import { ItemIcons } from './core/assets/IconRenderer';
 import { fr } from './ui/i18n/fr';
 
@@ -58,19 +59,29 @@ async function main() {
     }
     SaveManager.clear();
     const settings = state.settings;
+    const look = state.look;
     state.replaceWith(new GameState());
     state.settings = settings;
+    state.look = look;
     void game.switchMode('factory');
   };
   const menuEntries = (): MenuEntry[] => [
     { label: SaveManager.hasSave() ? fr.menu.continue : fr.menu.play, mode: 'factory', primary: true },
     { label: fr.menu.race, mode: 'tracks' },
     { label: fr.menu.editor, mode: 'editor' },
+    {
+      label: fr.menu.character,
+      action: () => {
+        const menu = game.modes.current instanceof MenuMode ? game.modes.current : null;
+        menu?.setPortrait(true);
+        openCharacterPanel(state, { onChange: () => menu?.refreshLook(), onClose: () => menu?.setPortrait(false) });
+      },
+    },
     { label: fr.menu.settings, action: () => openSettings(game, state) },
     { label: fr.menu.gallery, mode: 'gallery' },
     { label: fr.menu.newGame, action: () => void newGame() },
   ];
-  game.modes.register('menu', () => new MenuMode(game, menuEntries));
+  game.modes.register('menu', () => new MenuMode(game, menuEntries, () => state.look));
   game.modes.register('gallery', () => new AssetGalleryMode(game));
 
   game.modes.register('factory', () => new FactoryMode(game, state));

@@ -6,6 +6,12 @@ import { CAR_SCALE, FACTORY_MODEL_SCALE, TRACK_CELL } from '../../config/constan
 import { createLayer, el } from '../dom';
 import { fr } from '../i18n/fr';
 import type { ModelKey } from '../../core/assets/manifest.gen';
+import { PlayerAvatar } from '../../player/PlayerAvatar';
+import type { CharacterLook } from '../../data/character';
+
+/** Where the player's character stands in the diorama, and which way it faces (toward the road). */
+const AVATAR_SPOT = new THREE.Vector3(6, 0, 3);
+const AVATAR_YAW = -0.5;
 
 export interface MenuEntry {
   label: string;
@@ -25,8 +31,12 @@ export class MenuMode implements Mode {
   private rig: LightRig | null = null;
   private t = 0;
   private car: THREE.Object3D | null = null;
+  private avatar: PlayerAvatar | null = null;
+  /** The « Personnage » panel is open: the camera frames the character instead of orbiting. */
+  private portrait = false;
+  private card: HTMLElement | null = null;
 
-  constructor(private readonly game: Game, private readonly entries: () => MenuEntry[]) {
+  constructor(private readonly game: Game, private readonly entries: () => MenuEntry[], private readonly look?: () => CharacterLook) {
     const { camera, dispose } = game.makeCamera(45, 0.5, 500);
     this.camera = camera;
     this.disposeCamera = dispose;
@@ -71,6 +81,12 @@ export class MenuMode implements Mode {
     this.car.scale.setScalar(CAR_SCALE);
     this.scene.add(this.car);
 
+    // The player's character watches the cars go by.
+    if (this.look) {
+      this.avatar = new PlayerAvatar(a, this.look());
+      this.scene.add(this.avatar.root);
+    }
+
     this.layer = createLayer('menu-screen');
     this.layer.style.display = 'flex';
     // A pad menu that starts on the primary entry. No guard against a second A: a mode switch exits this
@@ -95,15 +111,40 @@ export class MenuMode implements Mode {
       );
     }
     this.layer.appendChild(card);
+    this.card = card;
+  }
+
+  /** « Personnage »: frames the character (true) and hides the menu card, or goes back to the orbit. */
+  setPortrait(on: boolean): void {
+    this.portrait = on;
+    if (this.card) this.card.style.display = on ? 'none' : '';
+    this.refreshLook();
+  }
+
+  /** Re-reads the look (after a change in the « Personnage » panel). */
+  refreshLook(): void {
+    if (this.avatar && this.look) this.avatar.setLook(this.look());
   }
 
   fixedUpdate(): void {}
 
   update(dt: number): void {
     this.t += dt;
-    const r = 34;
-    this.camera.position.set(Math.cos(this.t * 0.08) * r, 14, Math.sin(this.t * 0.08) * r);
-    this.camera.lookAt(0, 2, 0);
+    if (this.avatar) this.avatar.update(dt, AVATAR_SPOT, 0, true, this.portrait ? AVATAR_YAW + 0.35 : AVATAR_YAW, 0);
+    if (this.portrait) {
+      // In front of the character, which stands on the left of the screen (the panel is on the right).
+      const fx = Math.sin(AVATAR_YAW + 0.35);
+      const fz = Math.cos(AVATAR_YAW + 0.35);
+      // The menu camera is narrower (45°) than the factory's: from farther away.
+      const side = 1.5;
+      const target = new THREE.Vector3(AVATAR_SPOT.x + fx * 6.2 + fz * side, 1.8, AVATAR_SPOT.z + fz * 6.2 - fx * side);
+      this.camera.position.lerp(target, 1 - Math.exp(-5 * dt));
+      this.camera.lookAt(AVATAR_SPOT.x + fz * side, 1.0, AVATAR_SPOT.z - fx * side);
+    } else {
+      const r = 34;
+      this.camera.position.set(Math.cos(this.t * 0.08) * r, 14, Math.sin(this.t * 0.08) * r);
+      this.camera.lookAt(0, 2, 0);
+    }
     if (this.car) {
       // Car drives back and forth along the road strip.
       const x = Math.sin(this.t * 0.35) * TRACK_CELL * 1.2;
@@ -114,6 +155,7 @@ export class MenuMode implements Mode {
   }
 
   exit(): void {
+    this.avatar?.dispose();
     this.rig?.dispose();
     this.disposeCamera();
     this.layer?.remove();

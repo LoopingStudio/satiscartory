@@ -30,6 +30,7 @@ import { toast } from '../ui/dom';
 import { keyFor, padGlyph, padText } from '../ui/padHints';
 import { stickCurve } from '../core/gamepad';
 import { openSettings } from '../ui/menus/SettingsPanel';
+import { openCharacterPanel } from '../ui/menus/CharacterPanel';
 import { FactorySim } from './sim/FactorySim';
 import { spawnDemoFactory, spawnStressLoops } from './sim/testLayouts';
 import type { Action } from '../config/keybinds';
@@ -76,6 +77,8 @@ export class FactoryMode implements Mode {
   private started = false;
   /** The pause / start overlay is up. */
   private paused = true;
+  /** « Personnage » panel open (from the pause): the camera frames the character from the front. */
+  private characterOpen = false;
   /**
    * Playing with the pad without pointer lock: a pad press is no user gesture, so the browser refuses
    * the lock; the camera turns with the right stick and the aim stays at the screen center anyway.
@@ -199,7 +202,7 @@ export class FactoryMode implements Mode {
       onEvent: () => toast('La voiture a pris l’eau : retour au sec', 'info', 2200),
       isDecor: (c) => this.world.isDecor(c),
     });
-    this.avatar = new PlayerAvatar(this.game.assets);
+    this.avatar = new PlayerAvatar(this.game.assets, this.state.look);
     this.scene.add(this.avatar.root);
     // The camera looks through trees and rocks (no pumping in a forest), never under the ground.
     // (Over the lake, its surface: the camera never goes under the water, which is not drawn from below.)
@@ -302,6 +305,8 @@ export class FactoryMode implements Mode {
       home: () => this.goHome(),
       canGoHome: () => !this.driving,
       settings: () => openSettings(this.game, this.state, () => this.applySettings(), () => this.applySettings()),
+      character: () => this.openCharacter(),
+      canCustomize: () => !this.driving,
       closePanel: () => this.closePanel(),
     });
     this.build.onChange = () => this.hud.onToolChanged(this.build.tool);
@@ -391,9 +396,37 @@ export class FactoryMode implements Mode {
     if (!this.game.pointer.locked && !this.freeCursor && !this.uiOpen) void this.resume();
   };
 
-  /** A HUD panel or the garage panel is open (no player control). */
+  /** A HUD panel, the garage panel or the character panel is open (no player control). */
   private get uiOpen(): boolean {
-    return this.hud.panelOpen || this.garagePanel.isOpen;
+    return this.hud.panelOpen || this.garagePanel.isOpen || this.characterOpen;
+  }
+
+  /** « Personnage » from the pause: the panel on the right, the character facing the camera on the left. */
+  private openCharacter(): void {
+    if (this.characterOpen || this.driving) return;
+    this.characterOpen = true;
+    this.hud.showOverlay(false, false);
+    openCharacterPanel(this.state, {
+      onChange: () => this.avatar.setLook(this.state.look),
+      onClose: () => {
+        this.characterOpen = false;
+        this.avatar.setLook(this.state.look);
+        if (this.paused) this.hud.showOverlay(true, true);
+      },
+    });
+  }
+
+  /** Portrait camera of the character panel: in front of the face, the character on the left of the screen. */
+  private frameCharacter(dt: number): void {
+    const p = this.renderPos;
+    const fx = Math.sin(this.faceYaw);
+    const fz = Math.cos(this.faceYaw);
+    // Screen-right seen from the front is the character's left: look a bit that way to leave room for the panel.
+    const look = new THREE.Vector3(p.x + fz * 0.85, p.y + 0.85, p.z - fx * 0.85);
+    const target = new THREE.Vector3(p.x + fx * 3.6 + fz * 0.85, p.y + 1.35, p.z + fz * 3.6 - fx * 0.85);
+    target.y = Math.max(target.y, this.sim.terrain.heightAt(target.x, target.z) + 0.6);
+    this.camera.position.lerp(target, 1 - Math.exp(-6 * dt));
+    this.camera.lookAt(look);
   }
 
   private get driving(): boolean {
@@ -815,7 +848,8 @@ export class FactoryMode implements Mode {
     if (this.garagePanel.isOpen) {
       this.frameGarage(dt);
       this.setPreview(this.garagePanel.preview);
-    } else this.orbit.update(this.renderPos, dt);
+    } else if (this.characterOpen) this.frameCharacter(dt);
+    else this.orbit.update(this.renderPos, dt);
     this.cars.update(dt, alpha, this.camera);
 
     // Facing: toward movement, toward the camera while a build tool is active, toward the rock while mining.

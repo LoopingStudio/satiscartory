@@ -383,6 +383,17 @@ kbd {
 .setting { margin: 8px 0; gap: 10px; }
 .setting input[type='range'] { width: 150px; }
 
+/* Character (« Personnage »): docked right, no backdrop, so the character stays visible on the left. */
+.character-layer { display: flex; justify-content: flex-end; align-items: center; padding: 16px; box-sizing: border-box; }
+.character-panel { width: min(380px, calc(100vw - 32px)); max-height: calc(100% - 32px); overflow: auto; }
+.character-panel h3 { margin: 12px 0 6px; }
+.character-name { width: 180px; font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--panel-border); background: #1d2036; color: inherit; }
+.character-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch { width: 32px; height: 32px; padding: 0; border-radius: 50%; background: var(--swatch); border: 2px solid rgba(255, 255, 255, 0.25); }
+.swatch:hover:not(:disabled) { background: var(--swatch); border-color: #fff; }
+.swatch.selected { outline: 3px solid var(--accent); outline-offset: 2px; border-color: #fff; }
+.character-hats { display: flex; flex-wrap: wrap; gap: 6px; }
+
 /* Inventory / backpack */
 .item-icon { width: 40px; height: 40px; object-fit: contain; pointer-events: none; }
 .item-icon.tiny { width: 22px; height: 22px; }

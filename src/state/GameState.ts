@@ -13,6 +13,7 @@ import { GRASS_QUALITIES, TERRAIN_RULES, type GrassQuality } from '../data/facto
 import type { BuildingType } from '../data/buildings';
 import type { Inventory as ItemCounts } from '../data/items';
 import { sanitizeWear, sanitizeWornSet, type WornSet } from '../data/wear';
+import { DEFAULT_LOOK, sanitizeLook, type CharacterLook } from '../data/character';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -54,6 +55,8 @@ export interface SaveData {
   builds?: CarBuild[];
   /** Reserve of worn parts (garage « Pièces usées »); absent before the wear: empty. */
   worn?: WornSet[];
+  /** The player's character (name, colors, hat); absent before the customization: the default look. */
+  look?: CharacterLook;
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -71,6 +74,8 @@ export class GameState {
   selectedCarId: string | null = null;
   records: Record<string, TrackRecord> = {};
   settings: Settings = { ...DEFAULT_SETTINGS };
+  /** The player's character: name, colors, hat (kept by « Nouvelle partie », like the settings). */
+  look: CharacterLook = { ...DEFAULT_LOOK };
   /**
    * Onboarding objectives done (data/objectives.ts ids), and what the actions record for them (assembled, race,
    * repair), plus creditsSpent: a repair was paid in credits (the HUD keeps the balance shown).
@@ -134,6 +139,7 @@ export class GameState {
       selectedCarId: this.selectedCarId,
       records: this.records,
       settings: this.settings,
+      look: this.look,
       objectives: this.objectives,
       carCounter: this.carCounter,
       inventory: this.inventory.serialize(),
@@ -204,6 +210,7 @@ export class GameState {
     s.records = data.records ?? {};
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) };
     if (!GRASS_QUALITIES.includes(s.settings.grass)) s.settings.grass = DEFAULT_SETTINGS.grass;
+    s.look = sanitizeLook(data.look);
     s.objectives = data.objectives ?? {};
     s.carCounter = data.carCounter ?? s.cars.length;
     s.inventory = Inventory.fromSave(data.inventory);
@@ -225,6 +232,7 @@ export class GameState {
     this.selectedCarId = other.selectedCarId;
     this.records = other.records;
     this.settings = other.settings;
+    this.look = other.look;
     this.objectives = other.objectives;
     this.carCounter = other.carCounter;
     this.ephemeral = other.ephemeral;

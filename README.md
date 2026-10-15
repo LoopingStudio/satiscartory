@@ -146,6 +146,10 @@ Une manette (Xbox, PlayStation, Switch Pro… en mapping standard) marche partou
 
 Le navigateur ne donne pas le pointer lock à la manette : en jouant à la manette, la visée reste au centre de l'écran sans verrouiller la souris. Un clic sur le jeu rend la caméra à la souris.
 
+## Personnage
+
+« Personnage », au menu principal ou dans la pause de l'usine, habille la mascotte : un nom, la couleur de sa combinaison à capuche, celle de sa peau (visage et tentacules) et un chapeau (casquette, casque de chantier, bonnet, haut-de-forme, couronne, cône). « Au hasard » tire une tenue en gardant le nom. Le personnage se tourne vers la caméra et change en direct ; on le retrouve dans l'usine et dans le décor du menu. L'apparence est sauvegardée et reste après « Nouvelle partie », comme les réglages. Le nom accompagne les défis et les mondes partagés.
+
 ## Progression
 
 Une nouvelle partie démarre avec un hangar vide et aucun bâtiment débloqué. On mine le fer à la main, puis on le travaille à l’établi du hangar : minerai → lingot, lingots → plaques ou tiges, tige → boulons. Ces pièces paient les **paliers** du hangar (sac d’abord, puis hangar), qui débloquent les bâtiments un par un :
