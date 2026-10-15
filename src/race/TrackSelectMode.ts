@@ -17,6 +17,9 @@ import { BLUEPRINTS } from '../data/blueprints';
 import { worstWear } from '../data/wear';
 import { LOANER_STATE, NEW_STATE, RACE_LOANER, blockText, blockedOption, blockedRaceLine, blockedRaceTip, effectsText, needAtGarage, needOf, stateText, wearTone } from '../data/wearText';
 import { fuelGauge, fuelText } from '../ui/fuelGauge';
+import { openTrackdayPanel, trackdayStatus } from '../ui/menus/TrackdayPanel';
+import { satisfactionText } from '../data/trackday';
+import { formatCredits } from '../data/sales';
 import { fuelUsed, fuelTone } from '../data/fuel';
 import { LOANER_SPEC, specOf, type CarInstance } from '../garage/assembly';
 import { selectRaceCar } from '../garage/actions';
@@ -136,7 +139,8 @@ export class TrackSelectMode implements Mode {
       { id: null, label: BLUEPRINTS.loaner.name, spec: LOANER_SPEC, car: null },
       ...this.state.cars.map((c) => {
         const need = needOf(c);
-        return { id: c.id, label: need ? blockedOption(c.name, need) : c.name, spec: specOf(c), car: c };
+        const label = this.state.isAway(c.id) ? `${c.name} (au trackday)` : need ? blockedOption(c.name, need) : c.name;
+        return { id: c.id, label, spec: specOf(c), car: c };
       }),
     ];
   }
@@ -209,7 +213,8 @@ export class TrackSelectMode implements Mode {
 
     // A car to repair does not start: « Courir » is disabled, the loaner takes the default focus. It stays the race
     // car (selectedCarId): once repaired, it races again.
-    const blocked = current.car ? blockText(current.car) : null;
+    const away = !!current.car && this.state.isAway(current.car.id);
+    const blocked = current.car ? (away ? 'elle est au trackday' : blockText(current.car)) : null;
     const need = (current.car && needOf(current.car)) || 'repair';
     const blockedTip = analysis.ok && blocked !== null ? blockedRaceTip(blocked, need) : undefined;
     const race = (carId: string | null) => {
@@ -217,7 +222,7 @@ export class TrackSelectMode implements Mode {
       const p: RaceParams = { track: t, carId, returnTo: 'tracks', returnParams: back };
       void this.game.switchMode('race', p);
     };
-    if (current.car && blocked !== null) d.appendChild(el('div', { class: 'bad small', style: 'margin-top:8px' }, blockedRaceLine(current.car.name, blocked, need)));
+    if (current.car && blocked !== null) d.appendChild(el('div', { class: 'bad small', style: 'margin-top:8px' }, away ? `${current.car.name} est au trackday : elle revient à la fin de la journée.` : blockedRaceLine(current.car.name, blocked, need)));
     const buttons = el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' });
     buttons.appendChild(
       el('button', {
@@ -228,7 +233,7 @@ export class TrackSelectMode implements Mode {
         'data-action': 'race',
         'data-pad-default': blocked === null,
         onclick: () => race(this.state.selectedCar?.id ?? null),
-      }, !analysis.ok ? 'Circuit invalide' : blocked !== null ? needAtGarage(need) : 'Courir'),
+      }, !analysis.ok ? 'Circuit invalide' : blocked !== null ? (away ? 'Au trackday' : needAtGarage(need)) : 'Courir'),
     );
     if (blocked !== null) {
       buttons.appendChild(
@@ -249,10 +254,30 @@ export class TrackSelectMode implements Mode {
     } else {
       buttons.appendChild(el('button', { 'data-action': 'copy', onclick: () => this.openEditor({ copyOf: t.id }) }, 'Copier dans l’éditeur'));
     }
+    // Trackday: lend the player's cars to guests on this circuit (one at a time).
+    const running = this.state.trackday;
+    buttons.appendChild(
+      el('button', {
+        'data-action': 'trackday',
+        disabled: !!running || !analysis.ok || !this.state.cars.length,
+        title: running ? 'Un trackday est déjà en cours' : !this.state.cars.length ? 'Construis d’abord une voiture au garage' : 'Prête tes voitures à des clients pour la journée',
+        onclick: () => openTrackdayPanel(this.state, t, { onStarted: () => this.renderDetail() }),
+      }, 'Organiser un trackday'),
+    );
     // From the factory, the back button of the list already says « Usine ».
     if (this.origin !== 'factory') buttons.appendChild(el('button', { 'data-action': 'factory', onclick: () => void this.game.switchMode('factory') }, 'Usine'));
     d.appendChild(buttons);
+    d.appendChild(this.trackdayEl);
+    this.trackdayEl.textContent = trackdayStatus(this.state) ?? '';
+    const last = this.state.trackdayLog[0];
+    if (!running && last) {
+      d.appendChild(el('div', { class: 'muted small', style: 'margin-top:6px' },
+        `Dernier trackday (${last.trackName}) : ${last.guests} client${last.guests > 1 ? 's' : ''} ${satisfactionText(last.satisfaction)}, +${formatCredits(last.revenue)}, réputation ${last.reputation}/100`));
+    }
   }
+
+  /** The running trackday's status line (its clock ticks in update()). */
+  private readonly trackdayEl = el('div', { class: 'good small', style: 'margin-top:8px' });
 
   /** Deletes a custom track once confirmed (in-page dialog: a pad can answer it, the game keeps running). */
   private async remove(t: TrackData): Promise<void> {
@@ -280,6 +305,13 @@ export class TrackSelectMode implements Mode {
 
   update(dt: number): void {
     this.t += dt;
+    // The trackday's clock; once it is over, the cars are back (re-render: they race again).
+    const status = trackdayStatus(this.state) ?? '';
+    if (this.trackdayEl.textContent !== status) {
+      const ended = status === '' && this.trackdayEl.textContent !== '';
+      this.trackdayEl.textContent = status;
+      if (ended) this.renderDetail();
+    }
     const a = this.t * 0.12;
     this.camera.position.set(this.center.x + Math.cos(a) * this.radius, this.center.y + this.radius * 0.55, this.center.z + Math.sin(a) * this.radius);
     this.camera.lookAt(this.center);

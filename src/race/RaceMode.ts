@@ -151,6 +151,7 @@ export class RaceMode implements Mode {
     this.spec = raced.spec;
     this.carId = raced.car?.id ?? null;
     if (raced.fallback) toast(fallbackText(raced.fallback.car.name, needOfBlock(raced.fallback)), 'info', 3200);
+    else if (raced.away) toast(`${raced.away.name} est au trackday : tu cours avec le kart de location`, 'info', 3200);
     // Wear: the player's own car only. The loaner, a forced spec (?car=) and the editor's test drive never wear.
     this.wearCar = raced.wears ? raced.car : null;
     this.meter = this.wearCar ? new WearMeter(this.wearCar) : null;

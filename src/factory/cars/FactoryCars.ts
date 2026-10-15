@@ -196,7 +196,8 @@ export class FactoryCars {
       this.entries.set(id, this.createBuild(b, id, pose, key));
     }
     for (const car of this.state.cars) {
-      if (!car.pose || !blueprintById(car.blueprint)) continue;
+      // A car at a trackday is not in the factory until it comes back (its pose is kept).
+      if (!car.pose || !blueprintById(car.blueprint) || this.state.isAway(car.id)) continue;
       live.add(car.id);
       const key = carModelKey(car);
       let e = this.entries.get(car.id);

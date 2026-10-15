@@ -273,6 +273,16 @@ Les voitures construites ont un réservoir : 10 L pour le kart, 30 L pour la Spo
 - **Faire le plein** : au garage, pour la voiture garée dans la place, en bidons (le sac d’abord, puis le hangar) ou en crédits (la valeur des bidons plus 25 %). Une voiture en panne dans l’usine : E à côté d’elle verse un bidon du sac (+10 L) au lieu de monter.
 - **Affichage** : jauge d’essence au garage, au choix du circuit et sous le compteur en course ; « essence 62 % · 6,2 L » dans l’indication en conduisant (dès que le plein n’est plus fait), et « à ravitailler » en visant une voiture dans la réserve.
 
+## Trackdays
+
+Dans « Courses », sur un circuit, « Organiser un trackday » prête tes voitures construites à des clients pour la journée.
+
+- **Voitures** : on coche celles qui partent. Une voiture à réparer, à ravitailler ou qui n’a pas assez d’essence pour la journée reste au garage. Chaque voiture accueille 4 clients, qui font 3 tours chacun.
+- **Accueil** : le repas (sandwichs, buffet, repas gastronomique), les boissons (eau, café et sodas, bar complet) et le coaching. On coache soi-même, aussi bien que sa médaille sur le circuit (il en faut une), ou on paie un moniteur. Le repas, les boissons et le moniteur se paient au départ, en crédits.
+- **Billet** : de 100 à 2 000 cr. Les clients viennent si le billet ne dépasse pas trop ce que la journée vaut pour eux : de belles voitures en bon état, un bon accueil, un circuit officiel et une bonne réputation la font valoir plus.
+- **Prévision** : le panneau dit exactement ce qui se passera : clients, billets, frais, bilan, satisfaction, réputation, et l’usure et l’essence que chaque voiture y laissera.
+- **Déroulement** : la journée dure 2 minutes, pendant qu’on joue (usine, courses…). Ses voitures sont absentes : elles disparaissent de l’usine, le garage les dit « Au trackday », on ne peut ni les conduire ni les faire courir. À la fin, les billets sont crédités, les voitures reviennent à leur place, usées et avec moins d’essence, et la réputation (0 à 100) suit la satisfaction des clients. Un seul trackday à la fois.
+
 ## Architecture
 
 ```

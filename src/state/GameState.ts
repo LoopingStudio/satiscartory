@@ -15,6 +15,8 @@ import type { Inventory as ItemCounts } from '../data/items';
 import { sanitizeWear, sanitizeWornSet, type WornSet } from '../data/wear';
 import { DEFAULT_LOOK, sanitizeLook, type CharacterLook } from '../data/character';
 import { sanitizeFuel } from '../data/fuel';
+import { TRACKDAY, type ActiveTrackday, type TrackdayForecast, type TrackdayPlan, type TrackdayResult } from '../data/trackday';
+import { WEAR, FUEL } from '../data/balance';
 
 export interface Settings {
   mouseSensitivity: number;
@@ -58,6 +60,10 @@ export interface SaveData {
   worn?: WornSet[];
   /** The player's character (name, colors, hat); absent before the customization: the default look. */
   look?: CharacterLook;
+  /** A trackday running (its cars are away), the reputation, the last results. */
+  trackday?: ActiveTrackday | null;
+  trackdayRep?: number;
+  trackdayLog?: TrackdayResult[];
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -77,6 +83,14 @@ export class GameState {
   settings: Settings = { ...DEFAULT_SETTINGS };
   /** The player's character: name, colors, hat (kept by « Nouvelle partie », like the settings). */
   look: CharacterLook = { ...DEFAULT_LOOK };
+  /** The trackday running (data/trackday.ts): its cars are away until its end. */
+  trackday: ActiveTrackday | null = null;
+  /** Trackday reputation, 0..100. */
+  trackdayRep: number = TRACKDAY.REP_START;
+  /** Last trackdays, most recent first. */
+  trackdayLog: TrackdayResult[] = [];
+  /** Called when a trackday ends (the HUD says how it went). */
+  onTrackdayDone: ((r: TrackdayResult) => void) | null = null;
   /**
    * Onboarding objectives done (data/objectives.ts ids), and what the actions record for them (assembled, race,
    * repair), plus creditsSpent: a repair was paid in credits (the HUD keeps the balance shown).
@@ -124,6 +138,48 @@ export class GameState {
     return { ok: true };
   }
 
+  /** The car is at the trackday (hidden from the factory, cannot drive, race, be sold or taken apart). */
+  isAway(carId: string): boolean {
+    return !!this.trackday?.plan.carIds.includes(carId);
+  }
+
+  /**
+   * Starts a trackday: pays the catering and coaching (credits), sends the cars away until `ticks` from now. The
+   * forecast is what will happen. Null when done, else why not.
+   */
+  startTrackday(plan: TrackdayPlan, forecast: TrackdayForecast, trackName: string): string | null {
+    if (this.trackday) return 'Un trackday est déjà en cours';
+    if (forecast.problem) return forecast.problem;
+    if (forecast.guests <= 0) return 'Personne ne viendrait à ce prix';
+    if (forecast.costs > 0 && !this.sim.spend(forecast.costs, 'trackday')) return 'Pas assez de crédits pour le repas, les boissons et le coaching';
+    if (forecast.costs > 0) this.objectives.creditsSpent = true;
+    this.trackday = { plan: { ...plan, carIds: [...plan.carIds] }, trackName, forecast, endTick: this.sim.tickCount + TRACKDAY.TICKS };
+    return null;
+  }
+
+  /** Per factory tick: ends the trackday when its time is up (tickets credited, cars back worn and lighter in fuel). */
+  tickTrackday(): void {
+    const t = this.trackday;
+    if (!t || this.sim.tickCount < t.endTick) return;
+    this.trackday = null;
+    const f = t.forecast;
+    for (const r of f.cars) {
+      const car = this.cars.find((c) => c.id === r.id);
+      if (!car) continue;
+      for (const [slot, w] of Object.entries(r.wear) as [keyof NonNullable<CarInstance['wear']>, number][]) {
+        if (!car.parts[slot] || !(w > 0)) continue;
+        (car.wear ??= {})[slot] = Math.min(WEAR.MAX, (car.wear[slot] ?? 0) + w);
+      }
+      if (r.fuel > 0) car.fuel = Math.min(FUEL.MAX, (car.fuel ?? 0) + r.fuel);
+    }
+    this.sim.earnTrackday(f.revenue);
+    this.trackdayRep = f.reputation;
+    const result: TrackdayResult = { trackName: t.trackName, guests: f.guests, revenue: f.revenue, costs: f.costs, satisfaction: f.satisfaction, reputation: f.reputation };
+    this.trackdayLog = [result, ...this.trackdayLog].slice(0, TRACKDAY.LOG);
+    this.objectives.trackday = true;
+    this.onTrackdayDone?.(result);
+  }
+
   get selectedCar(): CarInstance | null {
     return this.cars.find((c) => c.id === this.selectedCarId) ?? null;
   }
@@ -141,6 +197,9 @@ export class GameState {
       records: this.records,
       settings: this.settings,
       look: this.look,
+      trackday: this.trackday,
+      trackdayRep: this.trackdayRep,
+      trackdayLog: this.trackdayLog,
       objectives: this.objectives,
       carCounter: this.carCounter,
       inventory: this.inventory.serialize(),
@@ -216,6 +275,9 @@ export class GameState {
     s.settings = { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) };
     if (!GRASS_QUALITIES.includes(s.settings.grass)) s.settings.grass = DEFAULT_SETTINGS.grass;
     s.look = sanitizeLook(data.look);
+    s.trackdayRep = typeof data.trackdayRep === 'number' && Number.isFinite(data.trackdayRep) ? Math.max(0, Math.min(100, Math.round(data.trackdayRep))) : TRACKDAY.REP_START;
+    s.trackdayLog = Array.isArray(data.trackdayLog) ? data.trackdayLog.filter(validResult).slice(0, TRACKDAY.LOG) : [];
+    s.trackday = validTrackday(data.trackday, s) ? data.trackday : null;
     s.objectives = data.objectives ?? {};
     s.carCounter = data.carCounter ?? s.cars.length;
     s.inventory = Inventory.fromSave(data.inventory);
@@ -238,6 +300,9 @@ export class GameState {
     this.records = other.records;
     this.settings = other.settings;
     this.look = other.look;
+    this.trackday = other.trackday;
+    this.trackdayRep = other.trackdayRep;
+    this.trackdayLog = other.trackdayLog;
     this.objectives = other.objectives;
     this.carCounter = other.carCounter;
     this.ephemeral = other.ephemeral;
@@ -245,3 +310,24 @@ export class GameState {
     this.tier = other.tier;
   }
 }
+
+const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+function validResult(r: unknown): r is TrackdayResult {
+  if (!r || typeof r !== 'object') return false;
+  const x = r as Record<string, unknown>;
+  return typeof x.trackName === 'string' && num(x.guests) && num(x.revenue) && num(x.costs) && num(x.satisfaction) && num(x.reputation);
+}
+
+/** A running trackday from a save: its plan and forecast well formed, its cars still there (else it is dropped: the cars come back). */
+function validTrackday(raw: unknown, s: GameState): raw is ActiveTrackday {
+  if (!raw || typeof raw !== 'object') return false;
+  const t = raw as ActiveTrackday;
+  const p = t.plan;
+  const f = t.forecast;
+  if (!p || !Array.isArray(p.carIds) || !p.carIds.every((id) => typeof id === 'string' && s.cars.some((c) => c.id === id))) return false;
+  if (typeof t.trackName !== 'string' || !num(t.endTick) || !f || !Array.isArray(f.cars)) return false;
+  if (![f.guests, f.revenue, f.costs, f.satisfaction, f.reputation].every(num) || f.revenue < 0 || !Number.isSafeInteger(f.revenue)) return false;
+  return f.cars.every((c) => c && typeof c.id === 'string' && num(c.fuel) && c.wear && typeof c.wear === 'object' && Object.values(c.wear).every(num));
+}
+

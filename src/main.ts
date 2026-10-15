@@ -4,7 +4,9 @@ import { initRapier } from './core/physics/PhysicsWorld';
 import type { ModeName } from './core/ModeManager';
 import { AssetGalleryMode } from './dev/AssetGalleryMode';
 import { MenuMode, type MenuEntry } from './ui/menus/MenuMode';
-import { el } from './ui/dom';
+import { el, toast } from './ui/dom';
+import { satisfactionText } from './data/trackday';
+import { formatCredits } from './data/sales';
 import { confirmDialog } from './ui/confirm';
 import { GameState } from './state/GameState';
 import { SaveManager } from './state/SaveManager';
@@ -89,7 +91,15 @@ async function main() {
   game.modes.register('tracks', () => new TrackSelectMode(game, state));
   game.modes.register('editor', () => new TrackEditorMode(game, state));
   // The factory keeps producing whatever mode is active.
-  game.addFactoryTicker(() => state.sim.tick());
+  game.addFactoryTicker(() => {
+    state.sim.tick();
+    state.tickTrackday();
+  });
+  // A trackday ends whatever mode is shown: say how it went.
+  state.onTrackdayDone = (r) => {
+    toast(`Trackday terminé (${r.trackName}) : ${r.guests} client${r.guests > 1 ? 's' : ''} ${satisfactionText(r.satisfaction)}, +${formatCredits(r.revenue)} · réputation ${r.reputation}/100`, 'success', 6000);
+    SaveManager.save(state);
+  };
   applySettings(game, state);
 
   // Autosave: every 30 s, on every mode switch and when the page is hidden/closed.

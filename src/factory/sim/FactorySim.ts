@@ -34,7 +34,7 @@ export interface SimEvents extends Record<string, unknown> {
 }
 
 /** What credits pay for. */
-export type SpendReason = 'repair';
+export type SpendReason = 'repair' | 'trackday';
 
 export interface SaleEvent {
   blueprint: string;
@@ -791,6 +791,11 @@ export class FactorySim implements PadSource {
    * 1..WEAR.MAX ‰, for data/wear.ts wornSetPrice. Not a car: neither `sales` nor `carsSold` count it. Null (nothing
    * credited) for an invalid set.
    */
+  /** Credits of a trackday's tickets (data/trackday.ts): with sell and sellWorn, the ways credits are earned. */
+  earnTrackday(amount: number): void {
+    if (Number.isSafeInteger(amount) && amount > 0) this.credits += amount;
+  }
+
   sellWorn(item: ItemId, n: number, wear: number): number | null {
     if (!isItemId(item) || !isCarPart(item) || n !== slotCountFor(item) || !Number.isInteger(wear) || wear < 1 || wear > WEAR.MAX) return null;
     const price = wornSetPrice(item, n, wear);

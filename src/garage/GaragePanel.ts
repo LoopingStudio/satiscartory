@@ -72,12 +72,13 @@ const sellKey = (carId: string) => `sell:${carId}`;
 /** Key of a pending « Vendre » of a set of the reserve (by its group). */
 const sellWornKey = (group: string) => `sellworn:${group}`;
 
-const LOCATION_LABEL: Record<CarLocation, string> = { here: 'Dans ce garage', elsewhere: 'Garée ailleurs', driving: 'En route', unplaced: 'À ranger' };
+const LOCATION_LABEL: Record<CarLocation, string> = { here: 'Dans ce garage', elsewhere: 'Garée ailleurs', driving: 'En route', unplaced: 'À ranger', away: 'Au trackday' };
 
 const LOCATION_NOTE: Record<Exclude<CarLocation, 'here'>, string> = {
   elsewhere: 'Garée hors de ce garage : amène-la dans la place pour la réparer, changer ses pièces, la démonter ou la vendre.',
   driving: 'Tu la conduis : gare-la dans ce garage pour la réparer, changer ses pièces, la démonter ou la vendre.',
   unplaced: 'Elle attend une place libre : pose un garage ou libère une place.',
+  away: 'Elle est au trackday : elle revient à sa place à la fin de la journée.',
 };
 
 /** Repair quotes the current view shows: per slot of the car in the bay, « Tout réparer », per group of the reserve. */
@@ -214,7 +215,7 @@ export class GaragePanel {
     const spot = this.spot;
     if (!spot) return null;
     const driven = this.driven;
-    return this.state.cars.find((c) => (id === undefined || c.id === id) && carLocation(c, spot, driven) === 'here') ?? null;
+    return this.state.cars.find((c) => (id === undefined || c.id === id) && carLocation(c, spot, driven, this.state.isAway(c.id)) === 'here') ?? null;
   }
 
   /** The car under construction in this garage's bay, if any. */
@@ -304,7 +305,7 @@ export class GaragePanel {
       for (const g of wornGroups(this.state.worn)) out.sets[g.key] = setQuote(g.set.item, g.set.n, g.set.wear);
     } else if (view.kind === 'car') {
       const car = findCar(this.state, view.id);
-      if (car && this.spot && carLocation(car, this.spot, this.driven) === 'here') {
+      if (car && this.spot && carLocation(car, this.spot, this.driven, this.state.isAway(car.id)) === 'here') {
         let worn = 0;
         for (const s of blueprintOf(car)?.slots ?? []) {
           const q = slotQuote(car, s.id);
@@ -339,7 +340,7 @@ export class GaragePanel {
     const spot = this.spot!;
     const stock = partStock(this.state);
     const driven = this.driven;
-    const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}:${shownWear(c)}:${c.fuel ?? 0}`).join('|');
+    const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven, this.state.isAway(c.id))}:${shownWear(c)}:${c.fuel ?? 0}`).join('|');
     // The garage's places (who stands in each), its look and whether it may grow on each side.
     const g = this.state.sim.buildings.get(spot.id);
     const places = g?.type === 'garage'
@@ -450,7 +451,7 @@ export class GaragePanel {
     };
     l.appendChild(row(null, BLUEPRINTS.loaner.name, el('span', { class: 'muted small' }, 'Prêt du circuit · courses seulement · ne s’use pas')));
     for (const c of this.state.cars) {
-      const loc = carLocation(c, this.spot!, driven);
+      const loc = carLocation(c, this.spot!, driven, this.state.isAway(c.id));
       l.appendChild(
         row(c.id, c.name, el('span', { class: 'small' },
           el('span', { class: 'muted' }, `${blueprintOf(c)?.name ?? c.blueprint} · `),
@@ -870,7 +871,7 @@ export class GaragePanel {
    */
   private renderCar(r: HTMLElement, car: CarInstance | null, stock: ItemCounts, quotes: ShownQuotes): HTMLElement | null {
     const bp = blueprintOf(car);
-    const loc = car ? carLocation(car, this.spot!, this.driven) : null;
+    const loc = car ? carLocation(car, this.spot!, this.driven, this.state.isAway(car.id)) : null;
     const block = car ? blockText(car) : null;
     append(r,
       el('h2', {}, car?.name ?? BLUEPRINTS.loaner.name),
@@ -969,12 +970,13 @@ export class GaragePanel {
     // One confirmation at a time: « Démonter » and « Vendre » hide while either waits for its answer.
     const pending = !!car && (this.confirming === car.id || this.confirming === sellKey(car.id));
     const raceTip = block !== null && car ? garageRaceTip(block, loc === 'here', needOf(car) ?? 'repair') : undefined;
+    const away = loc === 'away';
     const race = el('button', {
       class: 'primary',
       'data-action': 'race',
-      disabled: block !== null,
-      title: raceTip ?? 'Choisir un circuit avec cette voiture',
-      'data-pad-tip': raceTip,
+      disabled: block !== null || away,
+      title: away ? 'Elle est au trackday' : (raceTip ?? 'Choisir un circuit avec cette voiture'),
+      'data-pad-tip': away ? 'Elle est au trackday' : raceTip,
       onclick: () => this.doRace(id),
     }, 'Courir');
     r.appendChild(
@@ -1015,7 +1017,7 @@ export class GaragePanel {
         ),
       );
     }
-    return block !== null ? null : race;
+    return block !== null || away ? null : race;
   }
 
   /** Under a worn slot of the car in the bay: repair it in items or credits, or put new parts of the same kind on. */
