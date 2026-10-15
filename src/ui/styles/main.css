@@ -525,3 +525,10 @@ body.pad-input .pad-tip.show { display: block; }
 .confirm-layer { pointer-events: auto; background: rgba(10, 12, 24, 0.55); z-index: 50; }
 .confirm-panel { width: min(420px, 92vw); }
 .confirm-panel p { margin: 4px 0 12px; }
+
+/* Sharing (challenges, worlds): the code box. */
+.share-panel { width: min(560px, 92vw); }
+.share-code { width: 100%; box-sizing: border-box; margin-top: 8px; font: 12px/1.35 ui-monospace, monospace; color: inherit; background: #1d2036; border: 1px solid var(--panel-border); border-radius: 8px; padding: 8px; resize: vertical; word-break: break-all; }
+.trackday-panel { width: min(600px, 94vw); }
+.trackday-forecast .row { margin: 2px 0; }
+.challenge-card { margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255, 159, 28, 0.45); background: rgba(255, 159, 28, 0.08); }

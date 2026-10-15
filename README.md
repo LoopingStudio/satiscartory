@@ -273,6 +273,14 @@ Les voitures construites ont un réservoir : 10 L pour le kart, 30 L pour la Spo
 - **Faire le plein** : au garage, pour la voiture garée dans la place, en bidons (le sac d’abord, puis le hangar) ou en crédits (la valeur des bidons plus 25 %). Une voiture en panne dans l’usine : E à côté d’elle verse un bidon du sac (+10 L) au lieu de monter.
 - **Affichage** : jauge d’essence au garage, au choix du circuit et sous le compteur en course ; « essence 62 % · 6,2 L » dans l’indication en conduisant (dès que le plein n’est plus fait), et « à ravitailler » en visant une voiture dans la réserve.
 
+## Défis entre amis
+
+Sans serveur, à la Trackmania : on court contre le **fantôme** d’un ami.
+
+- **Défier un ami** : à l’arrivée d’une course, « Défier un ami avec ce temps » crée un défi : ton nom, le circuit (entier : un circuit de l’éditeur part avec), ta voiture, ton temps et ton fantôme. On l’envoie par un lien (« Copier le lien »), un code (« Copier le code ») ou un fichier (« Télécharger le fichier »). Le code tient dans le lien après le `#` : il n’est jamais envoyé à un serveur.
+- **Relever un défi** : ouvrir le lien dans le jeu, ou « Courses » → « Importer un défi… » (coller le code ou le lien, ou ouvrir le fichier). Il s’ajoute à « Défis reçus » : le circuit, qui l’a posé, le temps à battre, la voiture. « Relever le défi » lance la course avec ta voiture ; le fantôme de l’ami, translucide et son nom au-dessus, court avec toi. À l’arrivée : « Tu bats Léa de 0.420 s ! » ou son avance, et « Renvoyer le défi à Léa » envoie ton fantôme en retour.
+- Un circuit officiel est pris dans ton propre jeu ; celui d’un ami se court tel quel, sans se mêler à tes circuits. Les défis reçus (10 au plus) restent après « Nouvelle partie ».
+
 ## Trackdays
 
 Dans « Courses », sur un circuit, « Organiser un trackday » prête tes voitures construites à des clients pour la journée.

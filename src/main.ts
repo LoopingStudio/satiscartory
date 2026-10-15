@@ -4,7 +4,9 @@ import { initRapier } from './core/physics/PhysicsWorld';
 import type { ModeName } from './core/ModeManager';
 import { AssetGalleryMode } from './dev/AssetGalleryMode';
 import { MenuMode, type MenuEntry } from './ui/menus/MenuMode';
-import { el, toast } from './ui/dom';
+import { el, formatTime, toast } from './ui/dom';
+import { sanitizeChallenge } from './race/challenge';
+import { decodeShare } from './share/codec';
 import { satisfactionText } from './data/trackday';
 import { formatCredits } from './data/sales';
 import { confirmDialog } from './ui/confirm';
@@ -62,9 +64,11 @@ async function main() {
     SaveManager.clear();
     const settings = state.settings;
     const look = state.look;
+    const challenges = state.challenges;
     state.replaceWith(new GameState());
     state.settings = settings;
     state.look = look;
+    state.challenges = challenges;
     void game.switchMode('factory');
   };
   const menuEntries = (): MenuEntry[] => [
@@ -132,6 +136,25 @@ async function main() {
   await game.switchMode(requested && game.modes.has(requested) ? requested : 'menu', modeParams);
   game.start();
   loading.hide();
+
+  // A friend's link (#defi=…): the challenge goes to « Défis reçus » and opens. The code stays in the page (a fragment
+  // is never sent to the server), and leaves the address bar once read.
+  const openLink = async () => {
+    const hash = location.hash;
+    if (!hash.startsWith('#defi=')) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    try {
+      const c = sanitizeChallenge(await decodeShare('defi', hash));
+      const key = state.addChallenge(c);
+      SaveManager.save(state);
+      toast(`Défi de ${c.from} : ${c.track.name} en ${formatTime(c.timeMs)}`, 'success', 3000);
+      await game.switchMode('tracks', { challenge: key });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Lien de défi illisible', 'error', 3500);
+    }
+  };
+  void openLink();
+  window.addEventListener('hashchange', () => void openLink());
 
   if (import.meta.env.DEV) {
     Object.assign(window, { __game: game, __state: state, __save: SaveManager });

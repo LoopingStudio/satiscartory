@@ -17,6 +17,10 @@ import { DEFAULT_LOOK, sanitizeLook, type CharacterLook } from '../data/characte
 import { sanitizeFuel } from '../data/fuel';
 import { TRACKDAY, type ActiveTrackday, type TrackdayForecast, type TrackdayPlan, type TrackdayResult } from '../data/trackday';
 import { WEAR, FUEL } from '../data/balance';
+import { challengeKey, sanitizeChallenge, type Challenge } from '../race/challenge';
+
+/** Challenges kept (« Défis reçus »), most recent first. */
+const CHALLENGES_MAX = 10;
 
 export interface Settings {
   mouseSensitivity: number;
@@ -64,6 +68,8 @@ export interface SaveData {
   trackday?: ActiveTrackday | null;
   trackdayRep?: number;
   trackdayLog?: TrackdayResult[];
+  /** Challenges received from friends. */
+  challenges?: Challenge[];
 }
 
 /** Persistent game state shared by all modes (the factory keeps running in every mode). */
@@ -91,6 +97,19 @@ export class GameState {
   trackdayLog: TrackdayResult[] = [];
   /** Called when a trackday ends (the HUD says how it went). */
   onTrackdayDone: ((r: TrackdayResult) => void) | null = null;
+  /** Challenges received from friends (race/challenge.ts), most recent first. */
+  challenges: Challenge[] = [];
+
+  /** Keeps a challenge received (the same one again replaces it at the top); returns its key. */
+  addChallenge(c: Challenge): string {
+    const key = challengeKey(c);
+    this.challenges = [c, ...this.challenges.filter((x) => challengeKey(x) !== key)].slice(0, CHALLENGES_MAX);
+    return key;
+  }
+
+  removeChallenge(key: string): void {
+    this.challenges = this.challenges.filter((x) => challengeKey(x) !== key);
+  }
   /**
    * Onboarding objectives done (data/objectives.ts ids), and what the actions record for them (assembled, race,
    * repair), plus creditsSpent: a repair was paid in credits (the HUD keeps the balance shown).
@@ -200,6 +219,7 @@ export class GameState {
       trackday: this.trackday,
       trackdayRep: this.trackdayRep,
       trackdayLog: this.trackdayLog,
+      challenges: this.challenges,
       objectives: this.objectives,
       carCounter: this.carCounter,
       inventory: this.inventory.serialize(),
@@ -278,6 +298,14 @@ export class GameState {
     s.trackdayRep = typeof data.trackdayRep === 'number' && Number.isFinite(data.trackdayRep) ? Math.max(0, Math.min(100, Math.round(data.trackdayRep))) : TRACKDAY.REP_START;
     s.trackdayLog = Array.isArray(data.trackdayLog) ? data.trackdayLog.filter(validResult).slice(0, TRACKDAY.LOG) : [];
     s.trackday = validTrackday(data.trackday, s) ? data.trackday : null;
+    s.challenges = [];
+    for (const raw of Array.isArray(data.challenges) ? data.challenges.slice(0, CHALLENGES_MAX) : []) {
+      try {
+        s.challenges.push(sanitizeChallenge(raw));
+      } catch {
+        // A broken challenge is dropped.
+      }
+    }
     s.objectives = data.objectives ?? {};
     s.carCounter = data.carCounter ?? s.cars.length;
     s.inventory = Inventory.fromSave(data.inventory);
@@ -303,6 +331,7 @@ export class GameState {
     this.trackday = other.trackday;
     this.trackdayRep = other.trackdayRep;
     this.trackdayLog = other.trackdayLog;
+    this.challenges = other.challenges;
     this.objectives = other.objectives;
     this.carCounter = other.carCounter;
     this.ephemeral = other.ephemeral;
