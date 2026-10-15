@@ -31,6 +31,7 @@ import { keyFor, padGlyph, padText } from '../ui/padHints';
 import { stickCurve } from '../core/gamepad';
 import { openSettings } from '../ui/menus/SettingsPanel';
 import { openCharacterPanel } from '../ui/menus/CharacterPanel';
+import type { GarageSide } from '../garage/groups';
 import { FactorySim } from './sim/FactorySim';
 import { spawnDemoFactory, spawnStressLoops } from './sim/testLayouts';
 import type { Action } from '../config/keybinds';
@@ -335,6 +336,11 @@ export class FactoryMode implements Mode {
       },
       drivenCarId: () => this.cars.drivingId,
       bayBlocker: this.bayBlocker,
+      extend: (id, side) => this.extendGarage(id, side),
+      openPlace: (id) => {
+        const b = this.sim.buildings.get(id);
+        if (b?.type === 'garage') this.openGarage(b);
+      },
     });
 
     this.unsub.push(
@@ -611,6 +617,21 @@ export class FactoryMode implements Mode {
     this.hud.onToolChanged(this.build.tool);
     this.garagePanel.open({ id: b.id, x: b.x, z: b.z, rot: b.rot, ...(b.py !== undefined ? { py: b.py } : {}) });
     this.game.pointer.release();
+  }
+
+  /** « Agrandir » from the garage panel: a module more on that side, if nothing stands in the way. Null when done. */
+  private extendGarage(id: number, side: GarageSide): string | null {
+    const at = this.sim.garageExtension(id, side);
+    if (!at) return 'Garage introuvable';
+    const blocker = this.placementBlocker(this.sim.cellsFor('garage', at.x, at.z, at.rot), 'garage');
+    if (blocker) return blocker;
+    const r = this.sim.extendGarage(id, side, { wallet: this.wallet });
+    if (r.ok) {
+      this.hud.updateStorage();
+      return null;
+    }
+    if (r.level) return 'Le terrain n’est pas au même niveau de ce côté';
+    return r.check ? describeError(r.check) : 'Impossible d’agrandir ce garage';
   }
 
   private closeGarage(): void {

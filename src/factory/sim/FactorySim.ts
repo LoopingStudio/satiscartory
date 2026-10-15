@@ -12,6 +12,8 @@ import { Emitter } from '../../core/events';
 import { FACTORY_TERRAIN_DEFAULT, TERRAIN_RULES, type TerrainId } from '../../data/factoryTerrain';
 import { Terrain, isTerrainId, type DeckPlane, type Pad, type PadSource } from './terrain';
 import { DX, DZ, opposite, rotateCell, rotateSide, rotatedSize, unrotateSide, type Rot } from './dirs';
+import { garageGroup, sideAnchor, type GarageSide } from '../../garage/groups';
+import { cleanSign, DEFAULT_SIGN, DEFAULT_WALL, GARAGE_PAINTS, sanitizeGarageLook } from '../../data/garageStyle';
 import { isMachine, isNode, isProducer, type NodeB, type BeltItem, type Building, type ConveyorB, type DealerB, type DrillB, type FactorySave, type GarageB, type HubB, type ItemSink, type ItemSource, type Link, type MachineB, type PlaceCheck, type Placement, type PlanLinks, type PortInfo } from './types';
 
 export interface SimEvents extends Record<string, unknown> {
@@ -25,6 +27,8 @@ export interface SimEvents extends Record<string, unknown> {
   sold: SaleEvent;
   /** A set of worn parts was sold from the reserve (garage). */
   soldWorn: { item: ItemId; n: number; wear: number; price: number };
+  /** The look of these garages changed (wall colour, sign): their visuals are rebuilt. */
+  restyled: number[];
   /** Credits were spent (the only way out). */
   spent: { amount: number; reason: SpendReason };
 }
@@ -528,6 +532,55 @@ export class FactorySim implements PadSource {
       if (missing) return { ok: false, error: 'cost', cells, missing, resource, py, grad, relief, fill, cut };
     }
     return { ok: true, cells, resource, py, grad, relief, fill, cut };
+  }
+
+  /**
+   * « Agrandir »: one more module of garage on `side` of garage `id` (a place more), paid like a garage and checked like
+   * any placement. It must stand on the same pad height to join (else 'level'). The new module takes the garage's
+   * look. The caller checks what the sim does not know (cars standing on the cells).
+   */
+  extendGarage(id: number, side: GarageSide, opts: { wallet?: ItemSource; free?: boolean } = {}): { ok: true; building: GarageB } | { ok: false; check: PlaceCheck | null; level?: boolean } {
+    const g = this.buildings.get(id);
+    if (!g || g.type !== 'garage') return { ok: false, check: null };
+    const [x, z] = sideAnchor(g, side);
+    const check = this.check('garage', x, z, g.rot, opts);
+    if (!check.ok) return { ok: false, check };
+    if ((check.py ?? 0) !== (g.py ?? 0)) return { ok: false, check, level: true };
+    const r = this.place('garage', x, z, g.rot, opts);
+    if (!r.ok) return { ok: false, check: r.check };
+    const b = r.building as GarageB;
+    if (g.paint) b.paint = g.paint;
+    if (g.sign) b.sign = g.sign;
+    if (b.paint || b.sign) this.events.emit('restyled', [b.id]);
+    return { ok: true, building: b };
+  }
+
+  /** Where `extendGarage` would put a module (for the panel's preview and checks). */
+  garageExtension(id: number, side: GarageSide): { x: number; z: number; rot: Rot } | null {
+    const g = this.buildings.get(id);
+    if (!g || g.type !== 'garage') return null;
+    const [x, z] = sideAnchor(g, side);
+    return { x, z, rot: g.rot };
+  }
+
+  /** Sets the look of the whole garage of `id` (every module); the default values clear their keys. */
+  styleGarage(id: number, look: { paint?: string; sign?: string }): boolean {
+    const g = this.buildings.get(id);
+    if (!g || g.type !== 'garage') return false;
+    const group = garageGroup(this, g);
+    for (const m of group) {
+      if (look.paint !== undefined) {
+        if (look.paint !== DEFAULT_WALL && GARAGE_PAINTS.some((c) => c.id === look.paint)) m.paint = look.paint;
+        else delete m.paint;
+      }
+      if (look.sign !== undefined) {
+        const s = cleanSign(look.sign);
+        if (s !== DEFAULT_SIGN) m.sign = s;
+        else delete m.sign;
+      }
+    }
+    this.events.emit('restyled', group.map((m) => m.id));
+    return true;
   }
 
   place(
@@ -1379,6 +1432,12 @@ export class FactorySim implements PadSource {
       const cells = sim.cellsFor(b.type, b.x, b.z, b.rot);
       if (cells.some(([cx, cz]) => !sim.inBounds(cx, cz) || sim.grid[sim.idx(cx, cz)])) continue;
       if (b.type === 'conveyor') b.items = b.items.filter((it) => isItemId(it.item));
+      if (b.type === 'garage') {
+        const look = sanitizeGarageLook(b);
+        delete b.paint;
+        delete b.sign;
+        Object.assign(b, look);
+      }
       if (isNode(b)) {
         b.buf = (b.buf ?? []).filter((it) => isItemId(it));
         const slots = sim.outSlots(b.type);

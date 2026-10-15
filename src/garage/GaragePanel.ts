@@ -34,6 +34,10 @@ import { fuelPct, fuelTone, fuelUsed, isDry, litersLeft, tankLiters } from '../d
 import { FUEL } from '../data/balance';
 import { capFirst, needOf, needWord } from '../data/wearText';
 import { fuelQuote, refuelCar } from './wearActions';
+import { garageGroup, type GarageSide } from './groups';
+import { DEFAULT_SIGN, DEFAULT_WALL, GARAGE_PAINTS, SIGN_MAX } from '../data/garageStyle';
+import { describeError } from '../factory/build/BuildController';
+import { BUILDINGS } from '../data/buildings';
 
 export interface GaragePanelCallbacks {
   /** « Fermer »: the owner calls close() and gives the controls back. */
@@ -46,6 +50,13 @@ export interface GaragePanelCallbacks {
   drivenCarId?(): string | null;
   /** Car whose body blocks the bay (optional; default: a car centered in the garage). */
   bayBlocker?: BayBlocker;
+  /**
+   * « Agrandir »: one more place on `side` of garage `id` (garage/groups.ts), paid from the wallet; null when done, else
+   * why not (optional: without it the panel offers no « Agrandir »).
+   */
+  extend?(id: number, side: GarageSide): string | null;
+  /** Shows the panel of another place of the same garage (optional). */
+  openPlace?(id: number): void;
 }
 
 type View = { kind: 'car'; id: string | null } | { kind: 'draft'; blueprint: BlueprintId; choices: PartChoices } | { kind: 'build' } | { kind: 'worn' };
@@ -133,6 +144,8 @@ export class GaragePanel {
   private previewMemo: { key: string; value: { spec: CarSpec } } | null = null;
   /** Renders so far (automated checks: the panel must not redraw while nothing it shows changed). */
   private renders = 0;
+  /** « Personnaliser » is unfolded (the garage's look). */
+  private styling = false;
 
   constructor(
     private readonly layer: HTMLElement,
@@ -327,6 +340,11 @@ export class GaragePanel {
     const stock = partStock(this.state);
     const driven = this.driven;
     const cars = this.state.cars.map((c) => `${c.id}:${c.name}:${JSON.stringify(c.parts)}:${carLocation(c, spot, driven)}:${shownWear(c)}:${c.fuel ?? 0}`).join('|');
+    // The garage's places (who stands in each), its look and whether it may grow on each side.
+    const g = this.state.sim.buildings.get(spot.id);
+    const places = g?.type === 'garage'
+      ? garageGroup(this.state.sim, g).map((m) => `${m.id}=${bayOccupant(this.state.cars, m, this.cb.bayBlocker)?.id ?? ''}`).join(',') + `#${g.paint ?? ''}#${g.sign ?? ''}#${this.extendCheck(-1)}${this.extendCheck(1)}#${this.styling}`
+      : '';
     const worn = this.state.worn.map((s) => `${s.item}.${s.n}.${s.wear}`).join(',');
     return [
       CAR_PARTS.map((i) => stock[i] ?? 0).join(','),
@@ -339,6 +357,7 @@ export class GaragePanel {
       this.state.sim.credits,
       worn,
       this.repairStockKey(this.shownQuotes()),
+      places,
     ].join('#');
   }
 
@@ -396,6 +415,7 @@ export class GaragePanel {
             ? `Dans la place : ${BLUEPRINTS[build.blueprint].name} en construction (${progress.done}/${progress.total} pièces)`
             : 'Place libre : assemble une voiture ici, ou pose ses pièces au fur et à mesure.'),
       el('div', { class: 'muted small pad-only' }, html(`${padGlyph('lb')}${padGlyph('rb')} voiture précédente / suivante · ${padGlyph('b')} fermer`)),
+      ...[this.renderPlaces()].filter((x): x is HTMLElement => x !== null),
       el('h3', { style: 'margin-top:10px' }, 'Mes voitures'),
     );
     const driven = this.driven;
@@ -491,6 +511,116 @@ export class GaragePanel {
     l.appendChild(grid);
     l.scrollTop = scroll;
     return selected;
+  }
+
+  /** Why the garage cannot grow on `side` now ('' when it can): the cells, the relief, the stock, a car in the way. */
+  private extendCheck(side: GarageSide): string {
+    const spot = this.spot;
+    const sim = this.state.sim;
+    const at = spot ? sim.garageExtension(spot.id, side) : null;
+    if (!spot || !at || !this.cb.extend) return 'off';
+    const check = sim.check('garage', at.x, at.z, at.rot, { wallet: this.state.wallet() });
+    if (!check.ok) return describeError(check);
+    const g = sim.buildings.get(spot.id);
+    if ((check.py ?? 0) !== (g?.py ?? 0)) return 'Le terrain n’est pas au même niveau de ce côté';
+    return '';
+  }
+
+  /**
+   * « Ce garage »: its places (a click shows that place's panel), « Agrandir » on each side, and its look (wall colour,
+   * sign) behind « Personnaliser ».
+   */
+  private renderPlaces(): HTMLElement | null {
+    const spot = this.spot;
+    const g = spot ? this.state.sim.buildings.get(spot.id) : undefined;
+    if (!spot || g?.type !== 'garage') return null;
+    const group = garageGroup(this.state.sim, g);
+    const box = el('div', { class: 'garage-places' });
+    box.appendChild(el('h3', { style: 'margin-top:10px' }, group.length > 1 ? `Ce garage : ${group.length} places` : 'Ce garage : 1 place'));
+    const row = el('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px' });
+    group.forEach((m, i) => {
+      const car = bayOccupant(this.state.cars, m, this.cb.bayBlocker);
+      const build = this.state.builds.find((w) => w.garage === m.id);
+      const here = m.id === spot.id;
+      const what = car ? car.name : build ? `${BLUEPRINTS[build.blueprint].name} (chantier)` : 'libre';
+      row.appendChild(
+        el('button', {
+          class: `small place-chip${here ? ' selected' : ''}`,
+          'data-action': 'place',
+          'data-place': String(i + 1),
+          disabled: here || !this.cb.openPlace,
+          title: here ? 'Tu es devant cette place' : 'Voir cette place',
+          onclick: () => this.cb.openPlace?.(m.id),
+        }, el('b', {}, `Place ${i + 1}`), ` · ${what}`),
+      );
+    });
+    box.appendChild(row);
+    if (this.cb.extend) {
+      const cost = BUILDINGS.garage.cost;
+      const grow = el('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;margin-top:6px' });
+      for (const [side, label] of [[-1, '← Agrandir à gauche'], [1, 'Agrandir à droite →']] as const) {
+        const why = this.extendCheck(side);
+        grow.appendChild(
+          el('button', {
+            class: 'small',
+            'data-action': side < 0 ? 'extend-left' : 'extend-right',
+            disabled: why !== '',
+            title: why || 'Une place de plus, collée à ce garage (le mur entre les deux disparaît)',
+            'data-pad-tip': why || undefined,
+            onclick: () => {
+              const err = this.cb.extend?.(spot.id, side) ?? null;
+              if (err) toast(err, 'error');
+              else {
+                toast('Garage agrandi : une place de plus', 'success', 2000);
+                this.commit();
+              }
+            },
+          }, label, ...this.chips(cost)),
+        );
+      }
+      box.appendChild(grow);
+    }
+    // Look of the whole garage.
+    box.appendChild(
+      el('button', { class: `small${this.styling ? ' selected' : ''}`, 'data-action': 'style', style: 'margin-top:6px', onclick: () => { this.styling = !this.styling; this.render(); } },
+        this.styling ? 'Personnaliser ▴' : 'Personnaliser ▾'),
+    );
+    if (this.styling) {
+      const sign = el('input', { type: 'text', maxlength: SIGN_MAX, value: g.sign ?? DEFAULT_SIGN, class: 'character-name', spellcheck: 'false', 'aria-label': 'Nom sur l’enseigne' }) as HTMLInputElement;
+      const apply = () => {
+        this.state.sim.styleGarage(g.id, { sign: sign.value });
+        SaveManager.save(this.state);
+        this.render();
+      };
+      sign.addEventListener('change', apply);
+      sign.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          sign.blur();
+        }
+      });
+      box.append(
+        el('div', { class: 'row setting' }, el('span', { class: 'small' }, 'Enseigne'), el('span', { class: 'spacer' }), sign),
+        el('div', { class: 'small muted' }, 'Couleur des murs'),
+        el('div', { class: 'character-swatches', style: 'margin-top:4px' },
+          ...GARAGE_PAINTS.map((c) =>
+            el('button', {
+              class: `swatch${(g.paint ?? DEFAULT_WALL) === c.id ? ' selected' : ''}`,
+              style: `--swatch:#${c.hex.toString(16).padStart(6, '0')}`,
+              title: c.name,
+              'aria-label': c.name,
+              onclick: () => {
+                this.state.sim.styleGarage(g.id, { paint: c.id });
+                SaveManager.save(this.state);
+                this.render();
+              },
+            }),
+          ),
+        ),
+      );
+    }
+    return box;
   }
 
   /** Returns the view's main action when it can be done (null otherwise). */

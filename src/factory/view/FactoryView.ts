@@ -5,9 +5,11 @@ import { BUILDINGS, isBelt } from '../../data/buildings';
 import { RESOURCES, type ResourceId } from '../../data/factoryMap';
 import { FACTORY_CELL, FACTORY_MODEL_SCALE } from '../../config/constants';
 import type { FactorySim, ConveyorShape } from '../sim/FactorySim';
-import { isNode, type Building, type ConveyorB } from '../sim/types';
+import { isNode, type Building, type ConveyorB, type GarageB } from '../sim/types';
+import { garageGroup, openSides, sideAnchor } from '../../garage/groups';
+import { DEFAULT_SIGN } from '../../data/garageStyle';
 import { mulberry32 } from '../../core/rng';
-import { BuildingVisual, buildingHeight } from './BuildingVisuals';
+import { BuildingVisual, buildingHeight, type GarageModelOpts } from './BuildingVisuals';
 import { ItemRenderer } from './ItemRenderer';
 import { MineBursts } from './MineBursts';
 import { beltLocal, rotateLocal } from './beltPath';
@@ -116,17 +118,20 @@ export class FactoryView {
     this.unsub.push(
       sim.events.on('placed', (b) => {
         this.addVisual(b);
+        this.refreshGarages(this.garageIdsAround(b));
         this.conveyorsDirty = true;
         this.markersDirty = true;
         this.foundationsDirty = true;
         this.textures?.occupancyChanged(cellsOf(b));
         this.decor?.refreshCells(cellsOf(b));
       }),
+      sim.events.on('restyled', (ids) => this.refreshGarages(ids)),
       sim.events.on('removed', (b) => {
         const v = this.visuals.get(b.id);
         v?.dispose();
         if (v && v === this.hub) this.hub = null;
         this.visuals.delete(b.id);
+        this.refreshGarages(this.garageIdsAround(b));
         this.conveyorsDirty = true;
         this.markersDirty = true;
         this.foundationsDirty = true;
@@ -237,9 +242,46 @@ export class FactoryView {
     }
   }
 
+  /**
+   * Look of a garage module from its garage (garage/groups.ts): no wall toward the next module, the garage's colour,
+   * and the sign: the garage's name over the middle door, « PLACE n » over the others.
+   */
+  private garageLook(b: GarageB): GarageModelOpts {
+    const group = garageGroup(this.sim, b);
+    const k = group.indexOf(b);
+    const name = b.sign ?? DEFAULT_SIGN;
+    const sign = group.length > 1 && k !== Math.floor((group.length - 1) / 2) ? `PLACE ${k + 1}` : name;
+    return { ...openSides(this.sim, b), ...(b.paint ? { paint: b.paint } : {}), sign };
+  }
+
+  /** Rebuilds the visuals of these garages (a module added or removed next to them, a new look). */
+  private refreshGarages(ids: Iterable<number>): void {
+    for (const id of ids) {
+      const b = this.sim.buildings.get(id);
+      const v = this.visuals.get(id);
+      if (!b || b.type !== 'garage' || !v) continue;
+      v.dispose();
+      this.visuals.delete(id);
+      this.addVisual(b);
+    }
+  }
+
+  /** The whole garage of `b` (and of its former neighbors when it was removed): every module's look may change. */
+  private garageIdsAround(b: Building): number[] {
+    if (b.type !== 'garage') return [];
+    const ids = new Set<number>();
+    for (const side of [-1, 1] as const) {
+      const [x, z] = sideAnchor(b, side);
+      const n = this.sim.at(x, z);
+      if (n?.type === 'garage' && n.id !== b.id) for (const m of garageGroup(this.sim, n)) ids.add(m.id);
+    }
+    ids.delete(b.id);
+    return [...ids];
+  }
+
   private addVisual(b: Building): void {
     if (b.type === 'conveyor') return; // instanced
-    const v = new BuildingVisual(this.assets, b);
+    const v = new BuildingVisual(this.assets, b, b.type === 'garage' ? this.garageLook(b) : undefined);
     v.placeOn(this.sim);
     this.visuals.set(b.id, v);
     this.root.add(v.root);
