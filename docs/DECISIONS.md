@@ -557,3 +557,7 @@ Méthode : une cartographie des points d’accroche (six lecteurs, un critique) 
   - **relever `TILT_FROM` à 8 ou 10°** (revue finale) : sur les collines de 21° de l’usine, le pic de la Sportive passait à 3,26 m/s, au-delà du seuil de choc ;
   - **assombrir le seul caoutchouc ou la seule peinture** : pneu et jante, puis caisse, vitres et phares, sont chacun un seul maillage sur un atlas partagé. Il aurait fallu un shader dédié, donc un programme de plus à compiler ;
   - **un registre générique de jauges** pour le futur ticket « essence » : il reprendra le motif du compteur (`step`, `putBack`, `end`), `RaceBlock.kind`, `spend(…, reason)` et les millièmes.
+
+## Retours Notion, deuxième série (octobre 2026)
+
+- **Convoyeur en deux clics** : un clic sans bouger fixe le début du tracé (la ligne suit ensuite la visée), le clic suivant la pose. Deux clics sur la même case posent une tuile. Maintenir et glisser trace toujours en un geste : un relâchement ailleurs que sur la case pressée pose directement. Entre les deux clics, viser hors de portée garde le dernier tracé au lieu de le réduire. Clic droit, Échap ou B annulent le tracé (l'outil reste) ; ouvrir un panneau ou la pause aussi. Même logique à la manette (RT).

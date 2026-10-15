@@ -1137,7 +1137,9 @@ export class FactoryMode implements Mode {
       const fill = describeFill(check);
       const status = `${err}<b>${name}</b>${fill ? ` <span class="muted">${fill}</span>` : ''}${links ? ` · ${links}` : ''}`;
       const place = t.type === 'conveyor'
-        ? pad ? `${padGlyph('rt')} maintenu : tracer` : 'clic gauche maintenu : tracer'
+        ? this.build.tracing
+          ? pad ? `${padGlyph('rt')} fin du tracé` : 'clic gauche : fin du tracé'
+          : pad ? `${padGlyph('rt')} début du tracé` : 'clic gauche : début du tracé'
         : pad ? `${padGlyph('rt')} poser` : 'clic gauche : poser';
       html = pad
         ? `${status} · ${place} · ${padGlyph('lb')}${padGlyph('rb')} tourner · ${padGlyph('b')} annuler · ${padGlyph('left')}${padGlyph('right')} bâtiment`

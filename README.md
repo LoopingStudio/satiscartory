@@ -39,7 +39,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Espace | Sauter |
 | 1 à 9 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage, répartiteur, fusionneur, concession (une fois leur palier débloqué) |
 | R | Tourner (sur le fantôme d'un garage, une flèche bleue marque la porte). Un convoyeur posé contre une machine s'oriente seul pour s'y raccorder ; R l'oriente autrement sur cette case |
-| Clic gauche | Poser (maintenu : tracer des convoyeurs ; viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée) |
+| Clic gauche | Poser. Convoyeur : un clic pour le début, un clic pour la fin, la ligne est tracée entre les deux (deux clics sur la même case : une tuile ; maintenir et glisser marche aussi). Viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée |
 | F | Démonter |
 | Maintenir E sur un gisement | Miner à la main : un minerai toutes les 0,75 s dans le sac (case libre, à 6 m au plus) |
 | E sur un convoyeur | Prendre les objets de cette case dans le sac ; maintenu 0,5 s : ceux de toute la ligne (les convoyeurs reliés, en amont et en aval). Ce qui ne rentre pas dans le sac reste sur le convoyeur |
@@ -108,7 +108,7 @@ Une manette (Xbox, PlayStation, Switch Pro… en mapping standard) marche partou
 | X | Comme E : utiliser une machine, une concession, le hangar, un garage, monter en voiture ; maintenu : miner, prendre toute une ligne de convoyeur |
 | Y | Menu de construction |
 | ← / → | Bâtiment précédent / suivant (dans l'ordre du menu, ceux débloqués) |
-| RT | Poser ; maintenu : tracer un convoyeur. En démontage : démonter |
+| RT | Poser ; convoyeur : une pression au début, une à la fin (ou maintenir et glisser). En démontage : démonter |
 | LB / RB | Tourner |
 | B | Annuler le tracé, puis l'outil (comme le clic droit) |
 | ↓ | Démontage |
@@ -166,7 +166,7 @@ Ensuite, la chaîne du fer prend le relais : foreuse → fonderie (lingots) → 
 Chaque machine montre où brancher un convoyeur : devant chaque **sortie**, une flèche **orange** flotte au-dessus d'un cadre au sol ; devant chaque **entrée**, une flèche **bleue** pointe vers la machine. Une foreuse n'a que des sorties, sur sa face avant ; fonderie, constructeur et assembleuse reçoivent par l'arrière et rendent par l'avant. Hors construction, seuls les côtés encore libres sont marqués ; avec un outil de construction en main, tous les ports libres clignotent.
 
 - **Poser un convoyeur** : sur la case d'une flèche, ou en visant la machine, le fantôme s'oriente seul (il reçoit la sortie, ou alimente l'entrée). Une flèche verte montre chaque liaison et l'indication du bas dit « ✓ reçoit : Foreuse · alimente : Fonderie ». Un clic sans bouger pose exactement le fantôme affiché.
-- **Tracer** : viser une machine part de sa sortie ; viser le bout d'un convoyeur le prolonge ; finir sur une machine s'arrête devant son entrée la plus proche et y tourne la dernière tuile. Le sens suit les ports : un convoyeur va toujours d'une sortie vers une entrée, même tracé dans l'autre sens (partir de la flèche bleue d'une entrée trace un convoyeur qui y arrive). Le tracé en L contourne les bâtiments quand l'autre ordre est libre.
+- **Tracer** : un clic fixe le début, la ligne suit la visée, un second clic la pose (clic droit ou Échap : annuler le tracé, l'outil reste en main). Viser une machine part de sa sortie ; viser le bout d'un convoyeur le prolonge ; finir sur une machine s'arrête devant son entrée la plus proche et y tourne la dernière tuile. Le sens suit les ports : un convoyeur va toujours d'une sortie vers une entrée, même tracé dans l'autre sens (partir de la flèche bleue d'une entrée trace un convoyeur qui y arrive). Le tracé en L contourne les bâtiments quand l'autre ordre est libre.
 - Une machine ne sort que par **une** sortie à la fois : dès qu'une est reliée, l'autre n'est plus marquée.
 - **Répartiteur** (touche 7) : ce qui entre par l'arrière sort tour à tour à l'avant, à gauche et à droite ; une sortie sans convoyeur ou bouchée est sautée, rien ne s'arrête tant qu'une sortie reste libre. Pour alimenter plusieurs machines depuis une seule ligne.
 - **Fusionneur** (touche 8) : jusqu'à trois arrivées (arrière, gauche, droite) réunies en une seule vers l'avant, chacune à son tour. Un convoyeur qui arrive sur le flanc d'un autre fusionne aussi, comme avant.
