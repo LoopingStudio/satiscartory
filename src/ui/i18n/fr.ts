@@ -11,6 +11,7 @@ export const fr = {
     editor: 'Éditeur de circuit',
     gallery: 'Galerie des modèles (dev)',
     settings: 'Réglages',
+    character: 'Personnage',
     newGame: 'Nouvelle partie',
     confirmNewGame: 'Effacer la sauvegarde et recommencer ?',
     back: 'Retour',

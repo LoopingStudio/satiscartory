@@ -3,6 +3,7 @@ import { BLUEPRINTS, BLUEPRINT_IDS, CAR_PARTS, blueprintById, isCarPart, type Sl
 import { ITEM_IDS, isItemId, type Inventory as ItemCounts, type ItemId } from './items';
 import { RECIPES } from './recipes';
 import { PART_VALUES, carPrice } from './sales';
+import { fuelBlocked } from './fuel';
 
 /*
  * Wear of the parts installed on a car (pure): integer thousandths per slot, 0 = new, WEAR.MAX = worn out. A new
@@ -28,6 +29,8 @@ export interface WearCar {
   blueprint: string;
   parts: Readonly<Record<string, unknown>>;
   wear?: CarWear;
+  /** ‰ of the tank used (data/fuel.ts); absent = full. */
+  fuel?: number;
 }
 
 /** State shown for a wear (%): 100 only when new, 20 at the race limit (BLOCK_ABOVE), 0 worn out. */
@@ -122,22 +125,28 @@ export function isBlocked(car: WearCar): boolean {
   return worstWear(car) > WEAR.BLOCK_ABOVE;
 }
 
-/** Why a car does not start a race: its slots worn above WEAR.BLOCK_ABOVE (a fuel ticket may add its own kind). */
+/**
+ * Why a car does not start a race: its slots worn above WEAR.BLOCK_ABOVE, and/or its tank in the reserve (data/fuel.ts).
+ * `kind` is 'wear' when a part blocks (with or without the fuel), 'fuel' when only the tank does.
+ */
 export interface RaceBlock<C extends WearCar = WearCar> {
-  kind: 'wear';
+  kind: 'wear' | 'fuel';
   car: C;
-  /** In the blueprint's order. */
+  /** In the blueprint's order (empty for a fuel-only block). */
   slots: SlotId[];
+  /** The tank is in the reserve. */
+  fuel: boolean;
 }
 
 /**
  * What keeps `car` from starting a race, null when it may (and for the loaner, `null`). Taking a worn-out optional
- * part off (the spoiler, « Aucun ») lifts it.
+ * part off (the spoiler, « Aucun ») lifts a wear block; filling up lifts a fuel block.
  */
 export function raceBlocker<C extends WearCar>(car: C | null): RaceBlock<C> | null {
   if (!car) return null;
   const slots = blockedSlots(car);
-  return slots.length ? { kind: 'wear', car, slots } : null;
+  const fuel = fuelBlocked(car);
+  return slots.length || fuel ? { kind: slots.length ? 'wear' : 'fuel', car, slots, fuel } : null;
 }
 
 // ------------------------------------------------------------------ 3D look (car/CarModel.ts, car/CarFx.ts)

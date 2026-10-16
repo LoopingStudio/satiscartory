@@ -822,7 +822,7 @@ describe('FactoryCars: wear while driving', () => {
     expect(meterOf(f.cars).exact('engine')).toBe(WEAR.BLOCK_ABOVE);
     // Half a thousandth or more: rounded in, past the limit, the car stays driven; it is not rounded again.
     at(WEAR.BLOCK_ABOVE, 0.6);
-    expect(f.cars.raceBlockerOnExit()).toEqual({ kind: 'wear', car: f.car('k'), slots: ['engine'] });
+    expect(f.cars.raceBlockerOnExit()).toEqual({ kind: 'wear', car: f.car('k'), slots: ['engine'], fuel: false });
     expect(f.cars.drivingId).toBe('k');
     expect(f.car('k').wear!.engine).toBe(WEAR.BLOCK_ABOVE + 1);
     rest.engine = 0.7;

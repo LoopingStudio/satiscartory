@@ -1,6 +1,6 @@
 import type { ItemId } from './items';
 
-export type ResourceId = 'iron' | 'rubber';
+export type ResourceId = 'iron' | 'rubber' | 'oil';
 
 export interface ResourceDef {
   id: ResourceId;
@@ -12,6 +12,7 @@ export interface ResourceDef {
 export const RESOURCES: Record<ResourceId, ResourceDef> = {
   iron: { id: 'iron', name: 'Gisement de fer', item: 'iron_ore', color: 0xb5653e },
   rubber: { id: 'rubber', name: 'Gisement de caoutchouc', item: 'latex', color: 0x34364a },
+  oil: { id: 'oil', name: 'Gisement de pétrole', item: 'crude_oil', color: 0x241a12 },
 };
 
 /** A rectangular patch of resource cells on the factory grid. */
@@ -51,5 +52,8 @@ export const FACTORY_MAP = {
     { resource: 'iron', x: 24, z: 26, w: 4, h: 4 },
     { resource: 'rubber', x: 30, z: 90, w: 3, h: 4 },
     { resource: 'rubber', x: 96, z: 100, w: 3, h: 3 },
+    // Oil (fuel): one on the flat plateau east of the hub (its pad changes no relief), one farther east.
+    { resource: 'oil', x: 80, z: 54, w: 3, h: 3 },
+    { resource: 'oil', x: 104, z: 46, w: 3, h: 3 },
   ] satisfies ResourceNode[],
 };

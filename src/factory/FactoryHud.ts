@@ -22,7 +22,7 @@ import { FACTORY_CELL, FACTORY_HZ } from '../config/constants';
 
 /** What a building is for, in the build menu's detail pane (HTML; machines also list their recipes). */
 const BUILD_ROLE: Partial<Record<BuildingType, string>> = {
-  conveyor: `Transporte les objets à 2 m/s, ${(TICKS_PER_MIN * BELT.SPEED) / BELT.SPACING} par minute au plus. ${dual('Clic gauche maintenu', `${padGlyph('rt')} maintenu`)} : tracer une ligne.`,
+  conveyor: `Transporte les objets à 2 m/s, ${(TICKS_PER_MIN * BELT.SPEED) / BELT.SPACING} par minute au plus. ${dual('Un clic au début, un clic à la fin', `${padGlyph('rt')} au début, ${padGlyph('rt')} à la fin`)} : tracer une ligne.`,
   splitter: 'Partage une ligne : ce qui entre par l’arrière sort tour à tour à l’avant, à gauche et à droite. Une sortie libre ou bouchée est sautée, rien ne se perd.',
   merger: 'Réunit jusqu’à trois lignes (arrière, gauche, droite) en une seule vers l’avant, chacune à son tour.',
   drill: 'À poser sur un gisement : minerai de fer ou latex selon la roche.',
@@ -107,6 +107,13 @@ export interface HudCallbacks {
   home(): void;
   canGoHome(): boolean;
   settings(): void;
+  /** « Personnage »: name, colors and hat of the character (not while driving: it is out of sight). */
+  character(): void;
+  canCustomize(): boolean;
+  /** « Partager mon monde » (absent while visiting a friend's world). */
+  shareWorld?(): void;
+  /** « Quitter la visite » (a friend's world only). */
+  leaveVisit?(): void;
   closePanel(): void;
 }
 
@@ -335,7 +342,7 @@ export class FactoryHud {
         el('div', { class: 'controls-help pad-only' }, html([
           `<div>${g('ls')} se déplacer (${g('l3')} courir) · ${g('rs')} caméra (${g('up')} zoom) · ${g('a')} sauter</div>`,
           `<div>${g('y')} menu de construction · ${g('left')}${g('right')} bâtiment précédent / suivant · ${g('down')} démonter</div>`,
-          `<div>${g('rt')} poser (maintenu : tracer un convoyeur) · ${g('lb')}${g('rb')} tourner · ${g('b')} annuler</div>`,
+          `<div>${g('rt')} poser (convoyeur : une pression au début, une à la fin) · ${g('lb')}${g('rb')} tourner · ${g('b')} annuler</div>`,
           `<div>${g('x')} maintenu sur un gisement : miner · ${g('x')} utiliser une machine, une concession, le hangar · sur un convoyeur : prendre (maintenu : toute la ligne)</div>`,
           `<div>${g('x')} près d’une voiture : monter / descendre · ${g('view')} sac · ${g('start')} pause</div>`,
           `<div>Menus : ${g('up')}${g('down')}${g('left')}${g('right')} choisir · ${g('a')} valider · ${g('b')} retour · ${g('lb')}${g('rb')} onglets</div>`,
@@ -343,6 +350,9 @@ export class FactoryHud {
         el('div', { class: 'row', style: 'margin-top:12px' },
           el('button', { class: 'primary', onclick: () => this.cb.resume(), 'data-pad-btn': 'b start' }, paused ? 'Reprendre' : 'Jouer'),
           paused && this.cb.canGoHome() ? el('button', { onclick: () => this.cb.home(), title: 'Coincé ou perdu : retour au point de départ, devant le hangar' }, 'Revenir au hangar') : null,
+          this.cb.canCustomize() ? el('button', { onclick: () => this.cb.character() }, 'Personnage') : null,
+          this.cb.shareWorld ? el('button', { 'data-action': 'share-world', onclick: () => this.cb.shareWorld?.() }, 'Partager mon monde') : null,
+          this.cb.leaveVisit ? el('button', { 'data-action': 'leave-visit', onclick: () => this.cb.leaveVisit?.() }, 'Quitter la visite') : null,
           el('button', { onclick: () => this.cb.settings() }, 'Réglages'),
           el('button', { onclick: () => this.cb.menu() }, 'Menu principal'),
         ),

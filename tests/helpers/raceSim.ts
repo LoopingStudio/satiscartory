@@ -15,6 +15,7 @@ import { BLUEPRINTS, type SlotId } from '../../src/data/blueprints';
 import { GRAVITY_RACE, PHYS_DT } from '../../src/config/constants';
 import type { CarWear, WearCar } from '../../src/data/wear';
 import { WearMeter, autoResetCause } from '../../src/car/wearMeter';
+import { FuelMeter, type FuelCar } from '../../src/data/fuel';
 import { wornTuning } from '../../src/car/wornTuning';
 import { SteadyDriver } from './steadyDriver';
 
@@ -66,6 +67,8 @@ export interface SimResult {
   /** With `meter`: the car's wear at the end (‰, rounded like RaceMode.exit), and before rounding (fractions in). */
   wear?: CarWear;
   wearExact?: Record<SlotId, number>;
+  /** With `fuel`: ‰ of the tank used at the end, fractions in (FuelMeter.exact). */
+  fuelExact?: number;
 }
 
 export interface SimOptions {
@@ -86,6 +89,10 @@ export interface SimOptions {
   driver?: 'clean' | 'sloppy' | 'steady';
   /** Start this far back (m, along the start's direction): another approach to the track's jumps (a lap is a knife edge there). */
   shift?: number;
+  /** Burns fuel like RaceMode (FuelMeter while racing; a dry tank cuts the engine). */
+  fuel?: boolean;
+  /** ‰ of the tank used at the start (with `fuel`). */
+  startFuel?: number;
 }
 
 /** The sloppy driver's controls over the bot's (see SimOptions.driver). */
@@ -116,6 +123,8 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: SimOptions = 
     : new Bot(centerline(track), Math.sqrt((opts.latAccel ?? 32) / 32), opts.braking ?? 14);
   const worn: WearCar = { blueprint: spec.blueprint, parts: spec.parts, ...(opts.wear ? { wear: { ...opts.wear } } : {}) };
   const meter = opts.meter ? new WearMeter(worn) : null;
+  const tank: FuelCar = { blueprint: spec.blueprint, ...(opts.startFuel ? { fuel: opts.startFuel } : {}) };
+  const fuel = opts.fuel ? new FuelMeter(tank) : null;
   const prev = new THREE.Vector3();
   const fwd = new THREE.Vector3();
   let respawnPoint = spawn;
@@ -129,10 +138,12 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: SimOptions = 
     let controls = running ? bot.controls({ x: car.curPos.x, z: car.curPos.z, heading: Math.atan2(fwd.x, fwd.z), speed: car.speed }, PHYS_DT) : NO_CONTROLS;
     if (running && opts.driver === 'sloppy') controls = sloppy(controls, car.speed);
     prev.copy(car.curPos);
+    car.engineOff = !!fuel?.dry;
     car.step(PHYS_DT, controls);
     if (running) {
       km += (Math.abs(car.speed) * PHYS_DT) / 1000;
       meter?.step(PHYS_DT, car, controls);
+      fuel?.step(PHYS_DT, car.speed, controls.throttle);
     } else meter?.closeShock();
     world.step();
     car.afterWorldStep();
@@ -162,6 +173,7 @@ export function simulateRun(track: TrackData, spec: CarSpec, opts: SimOptions = 
   const pose = [...car.curPos.toArray(), ...car.curQuat.toArray()];
   world.free();
   const r: SimResult = { finished: session.phase === 'finished', ms: session.finishMs, checkpoints: session.passed.size, respawns, simSeconds: +t.toFixed(1), pose, km };
+  if (fuel) r.fuelExact = fuel.exact();
   if (meter) {
     meter.closeShock();
     r.wearExact = { chassis: meter.exact('chassis'), engine: meter.exact('engine'), wheels: meter.exact('wheels'), panels: meter.exact('panels'), spoiler: meter.exact('spoiler') };

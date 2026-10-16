@@ -14,8 +14,17 @@ import { confirmDialog } from '../ui/confirm';
 import { dual, html, padGlyph } from '../ui/padHints';
 import { MEDAL_LABEL, MEDAL_ORDER, medalFor } from './medals';
 import { BLUEPRINTS } from '../data/blueprints';
-import { isBlocked, worstWear } from '../data/wear';
-import { LOANER_STATE, NEW_STATE, RACE_LOANER, TO_REPAIR_AT_GARAGE, blockText, blockedOption, blockedRaceLine, blockedRaceTip, effectsText, stateText, wearTone } from '../data/wearText';
+import { worstWear } from '../data/wear';
+import { LOANER_STATE, NEW_STATE, RACE_LOANER, blockText, blockedOption, blockedRaceLine, blockedRaceTip, effectsText, needAtGarage, needOf, stateText, wearTone } from '../data/wearText';
+import { fuelGauge, fuelText } from '../ui/fuelGauge';
+import { openTrackdayPanel, trackdayStatus } from '../ui/menus/TrackdayPanel';
+import { challengeKey, challengeTrack, sanitizeChallenge, type Challenge } from './challenge';
+import { decodeShare } from '../share/codec';
+import { openImportPanel } from '../ui/menus/SharePanel';
+import { SaveManager } from '../state/SaveManager';
+import { satisfactionText } from '../data/trackday';
+import { formatCredits } from '../data/sales';
+import { fuelUsed, fuelTone } from '../data/fuel';
 import { LOANER_SPEC, specOf, type CarInstance } from '../garage/assembly';
 import { selectRaceCar } from '../garage/actions';
 import { carStatsBlock } from '../ui/carStats';
@@ -30,6 +39,8 @@ export type TrackOrigin = 'menu' | 'factory';
 
 export interface TrackSelectParams {
   selected?: string;
+  /** A received challenge to show (its key, race/challenge.ts challengeKey). */
+  challenge?: string;
   /** Opened from the factory (garage « Courir »): back goes to the factory. Default: the main menu. */
   origin?: TrackOrigin;
 }
@@ -44,6 +55,8 @@ export class TrackSelectMode implements Mode {
   private built: BuiltTrack | null = null;
   private tracks: TrackData[] = [];
   private selected: TrackData | null = null;
+  /** The received challenge shown (its circuit is `selected`). */
+  private challenge: Challenge | null = null;
   private layer: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
   private detailEl: HTMLElement | null = null;
@@ -73,12 +86,35 @@ export class TrackSelectMode implements Mode {
     this.listEl = el('div', { class: 'panel track-list' });
     this.detailEl = el('div', { class: 'panel track-detail' });
     this.layer.append(this.listEl, this.detailEl);
+    const ch = params?.challenge ? this.state.challenges.find((c) => challengeKey(c) === params.challenge) : undefined;
+    if (ch) return this.selectChallenge(ch);
     const initial = this.tracks.find((t) => t.id === params?.selected) ?? this.tracks[0] ?? null;
     this.select(initial);
   }
 
-  private select(track: TrackData | null): void {
+  /** Shows a received challenge: its circuit, who set what time with what car, « Relever le défi ». */
+  private selectChallenge(c: Challenge): void {
+    this.select(challengeTrack(c, this.tracks.filter((t) => t.builtin)), c);
+  }
+
+  /** « Importer un défi »: a code, a link or a file from a friend. */
+  private importChallenge(): void {
+    openImportPanel({
+      title: 'Importer un défi',
+      intro: 'Colle le code ou le lien qu’un ami t’a envoyé, ou ouvre son fichier.',
+      onCode: async (code) => {
+        const c = sanitizeChallenge(await decodeShare('defi', code));
+        this.state.addChallenge(c);
+        SaveManager.save(this.state);
+        toast(`Défi de ${c.from} : ${c.track.name} en ${formatTime(c.timeMs)}`, 'success', 2600);
+        this.selectChallenge(c);
+      },
+    });
+  }
+
+  private select(track: TrackData | null, challenge: Challenge | null = null): void {
     this.selected = track;
+    this.challenge = challenge;
     this.built?.dispose();
     this.built = null;
     if (track) {
@@ -112,7 +148,7 @@ export class TrackSelectMode implements Mode {
         const medal = medalFor(rec?.bestMs, t.medals);
         list.appendChild(
           // Rows are pad tabs: LB/RB click the previous/next one (in list order, the selected one is current).
-          el('button', { class: `track-row${t.id === this.selected?.id ? ' selected' : ''}`, 'data-track-id': t.id, 'data-pad-tab': '', onclick: () => this.select(t) },
+          el('button', { class: `track-row${t.id === this.selected?.id && !this.challenge ? ' selected' : ''}`, 'data-track-id': t.id, 'data-pad-tab': '', onclick: () => this.select(t) },
             el('span', { class: `medal ${medal ? `medal-${medal}` : 'medal-none'}` }),
             el('span', { class: 'track-name' }, t.name),
             el('span', { class: 'spacer' }),
@@ -124,6 +160,22 @@ export class TrackSelectMode implements Mode {
     section('Officiels', this.tracks.filter((t) => t.builtin));
     section('Mes circuits', this.tracks.filter((t) => !t.builtin));
     list.appendChild(el('button', { style: 'margin-top:10px', 'data-action': 'new', onclick: () => this.openEditor({}) }, '+ Nouveau circuit'));
+    // Challenges received from friends: race their ghost.
+    list.appendChild(el('h3', { style: 'margin-top:14px' }, 'Défis reçus'));
+    if (!this.state.challenges.length) list.appendChild(el('div', { class: 'muted small' }, 'Aucun : à l’arrivée d’une course, « Défier un ami » crée un défi à envoyer.'));
+    for (const c of this.state.challenges) {
+      const key = challengeKey(c);
+      const current = !!this.challenge && challengeKey(this.challenge) === key;
+      list.appendChild(
+        el('button', { class: `track-row${current ? ' selected' : ''}`, 'data-challenge': key, 'data-pad-tab': '', onclick: () => this.selectChallenge(c) },
+          el('span', { class: 'medal medal-none' }),
+          el('span', { class: 'track-name' }, `${c.from} · ${c.track.name}`),
+          el('span', { class: 'spacer' }),
+          el('span', { class: 'mono small' }, formatTime(c.timeMs)),
+        ),
+      );
+    }
+    list.appendChild(el('button', { style: 'margin-top:8px', 'data-action': 'import-challenge', onclick: () => this.importChallenge() }, 'Importer un défi…'));
     list.scrollTop = top;
     list.querySelector('.track-row.selected')?.scrollIntoView({ block: 'nearest' });
   }
@@ -132,7 +184,11 @@ export class TrackSelectMode implements Mode {
   private carOptions(): { id: string | null; label: string; spec: CarSpec; car: CarInstance | null }[] {
     return [
       { id: null, label: BLUEPRINTS.loaner.name, spec: LOANER_SPEC, car: null },
-      ...this.state.cars.map((c) => ({ id: c.id, label: isBlocked(c) ? blockedOption(c.name) : c.name, spec: specOf(c), car: c })),
+      ...this.state.cars.map((c) => {
+        const need = needOf(c);
+        const label = this.state.isAway(c.id) ? `${c.name} (au trackday)` : need ? blockedOption(c.name, need) : c.name;
+        return { id: c.id, label, spec: specOf(c), car: c };
+      }),
     ];
   }
 
@@ -143,13 +199,19 @@ export class TrackSelectMode implements Mode {
   private wearSummary(car: CarInstance | null): HTMLElement {
     if (!car) return el('div', { class: 'muted wear-summary' }, LOANER_STATE);
     const state = stateText(car);
-    if (!state) return el('div', { class: 'muted wear-summary' }, NEW_STATE);
+    const fuel = fuelText(car);
+    const used = fuelUsed(car);
+    const fuelRow = fuel
+      ? el('div', { class: 'row wear-summary' }, el('b', { class: fuelTone(used) === 'good' ? '' : fuelTone(used) }, fuel), fuelGauge(used, 'mini'))
+      : null;
+    if (!state) return el('div', {}, el('div', { class: 'muted wear-summary' }, NEW_STATE), fuelRow);
     const w = worstWear(car);
     const effects = effectsText(wearEffects(specOf(car), car.wear));
     return el('div', {},
       el('div', { class: 'row wear-summary' },
         el('span', { class: 'muted' }, 'État : '), el('b', { class: wearTone(w) }, state), wearGauge(w, 'mini', `État : ${state}`)),
       effects ? el('div', { class: 'muted small' }, `Effets de l’usure : ${effects}`) : null,
+      fuelRow,
     );
   }
 
@@ -164,6 +226,22 @@ export class TrackSelectMode implements Mode {
     const rec = this.state.records[t.id];
     const analysis = analyzeTrack(t);
     d.append(el('h2', {}, t.name), el('div', { class: 'muted small' }, `par ${t.author} · ${t.pieces.length} pièces · ${analysis.checkpoints.length} checkpoint(s)`));
+    const ch = this.challenge;
+    if (ch) {
+      const date = ch.at ? new Date(ch.at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : '';
+      d.appendChild(
+        el('div', { class: 'challenge-card' },
+          el('b', {}, `Défi de ${ch.from}`),
+          el('div', {}, 'Temps à battre : ', el('b', { class: 'mono' }, formatTime(ch.timeMs)), ` avec ${ch.carName}${date ? ` (${date})` : ''}`),
+          el('div', { class: 'muted small' }, 'Son fantôme court avec toi. À l’arrivée, tu peux lui renvoyer le défi.'),
+          el('button', { class: 'small danger', style: 'margin-top:6px', 'data-action': 'delete-challenge', onclick: () => {
+            this.state.removeChallenge(challengeKey(ch));
+            SaveManager.save(this.state);
+            this.select(this.tracks[0] ?? null);
+          } }, 'Supprimer le défi'),
+        ),
+      );
+    }
     if (t.medals) {
       const best = medalFor(rec?.bestMs, t.medals);
       const grid = el('div', { class: 'medal-list' });
@@ -198,14 +276,16 @@ export class TrackSelectMode implements Mode {
 
     // A car to repair does not start: « Courir » is disabled, the loaner takes the default focus. It stays the race
     // car (selectedCarId): once repaired, it races again.
-    const blocked = current.car ? blockText(current.car) : null;
-    const blockedTip = analysis.ok && blocked !== null ? blockedRaceTip(blocked) : undefined;
+    const away = !!current.car && this.state.isAway(current.car.id);
+    const blocked = current.car ? (away ? 'elle est au trackday' : blockText(current.car)) : null;
+    const need = (current.car && needOf(current.car)) || 'repair';
+    const blockedTip = analysis.ok && blocked !== null ? blockedRaceTip(blocked, need) : undefined;
     const race = (carId: string | null) => {
-      const back: TrackSelectParams = { selected: t.id, origin: this.origin };
-      const p: RaceParams = { track: t, carId, returnTo: 'tracks', returnParams: back };
+      const back: TrackSelectParams = { selected: t.id, origin: this.origin, ...(ch ? { challenge: challengeKey(ch) } : {}) };
+      const p: RaceParams = { track: t, carId, returnTo: 'tracks', returnParams: back, ...(ch ? { challenge: ch } : {}) };
       void this.game.switchMode('race', p);
     };
-    if (current.car && blocked !== null) d.appendChild(el('div', { class: 'bad small', style: 'margin-top:8px' }, blockedRaceLine(current.car.name, blocked)));
+    if (current.car && blocked !== null) d.appendChild(el('div', { class: 'bad small', style: 'margin-top:8px' }, away ? `${current.car.name} est au trackday : elle revient à la fin de la journée.` : blockedRaceLine(current.car.name, blocked, need)));
     const buttons = el('div', { class: 'row', style: 'margin-top:12px;flex-wrap:wrap' });
     buttons.appendChild(
       el('button', {
@@ -216,7 +296,7 @@ export class TrackSelectMode implements Mode {
         'data-action': 'race',
         'data-pad-default': blocked === null,
         onclick: () => race(this.state.selectedCar?.id ?? null),
-      }, !analysis.ok ? 'Circuit invalide' : blocked !== null ? TO_REPAIR_AT_GARAGE : 'Courir'),
+      }, !analysis.ok ? 'Circuit invalide' : blocked !== null ? (away ? 'Au trackday' : needAtGarage(need)) : ch ? 'Relever le défi' : 'Courir'),
     );
     if (blocked !== null) {
       buttons.appendChild(
@@ -231,16 +311,38 @@ export class TrackSelectMode implements Mode {
         }, RACE_LOANER),
       );
     }
-    if (!t.builtin) {
+    if (ch) {
+      // A friend's circuit is raced as it came: not editable, not the player's to delete (« Supprimer le défi » above).
+    } else if (!t.builtin) {
       buttons.appendChild(el('button', { 'data-action': 'edit', onclick: () => this.openEditor({ trackId: t.id }) }, 'Modifier'));
       buttons.appendChild(el('button', { class: 'danger', 'data-action': 'delete', onclick: () => void this.remove(t) }, 'Supprimer'));
     } else {
       buttons.appendChild(el('button', { 'data-action': 'copy', onclick: () => this.openEditor({ copyOf: t.id }) }, 'Copier dans l’éditeur'));
     }
+    // Trackday: lend the player's cars to guests on this circuit (one at a time).
+    const running = this.state.trackday;
+    if (!ch) buttons.appendChild(
+      el('button', {
+        'data-action': 'trackday',
+        disabled: !!running || !analysis.ok || !this.state.cars.length,
+        title: running ? 'Un trackday est déjà en cours' : !this.state.cars.length ? 'Construis d’abord une voiture au garage' : 'Prête tes voitures à des clients pour la journée',
+        onclick: () => openTrackdayPanel(this.state, t, { onStarted: () => this.renderDetail() }),
+      }, 'Organiser un trackday'),
+    );
     // From the factory, the back button of the list already says « Usine ».
     if (this.origin !== 'factory') buttons.appendChild(el('button', { 'data-action': 'factory', onclick: () => void this.game.switchMode('factory') }, 'Usine'));
     d.appendChild(buttons);
+    d.appendChild(this.trackdayEl);
+    this.trackdayEl.textContent = trackdayStatus(this.state) ?? '';
+    const last = this.state.trackdayLog[0];
+    if (!running && last) {
+      d.appendChild(el('div', { class: 'muted small', style: 'margin-top:6px' },
+        `Dernier trackday (${last.trackName}) : ${last.guests} client${last.guests > 1 ? 's' : ''} ${satisfactionText(last.satisfaction)}, +${formatCredits(last.revenue)}, réputation ${last.reputation}/100`));
+    }
   }
+
+  /** The running trackday's status line (its clock ticks in update()). */
+  private readonly trackdayEl = el('div', { class: 'good small', style: 'margin-top:8px' });
 
   /** Deletes a custom track once confirmed (in-page dialog: a pad can answer it, the game keeps running). */
   private async remove(t: TrackData): Promise<void> {
@@ -268,6 +370,13 @@ export class TrackSelectMode implements Mode {
 
   update(dt: number): void {
     this.t += dt;
+    // The trackday's clock; once it is over, the cars are back (re-render: they race again).
+    const status = trackdayStatus(this.state) ?? '';
+    if (this.trackdayEl.textContent !== status) {
+      const ended = status === '' && this.trackdayEl.textContent !== '';
+      this.trackdayEl.textContent = status;
+      if (ended) this.renderDetail();
+    }
     const a = this.t * 0.12;
     this.camera.position.set(this.center.x + Math.cos(a) * this.radius, this.center.y + this.radius * 0.55, this.center.z + Math.sin(a) * this.radius);
     this.camera.lookAt(this.center);

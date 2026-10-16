@@ -46,9 +46,11 @@ export function findCar(state: GameState, id: string | null): CarInstance | null
 }
 
 /** Where a car is, seen from a garage. */
-export type CarLocation = 'here' | 'elsewhere' | 'driving' | 'unplaced';
+export type CarLocation = 'here' | 'elsewhere' | 'driving' | 'unplaced' | 'away';
 
-export function carLocation(car: CarInstance, garage: GarageSpot, drivenId: string | null = null): CarLocation {
+/** Where a car is, seen from a garage. `away`: it is at a trackday (GameState.isAway). */
+export function carLocation(car: CarInstance, garage: GarageSpot, drivenId: string | null = null, away = false): CarLocation {
+  if (away) return 'away';
   if (car.id === drivenId) return 'driving';
   if (!car.pose) return 'unplaced';
   return carInBay([car], garage) ? 'here' : 'elsewhere';

@@ -26,10 +26,12 @@ import { isMachine } from './sim/types';
 import type { Wallet } from '../state/Inventory';
 import { PLAYER } from '../data/player';
 import { OBJECTIVES, type ObjectiveContext } from '../data/objectives';
-import { toast } from '../ui/dom';
+import { el, toast } from '../ui/dom';
 import { keyFor, padGlyph, padText } from '../ui/padHints';
 import { stickCurve } from '../core/gamepad';
 import { openSettings } from '../ui/menus/SettingsPanel';
+import { openCharacterPanel } from '../ui/menus/CharacterPanel';
+import type { GarageSide } from '../garage/groups';
 import { FactorySim } from './sim/FactorySim';
 import { spawnDemoFactory, spawnStressLoops } from './sim/testLayouts';
 import type { Action } from '../config/keybinds';
@@ -39,8 +41,11 @@ import { bayOccupant, bayPose, bayRect, type BayBlocker, type GarageSpot } from 
 import { makeCarPreview } from '../car/CarModel';
 import { buildingIcons } from './view/BuildingIcons';
 import { formatCredits } from '../data/sales';
-import { isBlocked, raceBlocker, worstWear } from '../data/wear';
-import { aimBlockedText, blockText, boardedBlockedText, driveState, hitText, repairBeforeRaceText, seatRefusedText, wearTone } from '../data/wearText';
+import { raceBlocker, worstWear } from '../data/wear';
+import { aimBlockedText, blockText, boardedBlockedText, driveState, hitText, needOf, needOfBlock, repairBeforeRaceText, seatRefusedText, wearTone } from '../data/wearText';
+import { FUEL } from '../data/balance';
+import { fuelBlocked, fuelPct, fuelTone, fuelUsed, isDry, pourCans } from '../data/fuel';
+import { fuelText } from '../ui/fuelGauge';
 import type { TrackSelectParams } from '../race/TrackSelectMode';
 
 export interface FactoryModeParams {
@@ -76,6 +81,10 @@ export class FactoryMode implements Mode {
   private started = false;
   /** The pause / start overlay is up. */
   private paused = true;
+  /** « Personnage » panel open (from the pause): the camera frames the character from the front. */
+  private characterOpen = false;
+  /** A visited world's owner, standing where they left their character. */
+  private friend: { avatar: PlayerAvatar; tag: THREE.Sprite; pos: THREE.Vector3; yaw: number } | null = null;
   /**
    * Playing with the pad without pointer lock: a pad press is no user gesture, so the browser refuses
    * the lock; the camera turns with the right stick and the aim stays at the screen center anyway.
@@ -116,6 +125,8 @@ export class FactoryMode implements Mode {
   private wearSeq = 0;
   /** The driven car is past the race limit and was told so (boarding a car to repair, or crossing it): once per drive. */
   private limitWarned = false;
+  /** « Panne sèche » said once per drive. */
+  private dryWarned = false;
   /** E held on a belt: seconds held and the line it picks up when HAND.BELT_LINE_SECONDS is reached. */
   private beltHold: { t: number; ids: Set<number>; taken: ItemCounts } | null = null;
   /** Last grounded positions (one every 0.25 s, ring of 4): where a fall through the relief comes back. */
@@ -199,7 +210,7 @@ export class FactoryMode implements Mode {
       onEvent: () => toast('La voiture a pris l’eau : retour au sec', 'info', 2200),
       isDecor: (c) => this.world.isDecor(c),
     });
-    this.avatar = new PlayerAvatar(this.game.assets);
+    this.avatar = new PlayerAvatar(this.game.assets, this.state.look);
     this.scene.add(this.avatar.root);
     // The camera looks through trees and rocks (no pumping in a forest), never under the ground.
     // (Over the lake, its surface: the camera never goes under the water, which is not drawn from below.)
@@ -302,6 +313,10 @@ export class FactoryMode implements Mode {
       home: () => this.goHome(),
       canGoHome: () => !this.driving,
       settings: () => openSettings(this.game, this.state, () => this.applySettings(), () => this.applySettings()),
+      character: () => this.openCharacter(),
+      canCustomize: () => !this.driving,
+      shareWorld: this.state.visit ? undefined : () => this.state.shareWorld?.(),
+      leaveVisit: this.state.visit ? () => this.state.leaveVisit?.() : undefined,
       closePanel: () => this.closePanel(),
     });
     this.build.onChange = () => this.hud.onToolChanged(this.build.tool);
@@ -325,7 +340,14 @@ export class FactoryMode implements Mode {
       },
       drivenCarId: () => this.cars.drivingId,
       bayBlocker: this.bayBlocker,
+      extend: (id, side) => this.extendGarage(id, side),
+      openPlace: (id) => {
+        const b = this.sim.buildings.get(id);
+        if (b?.type === 'garage') this.openGarage(b);
+      },
     });
+    // Visiting a friend's world: the banner (over the HUD) and the friend's character.
+    this.setupVisit();
 
     this.unsub.push(
       this.game.pointer.subscribe((locked) => {
@@ -391,9 +413,65 @@ export class FactoryMode implements Mode {
     if (!this.game.pointer.locked && !this.freeCursor && !this.uiOpen) void this.resume();
   };
 
-  /** A HUD panel or the garage panel is open (no player control). */
+  /** A HUD panel, the garage panel or the character panel is open (no player control). */
   private get uiOpen(): boolean {
-    return this.hud.panelOpen || this.garagePanel.isOpen;
+    return this.hud.panelOpen || this.garagePanel.isOpen || this.characterOpen;
+  }
+
+  /** « Personnage » from the pause: the panel on the right, the character facing the camera on the left. */
+  private openCharacter(): void {
+    if (this.characterOpen || this.driving) return;
+    this.characterOpen = true;
+    this.hud.showOverlay(false, false);
+    openCharacterPanel(this.state, {
+      onChange: () => this.avatar.setLook(this.state.look),
+      onClose: () => {
+        this.characterOpen = false;
+        this.avatar.setLook(this.state.look);
+        if (this.paused) this.hud.showOverlay(true, true);
+      },
+    });
+  }
+
+  /**
+   * Visiting a friend's world: a banner says whose it is and that nothing is saved, and the friend's character stands
+   * where they left it, their name over it.
+   */
+  private setupVisit(): void {
+    const v = this.state.visit;
+    if (!v) return;
+    const date = v.at ? ` (partagé le ${new Date(v.at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })})` : '';
+    this.hud.layer.appendChild(
+      el('div', { class: 'visit-banner' },
+        el('span', {}, `Monde de ${v.from}${date} · visite : rien n’est sauvegardé`),
+        el('button', { class: 'small', 'data-action': 'leave-visit', onclick: () => this.state.leaveVisit?.() }, 'Quitter la visite'),
+      ),
+    );
+    const p = v.player;
+    if (!p) return;
+    const friend = new PlayerAvatar(this.game.assets, v.look);
+    const pos = new THREE.Vector3(p.x, p.y, p.z);
+    const terrain = this.sim.terrain;
+    if (!terrain.flat) pos.y = Math.max(pos.y, terrain.heightAt(p.x, p.z));
+    friend.update(0.016, pos, 0, true, p.yaw + Math.PI, 0);
+    this.scene.add(friend.root);
+    const tag = nameSprite(v.from);
+    tag.position.set(pos.x, pos.y + 2.6, pos.z);
+    this.scene.add(tag);
+    this.friend = { avatar: friend, tag, pos, yaw: p.yaw + Math.PI };
+  }
+
+  /** Portrait camera of the character panel: in front of the face, the character on the left of the screen. */
+  private frameCharacter(dt: number): void {
+    const p = this.renderPos;
+    const fx = Math.sin(this.faceYaw);
+    const fz = Math.cos(this.faceYaw);
+    // Screen-right seen from the front is the character's left: look a bit that way to leave room for the panel.
+    const look = new THREE.Vector3(p.x + fz * 0.85, p.y + 0.85, p.z - fx * 0.85);
+    const target = new THREE.Vector3(p.x + fx * 3.6 + fz * 0.85, p.y + 1.35, p.z + fz * 3.6 - fx * 0.85);
+    target.y = Math.max(target.y, this.sim.terrain.heightAt(target.x, target.z) + 0.6);
+    this.camera.position.lerp(target, 1 - Math.exp(-6 * dt));
+    this.camera.lookAt(look);
   }
 
   private get driving(): boolean {
@@ -525,8 +603,23 @@ export class FactoryMode implements Mode {
     this.hud.flashWear(null);
     // A car to repair still drives (back to a garage), but no longer races: said once, when getting in.
     const block = raceBlocker(this.state.cars.find((c) => c.id === id) ?? null);
-    if (block) toast(boardedBlockedText(block.car.name, blockText(block.car) ?? ''), 'info', 3200);
+    if (block) toast(boardedBlockedText(block.car.name, blockText(block.car) ?? '', needOfBlock(block)), 'info', 3200);
     this.limitWarned = block !== null;
+    this.dryWarned = false;
+  }
+
+  /**
+   * A car in the reserve (or dry) parked here, and a fuel can in the backpack: E pours one into it instead of getting
+   * in (FUEL.CAN_L liters; a full kart takes one). True when poured.
+   */
+  private pourCan(id: string): boolean {
+    const car = this.state.cars.find((c) => c.id === id);
+    const inv = this.state.inventory;
+    if (!car || !fuelBlocked(car) || inv.count('fuel_can') < 1) return false;
+    if (inv.remove('fuel_can', 1) < 1) return false;
+    pourCans(car, 1);
+    toast(`Bidon versé : ${car.name} a ${fuelPct(fuelUsed(car))} % d’essence`, 'success', 1800);
+    return true;
   }
 
   /** Gets out if slow enough; false otherwise. */
@@ -558,6 +651,21 @@ export class FactoryMode implements Mode {
     this.hud.onToolChanged(this.build.tool);
     this.garagePanel.open({ id: b.id, x: b.x, z: b.z, rot: b.rot, ...(b.py !== undefined ? { py: b.py } : {}) });
     this.game.pointer.release();
+  }
+
+  /** « Agrandir » from the garage panel: a module more on that side, if nothing stands in the way. Null when done. */
+  private extendGarage(id: number, side: GarageSide): string | null {
+    const at = this.sim.garageExtension(id, side);
+    if (!at) return 'Garage introuvable';
+    const blocker = this.placementBlocker(this.sim.cellsFor('garage', at.x, at.z, at.rot), 'garage');
+    if (blocker) return blocker;
+    const r = this.sim.extendGarage(id, side, { wallet: this.wallet });
+    if (r.ok) {
+      this.hud.updateStorage();
+      return null;
+    }
+    if (r.level) return 'Le terrain n’est pas au même niveau de ce côté';
+    return r.check ? describeError(r.check) : 'Impossible d’agrandir ce garage';
   }
 
   private closeGarage(): void {
@@ -815,7 +923,8 @@ export class FactoryMode implements Mode {
     if (this.garagePanel.isOpen) {
       this.frameGarage(dt);
       this.setPreview(this.garagePanel.preview);
-    } else this.orbit.update(this.renderPos, dt);
+    } else if (this.characterOpen) this.frameCharacter(dt);
+    else this.orbit.update(this.renderPos, dt);
     this.cars.update(dt, alpha, this.camera);
 
     // Facing: toward movement, toward the camera while a build tool is active, toward the rock while mining.
@@ -834,6 +943,13 @@ export class FactoryMode implements Mode {
       ? null
       : (terrain.slopeAt(this.renderPos.x, this.renderPos.z, this.slope), { y: terrain.heightAt(this.renderPos.x, this.renderPos.z), sx: this.slope.x, sz: this.slope.z });
     this.avatar.update(dt, this.renderPos, this.player.speed, this.player.grounded, this.faceYaw, this.player.landedImpact, ground);
+    // The friend turns toward the visitor once they come close.
+    const f = this.friend;
+    if (f) {
+      const d = Math.hypot(this.renderPos.x - f.pos.x, this.renderPos.z - f.pos.z);
+      if (d < 10) f.yaw = Math.atan2(this.renderPos.x - f.pos.x, this.renderPos.z - f.pos.z);
+      f.avatar.update(dt, f.pos, 0, true, f.yaw, 0);
+    }
     this.player.landedImpact = 0;
 
     // Aim: screen center when locked, cursor in free mode (none while the garage camera frames the bay).
@@ -891,7 +1007,7 @@ export class FactoryMode implements Mode {
         // wear it would get out with: getting out may take a car at the limit past it.
         const block = this.cars.raceBlockerOnExit();
         if (block) {
-          toast(seatRefusedText(blockText(block.car) ?? ''), 'error', 2200);
+          toast(seatRefusedText(blockText(block.car) ?? '', needOfBlock(block)), 'error', 2200);
           // A car that crossed the limit just now: said by this toast, not again by updateWear.
           this.limitWarned = true;
         } else if (this.exitCar()) this.goRace(id);
@@ -921,9 +1037,14 @@ export class FactoryMode implements Mode {
       if (text) this.hud.flashWear(text);
     }
     const car = this.cars.drivingCar;
-    if (car && !this.limitWarned && isBlocked(car)) {
+    const need = car ? needOf(car) : null;
+    if (car && !this.limitWarned && need) {
       this.limitWarned = true;
-      toast(repairBeforeRaceText(blockText(car) ?? ''), 'info', 3200);
+      toast(repairBeforeRaceText(blockText(car) ?? '', need), 'info', 3200);
+    }
+    if (car && !this.dryWarned && isDry(car)) {
+      this.dryWarned = true;
+      toast(`Panne sèche : descends et verse un bidon d’essence (${keyFor(this.game.input.device, 'interact', 'foot').replace(/<[^>]+>/g, '')} près de la voiture), ou fais le plein au garage`, 'error', 4200);
     }
   }
 
@@ -1058,7 +1179,7 @@ export class FactoryMode implements Mode {
         // A press takes the aimed tile; holding on goes on to the whole line.
         const taken = load.tile ? this.takeFromBelts([belt]) : {};
         this.beltHold = { t: 0, ids: new Set(load.ids), taken };
-      } else if (car) this.enterCar(car);
+      } else if (car && !this.pourCan(car)) this.enterCar(car);
     }
     if (input.wasPressed('cancel')) {
       // Escape closes the active tool first; only without a tool does it pause (with the pointer
@@ -1127,8 +1248,13 @@ export class FactoryMode implements Mode {
       const state = car ? driveState(car) : null;
       const tone = state && car ? wearTone(worstWear(car)) : 'good';
       const wear = state ? ` · <span class="${tone === 'good' ? 'muted' : tone}">${state}</span>` : '';
-      const race = tone === 'bad' ? '' : ` · ${k('retry')} courir`;
-      html = `<b>${car?.name ?? 'Voiture'}</b>${wear} · ${Math.round(this.cars.speedKmh())} km/h · ${exit}${race} · ${k('respawn')} replacer`;
+      // Fuel: shown from the moment it is no longer full; dry, what to do.
+      const used = car ? fuelUsed(car) : 0;
+      const fuelLine = car && used > 0 ? fuelText(car) : null;
+      const ftone = fuelTone(used);
+      const fuel = fuelLine ? ` · <span class="${ftone === 'good' ? 'muted' : ftone}">${fuelLine.charAt(0).toLowerCase()}${fuelLine.slice(1)}</span>` : '';
+      const race = car && needOf(car) ? '' : ` · ${k('retry')} courir`;
+      html = `<b>${car?.name ?? 'Voiture'}</b>${wear}${fuel} · ${Math.round(this.cars.speedKmh())} km/h · ${exit}${race} · ${k('respawn')} replacer`;
     } else if (t.kind === 'build') {
       const check = this.build.lastCheck;
       const err = check && !check.ok ? `<span class="bad">${describeError(check)}</span> · ` : '';
@@ -1137,7 +1263,9 @@ export class FactoryMode implements Mode {
       const fill = describeFill(check);
       const status = `${err}<b>${name}</b>${fill ? ` <span class="muted">${fill}</span>` : ''}${links ? ` · ${links}` : ''}`;
       const place = t.type === 'conveyor'
-        ? pad ? `${padGlyph('rt')} maintenu : tracer` : 'clic gauche maintenu : tracer'
+        ? this.build.tracing
+          ? pad ? `${padGlyph('rt')} fin du tracé` : 'clic gauche : fin du tracé'
+          : pad ? `${padGlyph('rt')} début du tracé` : 'clic gauche : début du tracé'
         : pad ? `${padGlyph('rt')} poser` : 'clic gauche : poser';
       html = pad
         ? `${status} · ${place} · ${padGlyph('lb')}${padGlyph('rb')} tourner · ${padGlyph('b')} annuler · ${padGlyph('left')}${padGlyph('right')} bâtiment`
@@ -1175,7 +1303,10 @@ export class FactoryMode implements Mode {
         // A car to repair still drives (back to a garage): said before getting in, in red.
         const c = this.state.cars.find((x) => x.id === car);
         const repair = c ? aimBlockedText(c) : null;
-        html = `${e} monter dans ${c?.name ?? 'la voiture'}${repair ? ` · <span class="bad">${repair}</span>` : ''}`;
+        const cans = this.state.inventory.count('fuel_can');
+        html = c && fuelBlocked(c) && cans > 0
+          ? `${e} verser un bidon d’essence (+${FUEL.CAN_L} L, ${cans} dans le sac) · <span class="bad">${repair ?? ''}</span>`
+          : `${e} monter dans ${c?.name ?? 'la voiture'}${repair ? ` · <span class="bad">${repair}</span>` : ''}`;
       }
       else if (mine) {
         const pct = Math.round((this.mineT / HAND.MINE_SECONDS) * 100);
@@ -1243,9 +1374,41 @@ export class FactoryMode implements Mode {
     this.cars.dispose();
     this.player.dispose();
     this.avatar.dispose();
+    if (this.friend) {
+      this.friend.avatar.dispose();
+      this.friend.tag.removeFromParent();
+      this.friend.tag.material.map?.dispose();
+      this.friend.tag.material.dispose();
+      this.friend = null;
+    }
     this.world.dispose();
     this.view.dispose();
     this.rig.dispose();
     this.disposeCamera();
   }
+}
+
+/** A name over a character (the friend in a visited world): white text on a dark pill, facing the camera. */
+function nameSprite(text: string): THREE.Sprite {
+  const w = 512;
+  const h = 96;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const c = canvas.getContext('2d')!;
+  c.font = 'bold 56px system-ui, -apple-system, "Segoe UI", sans-serif';
+  const tw = Math.min(w - 40, c.measureText(text).width);
+  c.fillStyle = 'rgba(20, 22, 40, 0.75)';
+  c.beginPath();
+  c.roundRect((w - tw) / 2 - 20, 8, tw + 40, h - 16, 30);
+  c.fill();
+  c.fillStyle = '#ffffff';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(text, w / 2, h / 2 + 2, w - 40);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+  sprite.scale.set(2.6, 0.49, 1);
+  return sprite;
 }

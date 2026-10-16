@@ -39,7 +39,7 @@ Les touches suivent la position physique. Les libellés ci-dessous et dans le je
 | Espace | Sauter |
 | 1 à 9 | Raccourcis du menu de construction : convoyeur, foreuse, fonderie, constructeur, assembleuse, garage, répartiteur, fusionneur, concession (une fois leur palier débloqué) |
 | R | Tourner (sur le fantôme d'un garage, une flèche bleue marque la porte). Un convoyeur posé contre une machine s'oriente seul pour s'y raccorder ; R l'oriente autrement sur cette case |
-| Clic gauche | Poser (maintenu : tracer des convoyeurs ; viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée) |
+| Clic gauche | Poser. Convoyeur : un clic pour le début, un clic pour la fin, la ligne est tracée entre les deux (deux clics sur la même case : une tuile ; maintenir et glisser marche aussi). Viser une machine fait partir le tracé de sa sortie, ou l'arrêter devant son entrée |
 | F | Démonter |
 | Maintenir E sur un gisement | Miner à la main : un minerai toutes les 0,75 s dans le sac (case libre, à 6 m au plus) |
 | E sur un convoyeur | Prendre les objets de cette case dans le sac ; maintenu 0,5 s : ceux de toute la ligne (les convoyeurs reliés, en amont et en aval). Ce qui ne rentre pas dans le sac reste sur le convoyeur |
@@ -108,7 +108,7 @@ Une manette (Xbox, PlayStation, Switch Pro… en mapping standard) marche partou
 | X | Comme E : utiliser une machine, une concession, le hangar, un garage, monter en voiture ; maintenu : miner, prendre toute une ligne de convoyeur |
 | Y | Menu de construction |
 | ← / → | Bâtiment précédent / suivant (dans l'ordre du menu, ceux débloqués) |
-| RT | Poser ; maintenu : tracer un convoyeur. En démontage : démonter |
+| RT | Poser ; convoyeur : une pression au début, une à la fin (ou maintenir et glisser). En démontage : démonter |
 | LB / RB | Tourner |
 | B | Annuler le tracé, puis l'outil (comme le clic droit) |
 | ↓ | Démontage |
@@ -146,6 +146,10 @@ Une manette (Xbox, PlayStation, Switch Pro… en mapping standard) marche partou
 
 Le navigateur ne donne pas le pointer lock à la manette : en jouant à la manette, la visée reste au centre de l'écran sans verrouiller la souris. Un clic sur le jeu rend la caméra à la souris.
 
+## Personnage
+
+« Personnage », au menu principal ou dans la pause de l'usine, habille la mascotte : un nom, la couleur de sa combinaison à capuche, celle de sa peau (visage et tentacules) et un chapeau (casquette, casque de chantier, bonnet, haut-de-forme, couronne, cône). « Au hasard » tire une tenue en gardant le nom. Le personnage se tourne vers la caméra et change en direct ; on le retrouve dans l'usine et dans le décor du menu. L'apparence est sauvegardée et reste après « Nouvelle partie », comme les réglages. Le nom accompagne les défis et les mondes partagés.
+
 ## Progression
 
 Une nouvelle partie démarre avec un hangar vide et aucun bâtiment débloqué. On mine le fer à la main, puis on le travaille à l’établi du hangar : minerai → lingot, lingots → plaques ou tiges, tige → boulons. Ces pièces paient les **paliers** du hangar (sac d’abord, puis hangar), qui débloquent les bâtiments un par un :
@@ -166,7 +170,7 @@ Ensuite, la chaîne du fer prend le relais : foreuse → fonderie (lingots) → 
 Chaque machine montre où brancher un convoyeur : devant chaque **sortie**, une flèche **orange** flotte au-dessus d'un cadre au sol ; devant chaque **entrée**, une flèche **bleue** pointe vers la machine. Une foreuse n'a que des sorties, sur sa face avant ; fonderie, constructeur et assembleuse reçoivent par l'arrière et rendent par l'avant. Hors construction, seuls les côtés encore libres sont marqués ; avec un outil de construction en main, tous les ports libres clignotent.
 
 - **Poser un convoyeur** : sur la case d'une flèche, ou en visant la machine, le fantôme s'oriente seul (il reçoit la sortie, ou alimente l'entrée). Une flèche verte montre chaque liaison et l'indication du bas dit « ✓ reçoit : Foreuse · alimente : Fonderie ». Un clic sans bouger pose exactement le fantôme affiché.
-- **Tracer** : viser une machine part de sa sortie ; viser le bout d'un convoyeur le prolonge ; finir sur une machine s'arrête devant son entrée la plus proche et y tourne la dernière tuile. Le sens suit les ports : un convoyeur va toujours d'une sortie vers une entrée, même tracé dans l'autre sens (partir de la flèche bleue d'une entrée trace un convoyeur qui y arrive). Le tracé en L contourne les bâtiments quand l'autre ordre est libre.
+- **Tracer** : un clic fixe le début, la ligne suit la visée, un second clic la pose (clic droit ou Échap : annuler le tracé, l'outil reste en main). Viser une machine part de sa sortie ; viser le bout d'un convoyeur le prolonge ; finir sur une machine s'arrête devant son entrée la plus proche et y tourne la dernière tuile. Le sens suit les ports : un convoyeur va toujours d'une sortie vers une entrée, même tracé dans l'autre sens (partir de la flèche bleue d'une entrée trace un convoyeur qui y arrive). Le tracé en L contourne les bâtiments quand l'autre ordre est libre.
 - Une machine ne sort que par **une** sortie à la fois : dès qu'une est reliée, l'autre n'est plus marquée.
 - **Répartiteur** (touche 7) : ce qui entre par l'arrière sort tour à tour à l'avant, à gauche et à droite ; une sortie sans convoyeur ou bouchée est sautée, rien ne s'arrête tant qu'une sortie reste libre. Pour alimenter plusieurs machines depuis une seule ligne.
 - **Fusionneur** (touche 8) : jusqu'à trois arrivées (arrière, gauche, droite) réunies en une seule vers l'avant, chacune à son tour. Un convoyeur qui arrive sur le flanc d'un autre fusionne aussi, comme avant.
@@ -203,6 +207,8 @@ Le garage est un bâtiment de l’usine (touche 6, palier 5 ; 40 plaques, 24 tig
 - **Les voitures restent garées** dans l’usine, là où on les laisse, et se conduisent (commandes ci-dessus). Elles traversent les lignes de convoyeurs, qui sont au sol ; machines, murs et voitures garées restent solides. Dans l’usine, la vitesse est plafonnée à 90 km/h environ. Le kart de location ne roule que sur les circuits et ne s’use pas.
 - **Construire pièce par pièce** : dans le brouillon d'une nouvelle voiture, « Poser maintenant » met dans la place ce qu'on a d'une pièce (deux roues, par exemple) sans attendre le reste. La voiture en construction reste dans le garage : pièces posées en couleur, le reste en transparence, des chandelles jaunes sous les roues manquantes, la carrosserie en métal nu tant qu'il manque des panneaux, le moteur posé sur son essieu. Son panneau dit ce qui est posé (« 3/6 pièces »), pose la suite ou retire une pièce (rendue au sac, ou à la réserve si c’est un lot usé). La voiture sort, numérotée et choisie pour courir, dès que les pièces obligatoires y sont ; « Abandonner » rend tout (les lots usés à la réserve).
 - Un garage où une voiture est garée ou en construction ne se démonte pas, et on ne construit pas sur une voiture.
+- **Agrandir** : dans le panneau, « Ce garage » liste ses places (un clic montre le panneau d’une autre place) et « Agrandir à gauche / à droite » colle une place de plus (au prix d’un garage ; la case doit être libre et au même niveau). Des garages posés côte à côte, dans le même sens et sur la même dalle, forment aussi un seul garage. Le mur entre deux places disparaît, il reste un poteau entre les portes ; chaque place a sa porte et son panneau, et une voiture en attente s’y gare aussitôt.
+- **Personnaliser** : « Personnaliser » règle la couleur des murs et le nom de l’enseigne (14 caractères) pour tout le garage. Le nom s’affiche au-dessus de la porte du milieu, « PLACE 1 », « PLACE 3 »… au-dessus des autres.
 - Sauvegardes : les voitures d’une ancienne sauvegarde se garent dès le premier garage construit, une par garage libre ; les autres attendent le suivant.
 
 ## Concession et ventes
@@ -255,6 +261,40 @@ Le prix d’une réparation suit l’usure (à 20 %, des roues coûtent 4 pneus 
 | Moteur | 2 plaques, 1 tige, 2 boulons | 590 cr |
 | Carrosserie | 2 plaques, 4 boulons | 650 cr |
 | Aileron | 1 plaque, 1 boulon | 250 cr |
+
+## Essence
+
+Les voitures construites ont un réservoir : 10 L pour le kart, 30 L pour la Sportive. Le kart de location et l’essai depuis l’éditeur n’en consomment pas.
+
+- **Consommation** : en roulant, en course comme dans l’usine, davantage à plein gaz (sans gaz, un cinquième seulement). Un plein fait environ 25 tours d’Ovale avant la réserve. Rien ne se consomme pendant la pause ou quand un panneau est ouvert. Une voiture neuve sort avec le plein.
+- **Panne sèche** : réservoir vide, le moteur se coupe ; la voiture roule encore sur son élan et freine, mais n’avance plus.
+- **Réserve** : sous 10 %, une voiture ne prend plus le départ d’une course (« À ravitailler au garage » ; le kart de location est proposé, comme pour une voiture à réparer). Elle roule encore dans l’usine tant qu’il en reste.
+- **Pétrole** : deux gisements de pétrole (plaques sombres et brillantes), à l’est du hangar. On le mine à la main ou avec une foreuse. **Bidon d’essence** (10 L) : 3 pétroles bruts et 1 plaque, au constructeur ou à la main à l’établi.
+- **Faire le plein** : au garage, pour la voiture garée dans la place, en bidons (le sac d’abord, puis le hangar) ou en crédits (la valeur des bidons plus 25 %). Une voiture en panne dans l’usine : E à côté d’elle verse un bidon du sac (+10 L) au lieu de monter.
+- **Affichage** : jauge d’essence au garage, au choix du circuit et sous le compteur en course ; « essence 62 % · 6,2 L » dans l’indication en conduisant (dès que le plein n’est plus fait), et « à ravitailler » en visant une voiture dans la réserve.
+
+## Défis entre amis
+
+Sans serveur, à la Trackmania : on court contre le **fantôme** d’un ami.
+
+- **Défier un ami** : à l’arrivée d’une course, « Défier un ami avec ce temps » crée un défi : ton nom, le circuit (entier : un circuit de l’éditeur part avec), ta voiture, ton temps et ton fantôme. On l’envoie par un lien (« Copier le lien »), un code (« Copier le code ») ou un fichier (« Télécharger le fichier »). Le code tient dans le lien après le `#` : il n’est jamais envoyé à un serveur.
+- **Relever un défi** : ouvrir le lien dans le jeu, ou « Courses » → « Importer un défi… » (coller le code ou le lien, ou ouvrir le fichier). Il s’ajoute à « Défis reçus » : le circuit, qui l’a posé, le temps à battre, la voiture. « Relever le défi » lance la course avec ta voiture ; le fantôme de l’ami, translucide et son nom au-dessus, court avec toi. À l’arrivée : « Tu bats Léa de 0.420 s ! » ou son avance, et « Renvoyer le défi à Léa » envoie ton fantôme en retour.
+- Un circuit officiel est pris dans ton propre jeu ; celui d’un ami se court tel quel, sans se mêler à tes circuits. Les défis reçus (10 au plus) restent après « Nouvelle partie ».
+
+## Voir le monde d’un ami
+
+- **Partager mon monde** (menu principal, pause de l’usine) : un code de ta partie (usine, garages, voitures, records, ton personnage et ton nom), à envoyer par lien, code ou fichier, comme un défi. Tes réglages et les défis reçus n’en font pas partie.
+- **Visiter un monde…** (menu principal), ou ouvrir le lien : tu te promènes dans l’usine de ton ami, tu montes dans ses voitures, tu peux même construire. Son personnage t’attend là où il l’a laissé, son nom au-dessus, et se tourne vers toi. Un bandeau rappelle que **rien n’est sauvegardé** : ta partie est enregistrée avant la visite et rechargée intacte quand tu cliques « Quitter la visite » (bandeau, pause ou menu). Recharger la page pendant une visite ramène aussi dans ta partie.
+
+## Trackdays
+
+Dans « Courses », sur un circuit, « Organiser un trackday » prête tes voitures construites à des clients pour la journée.
+
+- **Voitures** : on coche celles qui partent. Une voiture à réparer, à ravitailler ou qui n’a pas assez d’essence pour la journée reste au garage. Chaque voiture accueille 4 clients, qui font 3 tours chacun.
+- **Accueil** : le repas (sandwichs, buffet, repas gastronomique), les boissons (eau, café et sodas, bar complet) et le coaching. On coache soi-même, aussi bien que sa médaille sur le circuit (il en faut une), ou on paie un moniteur. Le repas, les boissons et le moniteur se paient au départ, en crédits.
+- **Billet** : de 100 à 2 000 cr. Les clients viennent si le billet ne dépasse pas trop ce que la journée vaut pour eux : de belles voitures en bon état, un bon accueil, un circuit officiel et une bonne réputation la font valoir plus.
+- **Prévision** : le panneau dit exactement ce qui se passera : clients, billets, frais, bilan, satisfaction, réputation, et l’usure et l’essence que chaque voiture y laissera.
+- **Déroulement** : la journée dure 2 minutes, pendant qu’on joue (usine, courses…). Ses voitures sont absentes : elles disparaissent de l’usine, le garage les dit « Au trackday », on ne peut ni les conduire ni les faire courir. À la fin, les billets sont crédités, les voitures reviennent à leur place, usées et avec moins d’essence, et la réputation (0 à 100) suit la satisfaction des clients. Un seul trackday à la fois.
 
 ## Architecture
 

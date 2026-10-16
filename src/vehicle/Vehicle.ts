@@ -69,6 +69,8 @@ export class Vehicle {
   /** Signed speed along the car's forward axis (m/s). */
   speed = 0;
   steerAngle = 0;
+  /** Dry tank (data/fuel.ts): the engine gives nothing, neither forward nor in reverse; brakes and steering still work. */
+  engineOff = false;
   wheelsInContact = 0;
   /** Seconds spent upside-down or stuck (for auto-respawn). */
   flippedTime = 0;
@@ -237,6 +239,7 @@ export class Vehicle {
       else engine -= t.reverseN * c.brake;
     }
     if (c.throttle > 0 && c.brake > 0 && speed > 1.0) engine = 0;
+    if (this.engineOff) engine = 0;
     const front = (engine * (1 - t.rearBias)) / Math.max(1, this.frontIdx.length);
     const rear = (engine * t.rearBias) / Math.max(1, this.rearIdx.length);
     for (const i of this.frontIdx) vc.setWheelEngineForce(i, front);

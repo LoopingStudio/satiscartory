@@ -22,6 +22,8 @@ export interface CarInstance {
   pose?: CarPose | null;
   /** Wear of the installed parts (data/wear.ts); absent on a new car, never an empty object. */
   wear?: CarWear;
+  /** ‰ of the tank used (data/fuel.ts); absent = full (a new car comes with a full tank). */
+  fuel?: number;
 }
 
 /** Restores a pose from untrusted save data (null if invalid). */

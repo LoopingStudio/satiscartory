@@ -55,6 +55,12 @@ export const GARAGE_WALLS: readonly LayoutBox[] = [
   { x: W - T / 2, y: H / 2, z: T / 2, hx: T / 2, hy: H / 2, hz: D - T / 2 },
 ];
 
+/**
+ * The door posts alone (−X, +X): what stands of a side wall that a module of a bigger garage shares with the next one
+ * (garage/groups.ts), a pillar between the two doors.
+ */
+export const GARAGE_POSTS: readonly LayoutBox[] = [-1, 1].map((sx) => ({ x: sx * (W - T / 2), y: H / 2, z: D - GARAGE.post / 2, hx: T / 2, hy: H / 2, hz: GARAGE.post / 2 }));
+
 /** Lintel over the door, carrying the sign (collider too: a jumping head bumps into it). */
 export const GARAGE_LINTEL: LayoutBox = { x: 0, y: (DOOR_H + H) / 2, z: D - T / 2, hx: W - T, hy: (H - DOOR_H) / 2, hz: T / 2 };
 

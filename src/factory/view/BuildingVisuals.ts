@@ -18,6 +18,7 @@ import { CarModel } from '../../car/CarModel';
 import { buildLook, type BuildLook } from '../../garage/build';
 import { HUB_BENCH } from './hubBench';
 import { GARAGE, GARAGE_BAY, GARAGE_CLUTTER, GARAGE_DOOR, GARAGE_INNER, GARAGE_LINTEL, GARAGE_WALLS } from './garageLayout';
+import { DEFAULT_SIGN, DEFAULT_WALL, wallColor } from '../../data/garageStyle';
 import { DEALER_BAR, DEALER_DISPLAY, DEALER_HATCHES, DEALER_SHOP, DEALER_SIGN, DEALER_STORE_FRONT, DEALER_TOP, dealerBuild } from './dealerLayout';
 
 const STATUS_COLORS = { working: 0x3ddc84, idle: 0xffb347, blocked: 0xff5d5d, noRecipe: 0x8a8fb5 } as const;
@@ -68,10 +69,37 @@ const GARAGE_SIGN = { halfW: 1.5, bottom: 2.9, top: 3.42, depth: 0.06 } as const
 const signGeometry = new THREE.BoxGeometry(GARAGE_SIGN.halfW * 2, GARAGE_SIGN.top - GARAGE_SIGN.bottom, GARAGE_SIGN.depth);
 const screenPlane = new THREE.PlaneGeometry(1, 1);
 
-/** Static boxes and paint of the garage merged per material (built once from the shared layout, shared by every garage and ghost). */
-let garageGeometries: Record<GarageMat, THREE.BufferGeometry> | null = null;
-function garageGeometry(): Record<GarageMat, THREE.BufferGeometry> {
-  if (garageGeometries) return garageGeometries;
+/** Which side walls a garage module leaves out: those it shares with the next module of the same garage (garage/groups.ts). */
+export interface GarageOpen {
+  minus: boolean;
+  plus: boolean;
+}
+
+/** Look of a garage model: open sides, wall colour, sign (data/garageStyle.ts). */
+export interface GarageModelOpts extends Partial<GarageOpen> {
+  paint?: string;
+  sign?: string;
+}
+
+/** Wall material per colour (the default is the shared kit one; never disposed). */
+const garageWallMats = new Map<string, THREE.Material>();
+function garageWallMaterial(paint: string | undefined): THREE.Material {
+  const c = wallColor(paint);
+  if (c.id === DEFAULT_WALL) return garageMats.wall;
+  let m = garageWallMats.get(c.id);
+  if (!m) garageWallMats.set(c.id, (m = new THREE.MeshStandardMaterial({ color: c.hex, roughness: 0.85 })));
+  return m;
+}
+
+/**
+ * Static boxes and paint of the garage merged per material (built once per pair of open sides from the shared layout,
+ * shared by every garage and ghost). An open side has no side wall (its door post stays, a pillar between two doors).
+ */
+const garageGeometries = new Map<string, Record<GarageMat, THREE.BufferGeometry>>();
+function garageGeometry(open: GarageOpen = { minus: false, plus: false }): Record<GarageMat, THREE.BufferGeometry> {
+  const cacheKey = `${+open.minus}${+open.plus}`;
+  const cached = garageGeometries.get(cacheKey);
+  if (cached) return cached;
   const parts: Record<GarageMat, THREE.BufferGeometry[]> = { wall: [], trim: [], frame: [], beam: [], paint: [] };
   const box = (mat: GarageMat, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
     parts[mat].push(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0).translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2));
@@ -83,6 +111,7 @@ function garageGeometry(): Record<GarageMat, THREE.BufferGeometry> {
   // corner and the side bands start after them (no coplanar faces).
   const e = 0.02;
   GARAGE_WALLS.forEach((w, i) => {
+    if ((i === 1 && open.minus) || (i === 2 && open.plus)) return;
     const back = i === 0;
     const x0 = w.x - w.hx;
     const x1 = w.x + w.hx;
@@ -110,10 +139,11 @@ function garageGeometry(): Record<GarageMat, THREE.BufferGeometry> {
   paint(bw - l, bw, -bd, bd);
   paint(-bw + l, bw - l, -bd, -bd + l);
   paint(-bw + l, bw - l, bd - l, bd);
-  garageGeometries = Object.fromEntries(
+  const geo = Object.fromEntries(
     Object.entries(parts).map(([k, list]) => [k, mergeGeometries(list, false) ?? new THREE.BufferGeometry()]),
   ) as Record<GarageMat, THREE.BufferGeometry>;
-  return garageGeometries;
+  garageGeometries.set(cacheKey, geo);
+  return geo;
 }
 
 /** Dealer materials: the garage's walls, trim and yellow frame, plus the showroom podium and the hatches. */
@@ -222,7 +252,8 @@ const SIGN_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 /** A word (« GARAGE », « CONCESSION ») on a dark panel between hazard stripes, w × h px (shared per word, never disposed). */
 const signMaterials = new Map<string, THREE.Material>();
 function signMaterial(text: string, w: number, h: number): THREE.Material {
-  let m = signMaterials.get(text);
+  const key = `${text}|${w}x${h}`;
+  let m = signMaterials.get(key);
   if (m) return m;
   m = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -252,10 +283,11 @@ function signMaterial(text: string, w: number, h: number): THREE.Material {
       c.font = `bold ${Math.round(0.66 * h)}px ${SIGN_FONT}`;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
-      c.fillText(text, w / 2, 0.54 * h);
+      // A long name (a garage's own sign) is squeezed between the stripes rather than cut.
+      c.fillText(text, w / 2, 0.54 * h, w - 140);
     }),
   });
-  signMaterials.set(text, m);
+  signMaterials.set(key, m);
   return m;
 }
 
@@ -379,7 +411,7 @@ export function footprintCenter(type: BuildingType, x: number, z: number, rot: R
  * picture, a dealer with a car on show (never on a ghost: it is rebuilt on every turn, nor on a live dealer, which
  * shows the car it is assembling).
  */
-export function buildModel(assets: AssetLoader, type: BuildingType, opts: { showcase?: boolean } = {}): THREE.Group {
+export function buildModel(assets: AssetLoader, type: BuildingType, opts: { showcase?: boolean; garage?: GarageModelOpts } = {}): THREE.Group {
   const g = new THREE.Group();
   // Kenney machines are tunnels open on their long sides (native ±X). Machines are 2 cells
   // wide along X with items crossing along Z, so their parts are added in a quarter-turned frame
@@ -475,9 +507,10 @@ export function buildModel(assets: AssetLoader, type: BuildingType, opts: { show
       // Drive-in bay (layout in garageLayout): walls on three sides, the front (+Z) open as the door
       // between two yellow posts under a lintel with the sign, open top with two beams, a painted bay
       // around the parking pose, a console on the back wall and some clutter in the back corners.
-      const geo = garageGeometry();
+      const look = opts.garage ?? {};
+      const geo = garageGeometry({ minus: !!look.minus, plus: !!look.plus });
       for (const key of Object.keys(geo) as GarageMat[]) {
-        const m = new THREE.Mesh(geo[key], garageMats[key]);
+        const m = new THREE.Mesh(geo[key], key === 'wall' ? garageWallMaterial(look.paint) : garageMats[key]);
         m.castShadow = key !== 'paint';
         m.receiveShadow = true;
         g.add(m);
@@ -497,7 +530,7 @@ export function buildModel(assets: AssetLoader, type: BuildingType, opts: { show
       // Sign on the lintel, facing out.
       const t = garageMats.trim;
       // 576 × 100 px for the 3 × 0.52 m panel.
-      const sign = new THREE.Mesh(signGeometry, [t, t, t, t, signMaterial('GARAGE', 576, 100), t]);
+      const sign = new THREE.Mesh(signGeometry, [t, t, t, t, signMaterial(look.sign ?? DEFAULT_SIGN, 576, 100), t]);
       sign.position.set(0, (GARAGE_SIGN.bottom + GARAGE_SIGN.top) / 2, GARAGE_DOOR.z - GARAGE_SIGN.depth / 2);
       sign.castShadow = true;
       g.add(sign);
@@ -692,8 +725,9 @@ export class BuildingVisual {
   private lastT: number | null = null;
   private phase = Math.random() * 10;
 
-  constructor(private readonly assets: AssetLoader, readonly building: Building) {
-    const model = buildModel(assets, building.type);
+  /** `garage`: the look of a garage module (open sides, wall colour, sign), from FactoryView. */
+  constructor(private readonly assets: AssetLoader, readonly building: Building, garage?: GarageModelOpts) {
+    const model = buildModel(assets, building.type, garage ? { garage } : {});
     this.root.add(model);
     footprintCenter(building.type, building.x, building.z, building.rot, this.root.position);
     this.root.rotation.y = building.rot * (Math.PI / 2);

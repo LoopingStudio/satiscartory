@@ -226,6 +226,13 @@ export class BuildController {
   private dragAim: { cell: [number, number]; building: number | null } | null = null;
   /** The drag ends on a belt that its last tile merges into: that end is not placed. */
   private dragMerge = false;
+  /**
+   * Two-click tracing: a first click without moving fixes the start and leaves the path following the
+   * aim; the next click places it. Holding and moving still traces in one gesture.
+   */
+  private dragArmed = false;
+  /** The end click of an armed trace was pressed (it places on release). */
+  private dragEndPressed = false;
   private dragPath: { x: number; z: number; rot: Rot }[] = [];
   private dragGhosts: THREE.Object3D[] = [];
   private highlight: THREE.Mesh;
@@ -419,7 +426,8 @@ export class BuildController {
 
   private updateBuild(type: BuildingType): void {
     if (this.dragStart) {
-      this.updateDrag();
+      // Between the two clicks, aiming out of reach keeps the last path rather than shrinking it.
+      if (!this.dragArmed || this.aim.cell) this.updateDrag();
       return;
     }
     const cell = this.aim.cell;
@@ -726,6 +734,8 @@ export class BuildController {
     this.dragStart = null;
     this.dragAim = null;
     this.dragMerge = false;
+    this.dragArmed = false;
+    this.dragEndPressed = false;
     this.dragPath = [];
   }
 
@@ -872,7 +882,13 @@ export class BuildController {
   // ------------------------------------------------------------ actions
 
   primaryDown(): void {
+    if (this.tool.kind === 'build' && this.tool.type === 'conveyor' && this.dragArmed) {
+      this.dragEndPressed = true; // second click: places on release
+      return;
+    }
     if (this.tool.kind === 'build' && this.tool.type === 'conveyor' && this.aim.cell) {
+      this.dragArmed = false;
+      this.dragEndPressed = false;
       this.dragStart = startCell(this.sim, this.aim.cell, this.aimPoint());
       this.dragAim = { cell: [...this.aim.cell], building: this.sim.at(this.aim.cell[0], this.aim.cell[1])?.id ?? null };
       this.updateDrag();
@@ -882,7 +898,7 @@ export class BuildController {
   primaryUp(): void {
     const tool = this.tool;
     if (tool.kind === 'build') {
-      if (tool.type === 'conveyor') this.commitDrag();
+      if (tool.type === 'conveyor') this.releaseDrag();
       else this.placeSingle(tool.type);
     } else if (tool.kind === 'dismantle') {
       this.dismantleAimed();
@@ -906,6 +922,27 @@ export class BuildController {
       this.onMessage?.(describeError(r.check), 'error');
     }
     this.onChange?.();
+  }
+
+  /**
+   * Release of the build button with a conveyor: the first click (released where it was pressed) only fixes
+   * the start; the second one, or a release after holding and moving, places the path.
+   */
+  private releaseDrag(): void {
+    if (!this.dragStart) return;
+    if (this.dragArmed) {
+      if (this.dragEndPressed) this.commitDrag();
+      return;
+    }
+    const pressed = this.dragAim;
+    const aim = this.aim.cell;
+    const moved =
+      !!aim &&
+      !!pressed &&
+      (aim[0] !== pressed.cell[0] || aim[1] !== pressed.cell[1]) &&
+      !(pressed.building !== null && this.sim.at(aim[0], aim[1])?.id === pressed.building);
+    if (moved) this.commitDrag();
+    else this.dragArmed = true;
   }
 
   private commitDrag(): void {
@@ -974,6 +1011,11 @@ export class BuildController {
 
   get dragging(): boolean {
     return this.dragStart !== null;
+  }
+
+  /** A trace whose start is fixed and that waits for its end click. */
+  get tracing(): boolean {
+    return this.dragArmed;
   }
 
   costLabel(cost: Inventory): string {

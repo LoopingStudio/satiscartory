@@ -34,6 +34,7 @@ export const RECIPES: Recipe[] = [
   { id: 'iron_rod', name: 'Tige de fer', machine: 'press', inputs: [{ item: 'iron_ingot', count: 1 }], outputs: [{ item: 'iron_rod', count: 1 }], ticks: 40 },
   { id: 'bolts', name: 'Boulons', machine: 'press', inputs: [{ item: 'iron_rod', count: 1 }], outputs: [{ item: 'bolt', count: 4 }], ticks: 40 },
   { id: 'tire', name: 'Pneu', machine: 'press', inputs: [{ item: 'latex', count: 2 }], outputs: [{ item: 'tire', count: 1 }], ticks: 60 },
+  { id: 'fuel_can', name: 'Bidon d’essence', machine: 'press', inputs: [{ item: 'crude_oil', count: 3 }, { item: 'plate', count: 1 }], outputs: [{ item: 'fuel_can', count: 1 }], ticks: 80 },
   // Assembleuse
   {
     id: 'chassis', name: 'Châssis', machine: 'assembler',
@@ -64,6 +65,7 @@ export const RECIPES: Recipe[] = [
   { id: 'hand_plate', name: 'Plaque', machine: 'bench', inputs: [{ item: 'iron_ingot', count: 3 }], outputs: [{ item: 'plate', count: 2 }], ticks: 20 },
   { id: 'hand_rod', name: 'Tige de fer', machine: 'bench', inputs: [{ item: 'iron_ingot', count: 1 }], outputs: [{ item: 'iron_rod', count: 1 }], ticks: 15 },
   { id: 'hand_bolts', name: 'Boulons', machine: 'bench', inputs: [{ item: 'iron_rod', count: 1 }], outputs: [{ item: 'bolt', count: 4 }], ticks: 15 },
+  { id: 'hand_fuel', name: 'Bidon d’essence', machine: 'bench', inputs: [{ item: 'crude_oil', count: 3 }, { item: 'plate', count: 1 }], outputs: [{ item: 'fuel_can', count: 1 }], ticks: 20 },
 ];
 
 export const RECIPES_BY_ID: Record<string, Recipe> = Object.fromEntries(RECIPES.map((r) => [r.id, r]));

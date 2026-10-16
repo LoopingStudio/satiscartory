@@ -7,6 +7,7 @@ import type { CarInstance } from './assembly';
 import { buildComplete, newBuild, slotOf } from './build';
 import { buildIn, rollOut } from './buildActions';
 import { bayOccupant, type BayBlocker, type GarageSpot } from './parking';
+import { fillCans, fillCredits, fillUp, type FuelCar } from '../data/fuel';
 
 /*
  * Wear actions of the garage on the game state (pure: no DOM, no three). A repair is paid in items (the kit of
@@ -171,6 +172,26 @@ export function repairCar(state: GameState, carId: string, pay: Pay): { paid: Pa
   for (const s of slots) clearSlotWear(car, s);
   state.objectives.repair = true;
   return { paid, slots };
+}
+
+/**
+ * Filling up a car's tank (« Faire le plein »): fuel cans (FUEL.CAN_L liters each, the last one may not be poured whole)
+ * or credits (data/fuel.ts fillCredits). Null when the tank is full or the car has none.
+ */
+export function fuelQuote(car: FuelCar): RepairQuote | null {
+  const cans = fillCans(car);
+  return cans > 0 ? { items: { fuel_can: cans }, credits: fillCredits(car) } : null;
+}
+
+/** Fills the tank of a car, all or nothing; what was paid, or null (nothing changed). */
+export function refuelCar(state: GameState, carId: string, pay: Pay): Partial<RepairQuote> | null {
+  const car = findCar(state, carId);
+  const q = car ? fuelQuote(car) : null;
+  if (!car || !q) return null;
+  const paid = payQuote(state, q, pay);
+  if (!paid) return null;
+  fillUp(car);
+  return paid;
 }
 
 /**

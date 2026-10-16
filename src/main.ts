@@ -4,7 +4,13 @@ import { initRapier } from './core/physics/PhysicsWorld';
 import type { ModeName } from './core/ModeManager';
 import { AssetGalleryMode } from './dev/AssetGalleryMode';
 import { MenuMode, type MenuEntry } from './ui/menus/MenuMode';
-import { el } from './ui/dom';
+import { el, formatTime, toast } from './ui/dom';
+import { sanitizeChallenge } from './race/challenge';
+import { decodeShare, encodeShare } from './share/codec';
+import { parseWorld, worldShare } from './share/world';
+import { openImportPanel, openSharePanel } from './ui/menus/SharePanel';
+import { satisfactionText } from './data/trackday';
+import { formatCredits } from './data/sales';
 import { confirmDialog } from './ui/confirm';
 import { GameState } from './state/GameState';
 import { SaveManager } from './state/SaveManager';
@@ -13,6 +19,7 @@ import { RaceMode } from './race/RaceMode';
 import { TrackSelectMode } from './race/TrackSelectMode';
 import { TrackEditorMode } from './track/editor/TrackEditorMode';
 import { applySettings, openSettings } from './ui/menus/SettingsPanel';
+import { openCharacterPanel } from './ui/menus/CharacterPanel';
 import { ItemIcons } from './core/assets/IconRenderer';
 import { fr } from './ui/i18n/fr';
 
@@ -58,19 +65,79 @@ async function main() {
     }
     SaveManager.clear();
     const settings = state.settings;
+    const look = state.look;
+    const challenges = state.challenges;
     state.replaceWith(new GameState());
     state.settings = settings;
+    state.look = look;
+    state.challenges = challenges;
     void game.switchMode('factory');
   };
-  const menuEntries = (): MenuEntry[] => [
+  // « Voir le monde d'un ami » (share/world.ts): visit a friend's game, never saved; the player's own game is saved
+  // first and loaded back untouched when they leave.
+  const visitWorld = async (code: string) => {
+    const { state: friend, visit } = parseWorld(await decodeShare('monde', code));
+    if (!state.visit) SaveManager.save(state);
+    // The visitor stays themselves: their settings, their character, their challenges.
+    friend.settings = state.settings;
+    friend.look = state.look;
+    friend.challenges = state.challenges;
+    state.replaceWith(friend);
+    toast(`Bienvenue dans le monde de ${visit.from} : rien n’y est sauvegardé`, 'success', 3500);
+    await game.switchMode('factory');
+  };
+  const leaveVisit = () => {
+    if (!state.visit) return;
+    const own = SaveManager.load() ?? new GameState();
+    own.settings = state.settings;
+    state.replaceWith(own);
+    toast('De retour dans ton monde', 'info', 2000);
+    void game.switchMode('menu');
+  };
+  state.leaveVisit = leaveVisit;
+  const shareWorld = async () => {
+    if (state.visit) return toast('Tu visites le monde d’un ami : retourne dans le tien pour le partager', 'error');
+    SaveManager.save(state);
+    const code = await encodeShare('monde', worldShare(state));
+    openSharePanel({
+      kind: 'monde',
+      title: 'Partager mon monde',
+      intro: 'Ton ami se promène dans ton usine, voit tes machines, tes garages et tes voitures, et ton personnage l’attend là où tu l’as laissé. Il ne peut rien y changer chez toi : c’est une copie, jamais sauvegardée chez lui.',
+      code,
+      fileName: `monde-${state.look.name.replace(/[^\p{L}\p{N}]+/gu, '-').toLowerCase()}.satiscartory`,
+    });
+  };
+  state.shareWorld = () => void shareWorld();
+  const importWorld = () =>
+    openImportPanel({
+      title: 'Visiter un monde',
+      intro: 'Colle le code ou le lien du monde qu’un ami t’a envoyé, ou ouvre son fichier. Ta partie est mise de côté et revient intacte quand tu quittes la visite.',
+      onCode: visitWorld,
+    });
+  const menuEntries = (): MenuEntry[] => state.visit ? [
+    { label: `Retourner chez ${state.visit.from}`, mode: 'factory', primary: true },
+    { label: 'Quitter la visite', action: leaveVisit },
+    { label: fr.menu.race, mode: 'tracks' },
+    { label: fr.menu.settings, action: () => openSettings(game, state) },
+  ] : [
     { label: SaveManager.hasSave() ? fr.menu.continue : fr.menu.play, mode: 'factory', primary: true },
     { label: fr.menu.race, mode: 'tracks' },
+    { label: 'Partager mon monde', action: () => void shareWorld() },
+    { label: 'Visiter un monde…', action: importWorld },
     { label: fr.menu.editor, mode: 'editor' },
+    {
+      label: fr.menu.character,
+      action: () => {
+        const menu = game.modes.current instanceof MenuMode ? game.modes.current : null;
+        menu?.setPortrait(true);
+        openCharacterPanel(state, { onChange: () => menu?.refreshLook(), onClose: () => menu?.setPortrait(false) });
+      },
+    },
     { label: fr.menu.settings, action: () => openSettings(game, state) },
     { label: fr.menu.gallery, mode: 'gallery' },
     { label: fr.menu.newGame, action: () => void newGame() },
   ];
-  game.modes.register('menu', () => new MenuMode(game, menuEntries));
+  game.modes.register('menu', () => new MenuMode(game, menuEntries, () => state.look));
   game.modes.register('gallery', () => new AssetGalleryMode(game));
 
   game.modes.register('factory', () => new FactoryMode(game, state));
@@ -78,7 +145,15 @@ async function main() {
   game.modes.register('tracks', () => new TrackSelectMode(game, state));
   game.modes.register('editor', () => new TrackEditorMode(game, state));
   // The factory keeps producing whatever mode is active.
-  game.addFactoryTicker(() => state.sim.tick());
+  game.addFactoryTicker(() => {
+    state.sim.tick();
+    state.tickTrackday();
+  });
+  // A trackday ends whatever mode is shown: say how it went.
+  state.onTrackdayDone = (r) => {
+    toast(`Trackday terminé (${r.trackName}) : ${r.guests} client${r.guests > 1 ? 's' : ''} ${satisfactionText(r.satisfaction)}, +${formatCredits(r.revenue)} · réputation ${r.reputation}/100`, 'success', 6000);
+    SaveManager.save(state);
+  };
   applySettings(game, state);
 
   // Autosave: every 30 s, on every mode switch and when the page is hidden/closed.
@@ -111,6 +186,34 @@ async function main() {
   await game.switchMode(requested && game.modes.has(requested) ? requested : 'menu', modeParams);
   game.start();
   loading.hide();
+
+  // A friend's link (#defi=…): the challenge goes to « Défis reçus » and opens. The code stays in the page (a fragment
+  // is never sent to the server), and leaves the address bar once read.
+  const openLink = async () => {
+    const hash = location.hash;
+    if (hash.startsWith('#monde=')) {
+      history.replaceState(null, '', location.pathname + location.search);
+      try {
+        await visitWorld(hash);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Lien de monde illisible', 'error', 3500);
+      }
+      return;
+    }
+    if (!hash.startsWith('#defi=')) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    try {
+      const c = sanitizeChallenge(await decodeShare('defi', hash));
+      const key = state.addChallenge(c);
+      SaveManager.save(state);
+      toast(`Défi de ${c.from} : ${c.track.name} en ${formatTime(c.timeMs)}`, 'success', 3000);
+      await game.switchMode('tracks', { challenge: key });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Lien de défi illisible', 'error', 3500);
+    }
+  };
+  void openLink();
+  window.addEventListener('hashchange', () => void openLink());
 
   if (import.meta.env.DEV) {
     Object.assign(window, { __game: game, __state: state, __save: SaveManager });

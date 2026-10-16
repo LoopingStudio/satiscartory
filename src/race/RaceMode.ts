@@ -31,9 +31,16 @@ import { MEDAL_LABEL, MEDAL_ORDER, medalFor, type Medal } from './medals';
 import { countAttempt, submitRun } from './records';
 import { endAttempt, raceCarFor, type RaceCar } from './raceCar';
 import { LOANER_SPEC, type CarInstance } from '../garage/assembly';
-import { isBlocked, wearLookCode, type CarWear, type RaceBlock } from '../data/wear';
-import { HALTED_NOTE, RACE_LOANER, TO_REPAIR_AT_GARAGE, attemptText, blockText, fallbackText, finishBlockedText, haltedText, lastAttemptText } from '../data/wearText';
+import { wearLookCode, type CarWear, type RaceBlock } from '../data/wear';
+import { HALTED_NOTE, RACE_LOANER, attemptText, blockText, fallbackText, finishBlockedText, haltedText, lastAttemptText, needAtGarage, needOf, needOfBlock } from '../data/wearText';
 import { WearHud } from '../ui/wearHud';
+import { FuelMeter } from '../data/fuel';
+import { FuelPill } from '../ui/fuelGauge';
+import { GhostRecorder, ghostPoseAt, type Ghost, type PackedGhost } from './ghost';
+import { challengeGhost, type Challenge } from './challenge';
+import { encodeShare } from '../share/codec';
+import { openSharePanel } from '../ui/menus/SharePanel';
+import { BLUEPRINTS } from '../data/blueprints';
 
 export interface RaceParams {
   track?: TrackData;
@@ -50,6 +57,8 @@ export interface RaceParams {
   returnParams?: unknown;
   /** Called when a test run finishes (editor sets the author time). */
   onTestFinish?: (ms: number) => void;
+  /** A friend's challenge: their ghost races along, the finish says who won (race/challenge.ts). */
+  challenge?: Challenge;
 }
 
 export const DEFAULT_SPEC: CarSpec = { blueprint: 'kart', parts: { chassis: 'chassis', engine: 'engine', wheels: 'wheel' } };
@@ -93,6 +102,11 @@ export class RaceMode implements Mode {
   /** The player's car when it wears in this race, and its meter (null: the loaner, a forced spec, a test drive). */
   private wearCar: CarInstance | null = null;
   private meter: WearMeter | null = null;
+  /** Fuel of the car that wears (the loaner, a forced spec, a test drive burn none). */
+  private fuelMeter: FuelMeter | null = null;
+  private fuelPill: FuelPill | null = null;
+  /** « Panne sèche » told once per race. */
+  private dryWarned = false;
   /** The car's wear when the attempt started (one copy per attempt): the finish panel says what the attempt wore. */
   private attemptWear: CarWear | null = null;
   /** The race limit was crossed in this race: said once (a toast), the next attempt halts. */
@@ -122,6 +136,15 @@ export class RaceMode implements Mode {
   private wearHud: WearHud | null = null;
   private splitTimer = 0;
   private finished = false;
+  /** This attempt's ghost, and the last finished run's (« Défier un ami »). */
+  private readonly recorder = new GhostRecorder();
+  private lastRun: { ghost: PackedGhost; ms: number } | null = null;
+  /** The challenger's ghost car (a challenge only). */
+  private ghost: Ghost | null = null;
+  private ghostModel: CarModel | null = null;
+  private ghostTag: THREE.Sprite | null = null;
+  private readonly ghostP = { x: 0, y: 0, z: 0 };
+  private readonly ghostQ = { x: 0, y: 0, z: 0, w: 1 };
 
   constructor(private readonly game: Game, private readonly state: GameState) {
     const { camera, dispose } = game.makeCamera(68, 0.1, 3000);
@@ -143,10 +166,13 @@ export class RaceMode implements Mode {
     this.raced = raced;
     this.spec = raced.spec;
     this.carId = raced.car?.id ?? null;
-    if (raced.fallback) toast(fallbackText(raced.fallback.car.name), 'info', 3200);
+    if (raced.fallback) toast(fallbackText(raced.fallback.car.name, needOfBlock(raced.fallback)), 'info', 3200);
+    else if (raced.away) toast(`${raced.away.name} est au trackday : tu cours avec le kart de location`, 'info', 3200);
     // Wear: the player's own car only. The loaner, a forced spec (?car=) and the editor's test drive never wear.
     this.wearCar = raced.wears ? raced.car : null;
     this.meter = this.wearCar ? new WearMeter(this.wearCar) : null;
+    // Fuel: the same cars burn it; a dry tank cuts the engine (the car coasts).
+    this.fuelMeter = this.wearCar ? new FuelMeter(this.wearCar) : null;
     const stats = computeCarStats(this.spec);
     this.baseTuning = tuningFromStats(stats);
     this.carModel = new CarModel(this.game.assets, this.spec);
@@ -160,6 +186,16 @@ export class RaceMode implements Mode {
       this.carModel.setWear(wearLookCode(this.wearCar.blueprint, this.wearCar.wear));
       this.fx = new CarFx(this.scene);
       this.fx.prewarm(this.game.renderer.three, this.camera, this.scene);
+    }
+    // A challenge: the friend's car, translucent, with their name over it.
+    const ch = this.params.challenge;
+    if (ch) {
+      this.ghost = challengeGhost(ch);
+      this.ghostModel = new CarModel(this.game.assets, ch.car);
+      this.ghostModel.setGhost(0.42);
+      this.scene.add(this.ghostModel.root);
+      this.ghostTag = nameTag(ch.from);
+      this.scene.add(this.ghostTag);
     }
     this.buildHud();
     this.restart();
@@ -192,6 +228,7 @@ export class RaceMode implements Mode {
    */
   restart(): void {
     // The interrupted attempt's last shock counts first: in the gate, the save and the copy taken for the next one.
+    this.fuelMeter?.end();
     const block = endAttempt(this.raced, this.meter);
     this.countUnfinished();
     // A worn car starts each attempt with its wear of now. Without wear nothing is applied again (the dev tuning
@@ -206,6 +243,7 @@ export class RaceMode implements Mode {
         }
       }
     }
+    this.recorder.reset();
     this.session = new RaceSession(this.checkpointCount, PHYS_DT * 1000, RACE.COUNTDOWN_TICKS);
     this.respawnPoint = { position: this.track.spawn.position.clone(), yaw: this.track.spawn.yaw };
     this.vehicle.reset(this.respawnPoint.position, this.respawnPoint.yaw);
@@ -273,15 +311,21 @@ export class RaceMode implements Mode {
     let controls = phase === 'running' ? readVehicleControls(input) : NO_CONTROLS;
     if (phase === 'finished') controls = { ...NO_CONTROLS, brake: 0.4 };
     this.prevStep.copy(this.vehicle.curPos);
+    const fuel = this.fuelMeter;
+    this.vehicle.engineOff = !!fuel?.dry;
     this.vehicle.step(dt, controls);
-    this.lastThrottle = controls.throttle;
+    this.lastThrottle = this.vehicle.engineOff ? 0 : controls.throttle;
     // Only the race itself wears the car: not the countdown, nor the braking after the line.
     const meter = this.meter;
-    if (phase === 'running') meter?.step(dt, this.vehicle, controls);
-    else meter?.closeShock();
+    if (phase === 'running') {
+      meter?.step(dt, this.vehicle, controls);
+      fuel?.step(dt, this.vehicle.speed, controls.throttle);
+    } else meter?.closeShock();
     if (meter) this.fx?.afterStep(meter.last, this.vehicle.curPos, this.vehicle.curQuat, this.carModel.geometry);
     this.physics.step(dt);
     this.vehicle.afterWorldStep();
+    // The ghost of this attempt: the pose at every GHOST_STEP_MS of the race clock.
+    if (this.session.phase === 'running') this.recorder.push(this.session.timeMs, this.vehicle.curPos, this.vehicle.curQuat);
     // The car waits on the line during the countdown.
     if (phase === 'countdown') this.vehicle.hold();
 
@@ -305,6 +349,7 @@ export class RaceMode implements Mode {
 
   update(dt: number, alpha: number): void {
     const input = this.game.input;
+    this.updateGhost(dt);
     // PADBINDS.race: Menu quits like Échap, B respawns, View restarts, Y retries (the finish panel takes the pad).
     input.padProfile = 'race';
     if (input.wasPressed('cancel')) {
@@ -370,8 +415,10 @@ export class RaceMode implements Mode {
 
   private onFinish(ms: number): void {
     this.finished = true;
+    if (!this.params.test) this.lastRun = { ghost: this.recorder.pack(), ms };
     // The attempt ends at the line: a shock still open there counts now (in the save, the panel and its summary). Then
     // nothing wears the car any more (no respawn after the line): the panel's choice holds.
+    this.fuelMeter?.end();
     const block = endAttempt(this.raced, this.meter);
     let improved = false;
     let previous: number | null = null;
@@ -400,14 +447,67 @@ export class RaceMode implements Mode {
     h.info = el('div', { class: 'panel top-left race-info' });
     // A car that wears: its state under « km/h », its damage flashing above the speed.
     const wear = this.wearCar ? (this.wearHud = new WearHud()) : null;
+    const fuel = this.wearCar && this.fuelMeter ? (this.fuelPill = new FuelPill()) : null;
     this.layer.append(
       el('div', { class: 'top-center race-top' }, h.timer, h.cp, h.split),
       h.countdown,
-      el('div', { class: 'speedo-wrap bottom-right' }, wear?.flash.el, h.speed, el('div', { class: 'speedo-unit' }, 'km/h'), wear?.pill),
+      el('div', { class: 'speedo-wrap bottom-right' }, wear?.flash.el, h.speed, el('div', { class: 'speedo-unit' }, 'km/h'), wear?.pill, fuel?.el),
       h.info,
       el('div', { class: 'bottom-left race-keys muted small' }, html(this.keysHint())),
     );
     this.renderInfo();
+  }
+
+  /** The challenger's ghost follows the race clock (at the start line during the countdown, held after its finish). */
+  private updateGhost(dt: number): void {
+    const g = this.ghost;
+    const m = this.ghostModel;
+    if (!g || !m || !this.session) return;
+    if (!ghostPoseAt(g, this.session.timeMs, this.ghostP, this.ghostQ)) return;
+    m.root.position.set(this.ghostP.x, this.ghostP.y, this.ghostP.z);
+    m.root.quaternion.set(this.ghostQ.x, this.ghostQ.y, this.ghostQ.z, this.ghostQ.w);
+    m.update(dt, 0, 0);
+    this.ghostTag?.position.set(this.ghostP.x, this.ghostP.y + 3.2, this.ghostP.z);
+  }
+
+  /** Finish line against a challenge: who won, by how much. */
+  private challengeLine(ms: number): HTMLElement | null {
+    const c = this.params.challenge;
+    if (!c) return null;
+    const d = ms - c.timeMs;
+    return d < 0
+      ? el('div', { class: 'good', style: 'margin-top:6px' }, `Tu bats ${c.from} de ${formatTime(-d).replace(/^0:0?/, '')} s !`)
+      : d === 0
+        ? el('div', { style: 'margin-top:6px' }, `Égalité parfaite avec ${c.from} !`)
+        : el('div', { class: 'bad', style: 'margin-top:6px' }, `${c.from} garde ${formatTime(d).replace(/^0:0?/, '')} s d’avance (${formatTime(c.timeMs)})`);
+  }
+
+  /** « Défier un ami »: this finished run as a challenge code (the circuit travels whole). */
+  private async shareRun(): Promise<void> {
+    const run = this.lastRun;
+    if (!run) return;
+    const t = this.trackData;
+    const car = this.raced.car;
+    const challenge: Challenge = {
+      format: 'satiscartory-defi',
+      version: 1,
+      from: this.state.look.name,
+      look: { ...this.state.look },
+      track: { ...t, id: t.id.replace(/^defi:/, '') },
+      car: this.spec,
+      carName: car?.name ?? BLUEPRINTS[this.spec.blueprint as keyof typeof BLUEPRINTS]?.name ?? 'Voiture',
+      timeMs: run.ms,
+      ghost: run.ghost,
+      at: Date.now(),
+    };
+    const code = await encodeShare('defi', challenge);
+    openSharePanel({
+      kind: 'defi',
+      title: 'Défier un ami',
+      intro: `${t.name} en ${formatTime(run.ms)} avec ${challenge.carName}. Ton ami court contre ton fantôme et peut te renvoyer le défi.`,
+      code,
+      fileName: `defi-${t.name.replace(/[^\p{L}\p{N}]+/gu, '-').toLowerCase()}-${formatTime(run.ms).replace(/[:.]/g, '')}.satiscartory`,
+    });
   }
 
   /** Controls reminder: the race keys, or on the pad the driving controls too (on two lines, it is longer). */
@@ -482,13 +582,19 @@ export class RaceMode implements Mode {
       !improved && previous !== null ? el('div', { class: 'bad' }, `Record : ${formatTime(previous)} (${formatDelta(ms - previous)})`) : null,
       test ? el('div', { class: 'muted small' }, 'Ce temps devient le temps auteur du circuit.') : null,
       worn ? el('div', { class: 'muted finish-wear' }, worn) : null,
-      block ? el('div', { class: 'bad', style: 'margin-top:6px' }, finishBlockedText(block.car.name, blockText(block.car) ?? '')) : null,
+      this.challengeLine(ms),
+      block ? el('div', { class: 'bad', style: 'margin-top:6px' }, finishBlockedText(block.car.name, blockText(block.car) ?? '', needOfBlock(block))) : null,
       el('div', { class: 'row', style: 'margin-top:12px;justify-content:center' },
         retry,
         el('button', { onclick: () => this.exitTo(), 'data-pad-btn': 'b start' },
           test ? 'Retour à l’éditeur' : 'Circuits', html(dual('', ` ${padGlyph('b')}`))),
         !test ? el('button', { onclick: () => void this.game.switchMode('factory') }, 'Usine') : null,
       ),
+      !test && this.lastRun
+        ? el('div', { class: 'row', style: 'margin-top:8px;justify-content:center' },
+          el('button', { 'data-action': 'challenge', onclick: () => void this.shareRun() },
+            this.params.challenge ? `Renvoyer le défi à ${this.params.challenge.from}` : 'Défier un ami avec ce temps'))
+        : null,
     );
     this.hud.finish = box;
     this.layer?.appendChild(box);
@@ -507,7 +613,7 @@ export class RaceMode implements Mode {
       c.classList.remove('pop');
     }
     const box = el('div', { class: 'panel center finish-panel', 'data-pad-scope': '', 'data-pad-passive': '' },
-      el('h2', {}, TO_REPAIR_AT_GARAGE),
+      el('h2', {}, needAtGarage(needOfBlock(block))),
       el('div', {}, haltedText(block.car.name, blockText(block.car) ?? '')),
       el('div', { class: 'muted small', style: 'margin-top:4px' }, HALTED_NOTE),
       el('div', { class: 'row', style: 'margin-top:12px;justify-content:center;flex-wrap:wrap' },
@@ -547,10 +653,16 @@ export class RaceMode implements Mode {
     const car = this.wearCar;
     if (!car) return;
     this.wearHud?.update(car);
+    this.fuelPill?.update(car);
     if (this.meter) this.wearHud?.onHit(this.meter.last);
-    if (!this.limitWarned && isBlocked(car)) {
+    const need = needOf(car);
+    if (!this.limitWarned && need) {
       this.limitWarned = true;
-      if (!this.finished && !this.halted) toast(lastAttemptText(blockText(car) ?? ''), 'info', 3200);
+      if (!this.finished && !this.halted) toast(lastAttemptText(blockText(car) ?? '', need), 'info', 3200);
+    }
+    if (!this.dryWarned && this.fuelMeter?.dry && !this.finished && !this.halted) {
+      this.dryWarned = true;
+      toast('Panne sèche : plus d’essence, le moteur est coupé', 'error', 3200);
     }
   }
 
@@ -601,6 +713,8 @@ export class RaceMode implements Mode {
       blueprint: this.spec.blueprint,
       /** Wear of the raced car (‰ per slot), null when it does not wear. */
       wear: this.wearCar ? { ...this.wearCar.wear } : null,
+      /** ‰ of the tank used (0 = full), null when the car burns none. */
+      fuel: this.wearCar ? (this.wearCar.fuel ?? 0) : null,
       /** Hits that wore the car 1 ‰ or more (WearMeter.last.seq), and the last one: what the flash showed. */
       hits: this.meter?.last.seq ?? 0,
       lastHit: this.meter && this.meter.last.seq ? { ...this.meter.last } : null,
@@ -612,9 +726,18 @@ export class RaceMode implements Mode {
   }
 
   exit(): void {
+    this.ghostModel?.dispose();
+    this.ghostModel = null;
+    if (this.ghostTag) {
+      this.ghostTag.material.map?.dispose();
+      this.ghostTag.material.dispose();
+      this.ghostTag = null;
+    }
     // The fractions of a thousandth are rounded into the car before the mode switch saves.
     this.meter?.end();
     this.meter = null;
+    this.fuelMeter?.end();
+    this.fuelMeter = null;
     this.wearCar = null;
     this.fx?.dispose();
     this.fx = null;
@@ -626,4 +749,30 @@ export class RaceMode implements Mode {
     this.layer?.remove();
     this.disposeCamera();
   }
+}
+
+/** A name over a ghost car: white text on a dark pill, always facing the camera. */
+function nameTag(text: string): THREE.Sprite {
+  const w = 512;
+  const h = 96;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const c = canvas.getContext('2d')!;
+  c.font = 'bold 56px system-ui, -apple-system, "Segoe UI", sans-serif';
+  const tw = Math.min(w - 40, c.measureText(text).width);
+  c.fillStyle = 'rgba(20, 22, 40, 0.75)';
+  c.beginPath();
+  c.roundRect((w - tw) / 2 - 20, 8, tw + 40, h - 16, 30);
+  c.fill();
+  c.fillStyle = '#ffffff';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(text, w / 2, h / 2 + 2, w - 40);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sprite.scale.set(4, 0.75, 1);
+  sprite.renderOrder = 5;
+  return sprite;
 }

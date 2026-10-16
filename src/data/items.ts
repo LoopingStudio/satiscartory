@@ -14,6 +14,8 @@ export const ITEM_IDS = [
   'wheel_racing',
   'panel',
   'spoiler',
+  'crude_oil',
+  'fuel_can',
 ] as const;
 export type ItemId = (typeof ITEM_IDS)[number];
 
@@ -50,6 +52,9 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   wheel_racing: { id: 'wheel_racing', name: 'Roue racing', plural: 'roues racing', stack: 20, model: 'car-kit/wheel-racing', beltScale: 1.4, beltLift: 0.42 },
   panel: { id: 'panel', name: 'Panneau', plural: 'panneaux', stack: 20, model: 'car-kit/debris-door', beltScale: 1.0, beltYaw: Math.PI / 2 },
   spoiler: { id: 'spoiler', name: 'Aileron', plural: 'ailerons', stack: 10, model: 'car-kit/debris-spoiler-a', beltScale: 1.0 },
+  // A little barrel of crude oil, and a red can of fuel (CAN_L liters).
+  crude_oil: { id: 'crude_oil', name: 'Pétrole brut', plural: 'pétroles bruts', stack: 100, model: 'factory-kit/pipe-large', beltScale: 0.5, tint: 0x2a221c },
+  fuel_can: { id: 'fuel_can', name: 'Bidon d’essence', plural: 'bidons d’essence', stack: 20, model: 'car-kit/box', beltScale: 1.1, tint: 0xd8433f },
 };
 
 export type Inventory = Partial<Record<ItemId, number>>;

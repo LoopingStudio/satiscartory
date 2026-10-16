@@ -27,7 +27,7 @@ describe('wear: state and race limit', () => {
 
   it('raceBlocker / isBlocked: the car itself and its slots above the limit; null for the loaner, at 800 ‰ and without the spoiler', () => {
     const car = sport({ wheels: 801, spoiler: 950 });
-    expect(raceBlocker(car)).toEqual({ kind: 'wear', car, slots: ['wheels', 'spoiler'] });
+    expect(raceBlocker(car)).toEqual({ kind: 'wear', car, slots: ['wheels', 'spoiler'], fuel: false });
     expect(raceBlocker(car)?.car).toBe(car);
     expect(isBlocked(car)).toBe(true);
     expect(raceBlocker(null)).toBeNull();

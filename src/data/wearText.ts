@@ -2,7 +2,8 @@ import { WEAR } from './balance';
 import { blueprintById, type SlotId } from './blueprints';
 import { ITEM_IDS, countLabel, type Inventory as ItemCounts, type ItemId } from './items';
 import { formatCredits } from './sales';
-import { blockedSlots, condition, isBlocked, slotWear, worstSlotOf, type CarWear, type WearCar } from './wear';
+import { blockedSlots, condition, isBlocked, slotWear, worstSlotOf, type CarWear, type RaceBlock, type WearCar } from './wear';
+import { fuelBlocked, fuelPct, fuelUsed } from './fuel';
 
 /*
  * Texts of the wear (pure, French UI). The slots' genders differ (les roues, la carrosserie, le châssis, le moteur,
@@ -66,7 +67,40 @@ export function carRowTip(racing: boolean, state: string | null, blocked = false
   return tip ? capFirst(tip) : undefined;
 }
 
-// ------------------------------------------------------------------ the race limit (a car to repair)
+// ------------------------------------------------------------------ the race limit (a car to repair, or to refuel)
+
+/**
+ * What a car that does not start a race needs: repairs (a part past the limit), fuel (the tank in the reserve), or both.
+ * Every sentence about the race limit takes it (default: repairs, as before the fuel).
+ */
+export type Need = 'repair' | 'fuel' | 'both';
+
+/** What `car` needs before racing, null when it races. */
+export function needOf(car: WearCar): Need | null {
+  const w = isBlocked(car);
+  const f = fuelBlocked(car);
+  return w && f ? 'both' : w ? 'repair' : f ? 'fuel' : null;
+}
+
+/** What a race block needs. */
+export function needOfBlock(block: Pick<RaceBlock, 'slots' | 'fuel'>): Need {
+  return block.slots.length && block.fuel ? 'both' : block.slots.length ? 'repair' : 'fuel';
+}
+
+/** « à réparer », « à ravitailler », « à réparer et à ravitailler ». */
+export function needWord(need: Need = 'repair'): string {
+  return need === 'fuel' ? 'à ravitailler' : need === 'both' ? 'à réparer et à ravitailler' : 'à réparer';
+}
+
+/** What to do about it: « répare-la », « fais-lui le plein », « répare-la et fais-lui le plein ». */
+function needVerb(need: Need): string {
+  return need === 'fuel' ? 'fais-lui le plein' : need === 'both' ? 'répare-la et fais-lui le plein' : 'répare-la';
+}
+
+/** Title of the halted panel, label of a blocked « Courir »: « À réparer au garage », « À ravitailler au garage »… */
+export function needAtGarage(need: Need = 'repair'): string {
+  return `${capFirst(needWord(need))} au garage`;
+}
 
 /** After a car's name or state: « Dans la place : Kart Oopi n°1 · à réparer ». */
 export const TO_REPAIR = 'à réparer';
@@ -83,17 +117,18 @@ export const LOANER_STATE = 'Prêté par le circuit : il ne s’use pas.';
 export const NEW_STATE = 'État : neuve';
 
 /**
- * The slots that keep a car from racing, with their state: « roues à 18 % », « roues à 18 %, carrosserie à 12 % »
- * (blueprint order); null when it races.
+ * What keeps a car from racing, with its state: « roues à 18 % », « roues à 18 %, carrosserie à 12 % » (blueprint
+ * order), then the tank in the reserve, « réservoir à 6 % »; null when it races.
  */
 export function blockText(car: WearCar): string | null {
-  const slots = blockedSlots(car);
-  return slots.length ? slots.map((s) => `${SLOT_WORD[s]} à ${pct(slotWear(car, s))}`).join(', ') : null;
+  const parts = blockedSlots(car).map((s) => `${SLOT_WORD[s]} à ${pct(slotWear(car, s))}`);
+  if (fuelBlocked(car)) parts.push(`réservoir à ${fuelPct(fuelUsed(car))} %`);
+  return parts.length ? parts.join(', ') : null;
 }
 
 /** A blocked car asked for a race (toast): « Kart Oopi n°1 est à réparer au garage : tu cours avec le kart de location ». */
-export function fallbackText(name: string): string {
-  return `${name} est à réparer au garage : tu cours avec le kart de location`;
+export function fallbackText(name: string, need: Need = 'repair'): string {
+  return `${name} est ${needWord(need)} au garage : tu cours avec le kart de location`;
 }
 
 /** Halted panel (« Recommencer » with a car past the limit): « Kart Oopi n°1 ne peut plus prendre le départ : roues à 18 %. ». */
@@ -102,48 +137,55 @@ export function haltedText(name: string, block: string): string {
 }
 
 /** Finish panel of a car past the limit: « Kart Oopi n°1 est à réparer au garage : roues à 18 %. ». */
-export function finishBlockedText(name: string, block: string): string {
-  return `${name} est à réparer au garage : ${block}.`;
+export function finishBlockedText(name: string, block: string, need: Need = 'repair'): string {
+  return `${name} est ${needWord(need)} au garage : ${block}.`;
 }
 
 /** Car option of the track selection: « Kart Oopi n°1 (à réparer) ». */
-export function blockedOption(name: string): string {
-  return `${name} (${TO_REPAIR})`;
+export function blockedOption(name: string, need: Need = 'repair'): string {
+  return `${name} (${needWord(need)})`;
 }
 
 /** Why « Courir » is disabled (track selection): « Roues à 18 % : répare-la au garage, ou cours avec le kart de location. ». */
-export function blockedRaceTip(block: string): string {
-  return `${capFirst(block)} : répare-la au garage, ou cours avec le kart de location.`;
+export function blockedRaceTip(block: string, need: Need = 'repair'): string {
+  return `${capFirst(block)} : ${needVerb(need)} au garage, ou cours avec le kart de location.`;
 }
 
 /** Under a blocked car (track selection): « Roues à 18 % : Kart Oopi n°1 ne prend plus le départ. Répare-la… ». */
-export function blockedRaceLine(name: string, block: string): string {
-  return `${capFirst(block)} : ${name} ne prend plus le départ. Répare-la au garage, ou cours avec le kart de location.`;
+export function blockedRaceLine(name: string, block: string, need: Need = 'repair'): string {
+  return `${capFirst(block)} : ${name} ne prend plus le départ. ${capFirst(needVerb(need))} au garage, ou cours avec le kart de location.`;
 }
 
 /**
  * Alert of a car past the limit (garage): in this garage's bay, what the limit means; elsewhere, where to repair it.
  * Both say it still drives in the factory.
  */
-export function blockAlert(block: string, here: boolean): string {
+export function blockAlert(block: string, here: boolean, need: Need = 'repair'): string {
+  if (need === 'fuel') {
+    return here
+      ? `À ravitailler : ${block}. Sous 10 % d’essence, une voiture ne prend plus le départ d’une course ; dans l’usine, elle roule tant qu’il en reste.`
+      : `À ravitailler : ${block}. Amène-la dans la place d’un garage pour faire le plein, ou verse-lui un bidon d’essence ; dans l’usine, elle roule tant qu’il en reste.`;
+  }
+  const head = capFirst(needWord(need));
   return here
-    ? `À réparer : ${block}. Sous ${pct(WEAR.BLOCK_ABOVE)}, une voiture ne prend plus le départ d’une course ; dans l’usine, elle roule encore.`
-    : `À réparer : ${block}. Amène-la dans la place d’un garage pour la réparer ; dans l’usine, elle roule encore.`;
+    ? `${head} : ${block}. Sous ${pct(WEAR.BLOCK_ABOVE)}, une voiture ne prend plus le départ d’une course ; dans l’usine, elle roule encore.`
+    : `${head} : ${block}. Amène-la dans la place d’un garage pour la réparer ; dans l’usine, elle roule encore.`;
 }
 
 /** Why the garage's « Courir » is disabled: « À réparer : roues à 18 %. Répare-la ici, ou cours avec le kart de location. ». */
-export function garageRaceTip(block: string, here: boolean): string {
-  return `À réparer : ${block}. ${here ? 'Répare-la ici' : 'Amène-la dans la place d’un garage pour la réparer'}, ou cours avec le kart de location.`;
+export function garageRaceTip(block: string, here: boolean, need: Need = 'repair'): string {
+  const where = here ? `${capFirst(needVerb(need))} ici` : `Amène-la dans la place d’un garage pour ${need === 'fuel' ? 'faire le plein' : 'la réparer'}`;
+  return `${capFirst(needWord(need))} : ${block}. ${where}, ou cours avec le kart de location.`;
 }
 
 /** Enter in the driver's seat of a car past the limit (toast): « À réparer au garage : roues à 18 % ». */
-export function seatRefusedText(block: string): string {
-  return `${TO_REPAIR_AT_GARAGE} : ${block}`;
+export function seatRefusedText(block: string, need: Need = 'repair'): string {
+  return `${needAtGarage(need)} : ${block}`;
 }
 
 /** Getting into a car past the limit (toast): « Kart Oopi n°1 est à réparer : roues à 18 %. Elle roule encore jusqu’au garage. ». */
-export function boardedBlockedText(name: string, block: string): string {
-  return `${name} est à réparer : ${block}. Elle roule encore jusqu’au garage.`;
+export function boardedBlockedText(name: string, block: string, need: Need = 'repair'): string {
+  return `${name} est ${needWord(need)} : ${block}. Elle roule encore jusqu’au garage.`;
 }
 
 /**
@@ -159,17 +201,18 @@ export function driveState(car: WearCar): string | null {
 
 /** Aiming at a parked car past the limit (factory hint): « à réparer (roues 18 %) »; null when it races. */
 export function aimBlockedText(car: WearCar): string | null {
-  return isBlocked(car) ? `${TO_REPAIR} (${stateText(car)})` : null;
+  if (isBlocked(car)) return `${needWord(needOf(car) ?? 'repair')} (${stateText(car)})`;
+  return fuelBlocked(car) ? `${needWord('fuel')} (essence ${fuelPct(fuelUsed(car))} %)` : null;
 }
 
 /** The race limit crossed during a race (toast, once): « Roues à 19 % : dernier essai avant réparation au garage ». */
-export function lastAttemptText(block: string): string {
-  return `${capFirst(block)} : dernier essai avant réparation au garage`;
+export function lastAttemptText(block: string, need: Need = 'repair'): string {
+  return `${capFirst(block)} : dernier essai avant ${need === 'fuel' ? 'le plein' : need === 'both' ? 'réparation et plein' : 'réparation'} au garage`;
 }
 
 /** The race limit crossed while driving in the factory (toast, once): « Roues à 19 % : à réparer au garage avant la prochaine course ». */
-export function repairBeforeRaceText(block: string): string {
-  return `${capFirst(block)} : à réparer au garage avant la prochaine course`;
+export function repairBeforeRaceText(block: string, need: Need = 'repair'): string {
+  return `${capFirst(block)} : ${needWord(need)} au garage avant la prochaine course`;
 }
 
 // ------------------------------------------------------------------ driving (race pill, damage flash, finish)

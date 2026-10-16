@@ -13,6 +13,8 @@ import type { WearMeter } from '../car/wearMeter';
 export interface RaceGarage {
   readonly cars: readonly CarInstance[];
   readonly selectedCar: CarInstance | null;
+  /** The car is at a trackday (GameState.isAway): the loaner races instead. */
+  isAway?(carId: string): boolean;
 }
 
 /** RaceParams' car choice (race/RaceMode.ts). */
@@ -34,6 +36,8 @@ export interface RaceCar {
   wears: boolean;
   /** The car asked for was blocked: the loaner drives instead (RaceMode tells the player). */
   fallback: RaceBlock<CarInstance> | null;
+  /** The car asked for is at a trackday: the loaner drives instead. */
+  away?: CarInstance;
 }
 
 /**
@@ -44,6 +48,7 @@ export function raceCarFor(state: RaceGarage, p: RaceCarParams): RaceCar {
   const car = p.carId !== undefined ? (state.cars.find((c) => c.id === p.carId) ?? null) : p.spec ? null : state.selectedCar;
   const spec = p.spec ?? specOf(car);
   if (p.test || p.spec || !car) return { car, spec, wears: false, fallback: null };
+  if (state.isAway?.(car.id)) return { car: null, spec: LOANER_SPEC, wears: false, fallback: null, away: car };
   const block = raceBlocker(car);
   if (block) return { car: null, spec: LOANER_SPEC, wears: false, fallback: block };
   return { car, spec, wears: true, fallback: null };

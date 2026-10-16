@@ -20,6 +20,10 @@ const PURE = [
   'src/race/crossing.ts',
   'src/race/medals.ts',
   'src/race/raceCar.ts',
+  'src/race/ghost.ts',
+  'src/race/challenge.ts',
+  'src/share/codec.ts',
+  'src/garage/groups.ts',
   'src/core/gamepad.ts',
   'src/ui/spatialNav.ts',
 ];

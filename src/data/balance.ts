@@ -119,6 +119,29 @@ export const WEAR = {
   EFFECT: { grip: 0.25, engine: 0.2, steer: 0.15, brake: 0.2, drag: 0.2, spoiler: 0.5 },
 } as const;
 
+/**
+ * Fuel of the assembled cars (data/fuel.ts, car/fuelMeter.ts), in integer thousandths of the tank USED: 0 = full (no
+ * key), MAX = dry. The loaner and the editor's test drive never burn any. Every threshold reads « above » (>).
+ */
+export const FUEL = {
+  MAX: 1000,
+  /** Reserve: a car that used more than this (under 10 % left) does not start a race. */
+  BLOCK_ABOVE: 900,
+  /** Gauges turn orange above this (under 25 % left), red above BLOCK_ABOVE. */
+  WARN_ABOVE: 750,
+  /** Tank (liters) per blueprint; a blueprint without one (the loaner) never burns fuel. */
+  TANK_L: { kart: 10, sport: 30 } as Readonly<Record<string, number>>,
+  /**
+   * ‰ of the tank per km at full throttle, the same for every car (a bigger engine has a bigger tank): a lap of the
+   * Ovale (0.58 km, nearly all at full throttle) burns about 36 ‰, some 25 laps from full to the reserve. Rolling
+   * without throttle burns IDLE_SHARE of it.
+   */
+  PER_KM: 70,
+  IDLE_SHARE: 0.2,
+  /** Liters in one fuel can (« Bidon d'essence »). */
+  CAN_L: 10,
+} as const;
+
 /** Production rates (« /min »): measured over the last WINDOW ticks; a building placed or reset less than MIN_SPAN ago is still measuring. */
 export const STATS = {
   /** 1 200 ticks = the last minute. */

@@ -5,7 +5,8 @@ import { CONVEYOR_GROUPS } from './collisionGroups';
 import { PLAYER } from '../data/player';
 import { rotatedSize } from './sim/dirs';
 import { HUB_BENCH } from './view/hubBench';
-import { GARAGE_CLUTTER, GARAGE_LINTEL, GARAGE_WALLS, rotateBox } from './view/garageLayout';
+import { GARAGE_CLUTTER, GARAGE_LINTEL, GARAGE_POSTS, GARAGE_WALLS, rotateBox } from './view/garageLayout';
+import { openSides, sideAnchor } from '../garage/groups';
 import { DEALER_BOXES } from './view/dealerLayout';
 import { rotateLocal } from './view/beltPath';
 import type { FactorySim, TerrainRect } from './sim/FactorySim';
@@ -100,10 +101,12 @@ export class FactoryWorld {
       sim.events.on('placed', (b) => {
         this.add(b);
         this.refreshDecor(b);
+        this.refreshGarageNeighbors(b);
       }),
       sim.events.on('removed', (b) => {
         this.remove(b.id);
         this.refreshDecor(b);
+        this.refreshGarageNeighbors(b);
       }),
       sim.events.on('terrain', (r) => {
         const d = this.dirty;
@@ -249,7 +252,11 @@ export class FactoryWorld {
       // Garage: walls, door lintel and corner clutter; the bay floor is the ground collider (cars drive in and
       // out), no roof (cameras). Aiming at the floor falls back to the footprint cells (BuildController).
       // Dealer: the store block and the glass showroom.
-      const boxes = b.type === 'garage' ? [...GARAGE_WALLS, GARAGE_LINTEL, ...Object.values(GARAGE_CLUTTER)] : DEALER_BOXES;
+      // A module of a bigger garage has no side wall toward the next one, only its door post (a pillar between the doors).
+      const open = b.type === 'garage' ? openSides(this.sim, b) : null;
+      const walls = GARAGE_WALLS.filter((_, i) => !(open && ((i === 1 && open.minus) || (i === 2 && open.plus))));
+      const posts = open ? GARAGE_POSTS.filter((_, i) => (i === 0 ? open.minus : open.plus)) : [];
+      const boxes = b.type === 'garage' ? [...walls, ...posts, GARAGE_LINTEL, ...Object.values(GARAGE_CLUTTER)] : DEALER_BOXES;
       for (const w of boxes.map((l) => rotateBox(l, b.rot))) {
         // Standing parts (bottom on the floor) reach under the pad too; the lintel hangs.
         const grounded = w.y - w.hy < 0.01;
@@ -283,6 +290,18 @@ export class FactoryWorld {
     const list = descs.map((d) => this.physics.world.createCollider(d.setFriction(0.8)));
     this.colliders.set(b.id, list);
     for (const c of list) this.byHandle.set(c.handle, b.id);
+  }
+
+  /** A garage module placed or removed: the modules beside it gain or lose the wall between them (garage/groups.ts). */
+  private refreshGarageNeighbors(b: Building): void {
+    if (b.type !== 'garage') return;
+    for (const side of [-1, 1] as const) {
+      const [x, z] = sideAnchor(b, side);
+      const n = this.sim.at(x, z);
+      if (n?.type !== 'garage' || n.id === b.id || !this.colliders.has(n.id)) continue;
+      this.remove(n.id);
+      this.add(n);
+    }
   }
 
   private remove(id: number): void {

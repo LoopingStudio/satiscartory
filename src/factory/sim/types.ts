@@ -84,9 +84,17 @@ export interface HubB extends Base {
   type: 'hub';
 }
 
-/** Garage: no items, no ports. Which car stands in it is derived from the cars' poses (GameState). */
+/**
+ * Garage: no items, no ports. Which car stands in it is derived from the cars' poses (GameState). Garages side by side
+ * (same rotation and pad) are the modules of one bigger garage (garage/groups.ts): walls between them go. Its look
+ * (data/garageStyle.ts) is shared by the whole garage; absent keys are the default look.
+ */
 export interface GarageB extends Base {
   type: 'garage';
+  /** Wall colour id (GARAGE_PAINTS); absent: the default. */
+  paint?: string;
+  /** Text of the sign; absent: « GARAGE ». */
+  sign?: string;
 }
 
 /**
